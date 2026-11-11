@@ -16,7 +16,7 @@ jobs:
             build_args: ""
           - platform: ubuntu-22.04
             build_args: ""
-          - platform: macos-14
+          - platform: macos-latest
             build_args: "--target universal-apple-darwin"
     runs-on: ${{ matrix.platform }}
     env:
@@ -40,7 +40,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: 添加 macOS 双架构目标
-        if: matrix.platform == 'macos-14'
+        if: startsWith(matrix.platform, 'macos')
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: 安装前端依赖
