@@ -1,0 +1,18 @@
+# 依赖与构建产物
+node_modules/
+src-tauri/target/
+dist/
+
+# 本地 Rust 工具链（体积大，可重新安装）
+.toolchains/
+
+# 运行时数据：WebView2 用户数据目录、书架状态等
+.data/
+.cache/
+.screenshots/
+.trae-html-share-packages/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.log

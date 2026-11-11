@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="paper">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>阅笺 YueJian Reader · 高保真原型</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-view="library">
+
+<!-- ============ Lucide 图标精灵（内联，离线可用） ============ -->
+<svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <symbol id="i-library" viewBox="0 0 24 24"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></symbol>
+    <symbol id="i-book-open" viewBox="0 0 24 24"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+    <symbol id="i-command" viewBox="0 0 24 24"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M11.5 2.3a.5.5 0 0 1 .9 0l2.3 4.7a2.1 2.1 0 0 0 1.6 1.2l5.2.8a.5.5 0 0 1 .3.9l-3.8 3.6a2.1 2.1 0 0 0-.6 1.9l.9 5.1a.5.5 0 0 1-.8.6l-4.6-2.4a2.1 2.1 0 0 0-2 0L6.4 21a.5.5 0 0 1-.8-.6l.9-5.1a2.1 2.1 0 0 0-.6-1.9L2.1 9.8a.5.5 0 0 1 .3-.9l5.2-.8a2.1 2.1 0 0 0 1.6-1.2z"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-panel-right" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></symbol>
+    <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-file-text" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></symbol>
+    <symbol id="i-type" viewBox="0 0 24 24"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-corner-down-right" viewBox="0 0 24 24"><path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <!-- ============ 标题栏 ============ -->
+  <header class="titlebar">
+    <div class="tb-left">
+      <span class="brand-mark">阅笺</span>
+      <span class="brand-sub">YUEJIAN READER</span>
+    </div>
+    <div class="tb-center" id="tbTitle">书架</div>
+    <div class="tb-right">
+      <button class="icon-btn" id="themeBtn" title="切换主题" aria-label="切换主题">
+        <svg class="ic"><use href="#i-sun"/></svg>
+      </button>
+      <button class="icon-btn" id="paletteBtn" title="命令面板 Ctrl+K" aria-label="命令面板">
+        <svg class="ic"><use href="#i-command"/></svg>
+      </button>
+      <div class="win-controls" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <!-- ============ 图标栏 ============ -->
+    <nav class="rail" aria-label="主导航">
+      <button class="rail-btn is-active" data-nav="library" title="书架">
+        <svg class="ic"><use href="#i-library"/></svg><span>书架</span>
+      </button>
+      <button class="rail-btn" data-nav="reading" title="阅读">
+        <svg class="ic"><use href="#i-book-open"/></svg><span>阅读</span>
+      </button>
+      <button class="rail-btn" data-nav="search" title="搜索">
+        <svg class="ic"><use href="#i-search"/></svg><span>搜索</span>
+      </button>
+      <div class="rail-spacer"></div>
+      <button class="rail-btn" data-nav="settings" title="设置">
+        <svg class="ic"><use href="#i-settings"/></svg><span>设置</span>
+      </button>
+    </nav>
+
+    <!-- ============ 书架面板 ============ -->
+    <aside class="library-panel" id="libraryPanel">
+      <div class="panel-head">
+        <div class="panel-title">文档库 <span class="count" id="libCount">8</span></div>
+        <button class="icon-btn" id="importBtn" title="导入文档">
+          <svg class="ic"><use href="#i-plus"/></svg>
+        </button>
+      </div>
+
+      <div class="search-box">
+        <svg class="ic"><use href="#i-search"/></svg>
+        <input id="libSearch" type="text" placeholder="搜索书名、作者" />
+        <kbd>Ctrl K</kbd>
+      </div>
+
+      <div class="filter-row" id="filterRow">
+        <button class="chip is-on" data-filter="all">全部</button>
+        <button class="chip" data-filter="pdf">PDF</button>
+        <button class="chip" data-filter="md">MARKDOWN</button>
+        <button class="chip" data-filter="star">收藏</button>
+      </div>
+
+      <div class="book-list" id="bookList"></div>
+
+      <div class="panel-foot">
+        <button class="import-cta" id="importCta">
+          <svg class="ic"><use href="#i-folder-plus"/></svg>导入本地文档
+        </button>
+        <p class="hint">支持 PDF / Markdown · 也可以把文件拖进窗口</p>
+      </div>
+    </aside>
+
+    <!-- ============ 主舞台 ============ -->
+    <main class="stage">
+      <!-- 书架视图 -->
+      <section class="view view-library" id="view-library">
+        <div class="lib-hero">
+          <div class="hero-copy">
+            <p class="eyebrow">— CONTINUE READING</p>
+            <h1>继续阅读</h1>
+            <p class="hero-sub">每一份文档都记得你停下的位置。</p>
+          </div>
+          <div class="hero-stats">
+            <div><b id="statBooks">8</b><span>份文档</span></div>
+            <div><b id="statReading">3</b><span>在读</span></div>
+            <div><b>12.4</b><span>小时阅读</span></div>
+          </div>
+        </div>
+
+        <div class="resume-card" id="resumeCard" tabindex="0"></div>
+
+        <div class="section-head">
+          <h2>全部文档</h2>
+          <span class="section-sub">按最近打开排序</span>
+        </div>
+        <div class="book-grid" id="bookGrid"></div>
+      </section>
+
+      <!-- 阅读视图 -->
+      <section class="view view-reader" id="view-reader">
+        <div class="doc-bar">
+          <button class="ghost-btn" id="backBtn">
+            <svg class="ic"><use href="#i-arrow-left"/></svg>书架
+          </button>
+          <div class="doc-meta">
+            <h2 id="docTitle">纸页上的呼吸</h2>
+            <span class="doc-sub" id="docSub">林敬之 · PDF · 6 页</span>
+          </div>
+          <div class="doc-actions">
+            <button class="icon-btn" id="starBtn" title="收藏">
+              <svg class="ic"><use href="#i-star"/></svg>
+            </button>
+            <button class="icon-btn" id="zenBtn" title="专注模式">
+              <svg class="ic"><use href="#i-maximize"/></svg>
+            </button>
+            <button class="icon-btn is-on" id="ctxBtn" title="目录面板">
+              <svg class="ic"><use href="#i-panel-right"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="reader-body">
+          <div class="scroll-area" id="scrollArea">
+            <div class="pdf-stack" id="pdfStack"></div>
+            <article class="md-doc" id="mdDoc"></article>
+          </div>
+
+          <aside class="context-panel" id="ctxPanel">
+            <div class="ctx-tabs" id="ctxTabs">
+              <button class="ctx-tab is-on" data-ctx="toc">目录</button>
+              <button class="ctx-tab" data-ctx="thumbs">缩略图</button>
+              <button class="ctx-tab" data-ctx="find">搜索</button>
+            </div>
+            <div class="ctx-body" id="ctxBody"></div>
+          </aside>
+        </div>
+
+        <div class="read-toolbar" id="readToolbar"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ============ 状态栏 ============ -->
+  <footer class="statusbar">
+    <span id="statusLeft">就绪</span>
+    <span class="status-dot"></span>
+    <span id="statusMid">纸白主题</span>
+    <span class="status-right">
+      <span id="statusRight">8 份文档</span>
+      <span class="kbd-hint">Ctrl K 命令面板</span>
+    </span>
+  </footer>
+</div>
+
+<!-- ============ 命令面板 ============ -->
+<div class="overlay" id="paletteOverlay" hidden>
+  <div class="palette" role="dialog" aria-label="命令面板">
+    <div class="palette-input">
+      <svg class="ic"><use href="#i-search"/></svg>
+      <input id="paletteInput" type="text" placeholder="搜索文档、章节或执行命令…" autocomplete="off" />
+      <kbd>ESC</kbd>
+    </div>
+    <div class="palette-list" id="paletteList"></div>
+    <div class="palette-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
+      <span><kbd>↵</kbd> 打开</span>
+      <span class="palette-brand">阅笺 · Local first</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 设置抽屉 ============ -->
+<div class="overlay" id="settingsOverlay" hidden>
+  <div class="sheet" role="dialog" aria-label="设置">
+    <div class="sheet-head">
+      <div>
+        <p class="eyebrow">— PREFERENCES</p>
+        <h2>阅读设置</h2>
+      </div>
+      <button class="icon-btn" id="settingsClose"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+
+    <div class="sheet-body">
+      <section class="setting-group">
+        <h3>主题</h3>
+        <div class="theme-row" id="themeRow">
+          <button class="theme-swatch" data-theme-value="paper">
+            <span class="swatch sw-paper"></span><span>纸白</span>
+          </button>
+          <button class="theme-swatch" data-theme-value="night">
+            <span class="swatch sw-night"></span><span>夜读</span>
+          </button>
+          <button class="theme-swatch" data-theme-value="sepia">
+            <span class="swatch sw-sepia"></span><span>护眼</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="setting-group">
+        <h3>排版</h3>
+        <div class="setting-row">
+          <label>正文字号</label>
+          <div class="segmented" id="fontSizeSeg">
+            <button data-size="15">15</button>
+            <button data-size="17" class="is-on">17</button>
+            <button data-size="19">19</button>
+            <button data-size="21">21</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label>行高</label>
+          <div class="segmented" id="lineHeightSeg">
+            <button data-lh="1.7">紧凑</button>
+            <button data-lh="1.9" class="is-on">标准</button>
+            <button data-lh="2.1">宽松</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label>版心宽度</label>
+          <div class="segmented" id="measureSeg">
+            <button data-measure="620">窄</button>
+            <button data-measure="720" class="is-on">标准</button>
+            <button data-measure="820">宽</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="setting-group">
+        <h3>界面</h3>
+        <div class="setting-row">
+          <label>打开文档时显示目录</label>
+          <button class="switch is-on" id="switchCtx" role="switch" aria-checked="true"><span></span></button>
+        </div>
+        <div class="setting-row">
+          <label>专注模式（隐藏书架面板）</label>
+          <button class="switch" id="switchZen" role="switch" aria-checked="false"><span></span></button>
+        </div>
+      </section>
+
+      <section class="setting-group">
+        <h3>数据</h3>
+        <p class="setting-note">书架、阅读进度与偏好保存在本地应用数据目录，不上传任何服务器。</p>
+        <button class="ghost-btn wide" id="openDataBtn">
+          <svg class="ic"><use href="#i-folder-plus"/></svg>打开数据目录（示例）
+        </button>
+      </section>
+    </div>
+
+    <div class="sheet-foot">
+      <button class="ghost-btn" id="resetBtn">恢复默认</button>
+      <button class="primary-btn" id="settingsDone">完成</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script src="mock.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

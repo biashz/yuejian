@@ -1,0 +1,20 @@
+{
+  "name": "yuejian-reader",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "阅笺 · PDF 与 Markdown 本地阅读器（Rust + Tauri 2）",
+  "scripts": {
+    "dev": "node scripts/dev.mjs dev",
+    "build": "node scripts/dev.mjs build --no-bundle",
+    "bundle": "node scripts/dev.mjs bundle",
+    "tauri": "node scripts/dev.mjs",
+    "vendor": "node scripts/vendor-assets.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^5.0.0"
+  }
+}

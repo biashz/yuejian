@@ -1,0 +1,27 @@
+[package]
+name = "yuejian"
+version = "0.1.0"
+description = "阅笺 · PDF 与 Markdown 本地阅读器"
+authors = ["YueJian"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "yuejian_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+comrak = "0.49.0"
+rfd = "0.17.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
