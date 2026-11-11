@@ -30,8 +30,15 @@ jobs:
       - name: 安装 Linux 系统依赖
         if: matrix.platform == 'ubuntu-22.04'
         run: |
+          # 本账户的 Ubuntu runner 无法解析 *.ubuntu.com（apt-get update 会一直挂起），
+          # 因此先移除官方源，改用可解析的阿里云镜像。
+          sudo rm -f /etc/apt/sources.list.d/ubuntu.sources
+          sudo sed -i 's/^deb /#deb /' /etc/apt/sources.list || true
+          echo 'deb https://mirrors.aliyun.com/ubuntu jammy main universe restricted multiverse' | sudo tee /etc/apt/sources.list.d/yuejian-mirror.list
+          echo 'deb https://mirrors.aliyun.com/ubuntu jammy-updates main universe restricted multiverse' | sudo tee -a /etc/apt/sources.list.d/yuejian-mirror.list
+          echo 'deb https://mirrors.aliyun.com/ubuntu jammy-security main universe restricted multiverse' | sudo tee -a /etc/apt/sources.list.d/yuejian-mirror.list
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
 
       - uses: actions/setup-node@v4
         with:
