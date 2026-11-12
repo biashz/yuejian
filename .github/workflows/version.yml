@@ -15,8 +15,8 @@ concurrency:
 
 jobs:
   bump:
-    # 仅当提交信息以标记开头时跳过；避免正文里出现同样字样被误判
-    if: ${{ !startsWith(github.event.head_commit.message, '[skip version]') && !startsWith(github.event.head_commit.message, 'chore(release): v') }}
+    # 跳过标记只认提交信息开头；CI 自身的版本提交以 chore(release) 开头
+    if: ${{ !startsWith(github.event.head_commit.message, '[skip version]') && !startsWith(github.event.head_commit.message, 'chore(release)') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
