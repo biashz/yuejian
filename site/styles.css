@@ -507,6 +507,8 @@ figcaption {
   flex-direction: column;
   background: var(--surface);
 }
+/* Linux 卡片有两个下载按钮，需要拉开间距 */
+.download-card .btn + .btn { margin-top: 8px; }
 .os-head {
   display: flex;
   align-items: center;

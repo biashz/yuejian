@@ -705,16 +705,22 @@ function updateStatus() {
 
 /* ---------------- Toast ---------------- */
 let toastTimer = null;
+// 复用同一个提示元素：连续触发时只重置计时，避免旧提示丢失计时器而永久停留
 function toast(message) {
   const wrap = $("#toastWrap");
-  const el = document.createElement("div");
-  el.className = "toast";
-  el.innerHTML = `<svg class="ic"><use href="#i-check"/></svg><span>${escapeHtml(message)}</span>`;
-  wrap.appendChild(el);
+  let el = wrap.firstElementChild;
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "toast";
+    el.innerHTML = '<svg class="ic"><use href="#i-check"/></svg><span></span>';
+    wrap.appendChild(el);
+  }
+  el.querySelector("span").textContent = message;
+  el.classList.remove("is-out");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     el.classList.add("is-out");
-    setTimeout(() => el.remove(), 220);
+    toastTimer = setTimeout(() => el.remove(), 220);
   }, 2200);
 }
 

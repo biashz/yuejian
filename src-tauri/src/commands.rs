@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 const MAX_TEXT_SIZE: u64 = 16 * 1024 * 1024;
+/// asset 协议失效时兜底读取的上限，超过后直接报错而不是把内存吃光
+const MAX_PDF_BYTES: u64 = 128 * 1024 * 1024;
 
 fn lock<'a>(state: &'a State<'_, StoreState>) -> Result<std::sync::MutexGuard<'a, store::AppState>, String> {
     state.data.lock().map_err(|_| "书架状态已损坏".to_string())
@@ -125,33 +127,47 @@ pub enum OpenDoc {
 }
 
 #[tauri::command]
-pub fn open_book(state: State<'_, StoreState>, id: String) -> Result<OpenDoc, String> {
-    let mut data = lock(&state)?;
-    let Some(book) = data.books.iter_mut().find(|b| b.id == id) else {
-        return Err("书架中找不到这本书".into());
+pub async fn open_book(state: State<'_, StoreState>, id: String) -> Result<OpenDoc, String> {
+    // 锁只在快照阶段持有，避免把阻塞 IO 放在同步命令里卡住界面线程
+    let book = {
+        let mut data = lock(&state)?;
+        let Some(book) = data.books.iter_mut().find(|b| b.id == id) else {
+            return Err("书架中找不到这本书".into());
+        };
+        book.last_opened_at = store::now_ms();
+        let snapshot = book.clone();
+        let _ = store::persist(&data, &state.dir);
+        snapshot
     };
-    book.last_opened_at = store::now_ms();
-    let book = book.clone();
-    let _ = store::persist(&data, &state.dir);
 
-    let path = PathBuf::from(&book.path);
     if book.kind == "pdf" {
-        return Ok(OpenDoc::Pdf { path: book.path.clone(), pages: book.pages });
+        return Ok(OpenDoc::Pdf { path: book.path, pages: book.pages });
     }
 
-    let source = fs::read_to_string(&path).map_err(|err| format!("读取 Markdown 失败：{err}"))?;
-    let (html, toc) = markdown::render(&source);
+    let path = PathBuf::from(&book.path);
+    let meta = fs::metadata(&path).map_err(|err| format!("读取 Markdown 失败：{err}"))?;
+    if meta.len() > MAX_TEXT_SIZE {
+        return Err(format!(
+            "Markdown 文件过大（{:.1} MB），请拆分后再导入",
+            meta.len() as f64 / 1024.0 / 1024.0
+        ));
+    }
+
     let dir = path
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    Ok(OpenDoc::Markdown {
-        html,
-        toc,
-        dir,
-        words: markdown::word_count(&source),
+    // 解析与渲染放到阻塞线程池，超大文档也不会冻结窗口
+    let (html, toc, words) = tauri::async_runtime::spawn_blocking(move || {
+        let source = fs::read_to_string(&path).map_err(|err| format!("读取 Markdown 失败：{err}"))?;
+        let (html, toc) = markdown::render(&source);
+        Ok::<_, String>((html, toc, markdown::word_count(&source)))
     })
+    .await
+    .map_err(|err| err.to_string())??;
+
+    Ok(OpenDoc::Markdown { html, toc, dir, words })
 }
 
 #[tauri::command]
@@ -194,8 +210,14 @@ pub fn remove_book(state: State<'_, StoreState>, id: String) -> Result<Vec<Book>
     Ok(data.books.clone())
 }
 
-/// asset 协议不可用时的兜底：直接把 PDF 字节交给前端
+/// asset 协议不可用时的兜底：直接把 PDF 字节交给前端。
+/// 走二进制通道（不是 JSON 数组），并且拒绝超大文件，避免界面被拖死。
 #[tauri::command]
-pub fn read_pdf_bytes(path: String) -> Result<Vec<u8>, String> {
-    fs::read(path).map_err(|err| format!("读取 PDF 失败：{err}"))
+pub fn read_pdf_bytes(path: String) -> Result<tauri::ipc::Response, String> {
+    let meta = fs::metadata(&path).map_err(|err| format!("读取 PDF 失败：{err}"))?;
+    if meta.len() > MAX_PDF_BYTES {
+        return Err("文件过大，无法通过备用通道读取".into());
+    }
+    let bytes = fs::read(&path).map_err(|err| format!("读取 PDF 失败：{err}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
 }

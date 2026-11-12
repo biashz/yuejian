@@ -8,7 +8,7 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24c8db.svg)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-1.77%2B-000000.svg)](https://www.rust-lang.org)
 [![Release](https://img.shields.io/github/v/release/biashz/yuejian)](https://github.com/biashz/yuejian/releases)
-[![官网](https://img.shields.io/badge/website-yuejian.vercel.app-b23a2b.svg)](https://yuejian.vercel.app)
+[![官网](https://img.shields.io/badge/website-yuejian-reader.vercel.app-b23a2b.svg)](https://yuejian-reader.vercel.app)
 
 ![阅笺书架界面](site/assets/screenshot-library.jpg)
 
@@ -22,7 +22,7 @@
 - **命令面板**：`Ctrl/Cmd + K` 搜书、跳章节、切换主题、打开设置、导入文件。
 - **本地优先**：书架、设置与进度写在程序目录内的 `data/`，断网可用，复制目录即可迁移。
 
-其他界面见 [官网](https://yuejian.vercel.app) 与 [用户手册](docs/usage.md)。
+其他界面见 [官网](https://yuejian-reader.vercel.app) 与 [用户手册](docs/usage.md)。
 
 ## 下载
 
@@ -37,7 +37,7 @@
 注意事项：
 
 - **数据位置**：发布版的所有数据写入可执行文件同级的 `data/`；Linux AppImage 写入 `.AppImage` 文件同级目录。卸载或迁移时连同该目录一起处理即可。
-- **macOS 首次打开**：安装包未做 Apple 公证，若提示“无法验证开发者”，请右键点击应用选择「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/阅笺.app`。
+- **macOS 首次打开**：安装包未做 Apple 公证，若提示“无法验证开发者”，请右键点击应用选择「打开」，或执行 `xattr -dr com.apple.quarantine "/Applications/YueJian Reader.app"`。
 - **Linux AppImage**：下载后需要 `chmod +x` 再运行。
 
 ## 技术栈

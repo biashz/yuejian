@@ -9,14 +9,14 @@
 | 平台 | 文件 | 安装方式 |
 | --- | --- | --- |
 | Windows | `YueJian.Reader_<版本>_x64-setup.exe` | 双击运行，按向导安装到当前用户目录 |
-| macOS | `YueJian.Reader_<版本>_universal.dmg` | 打开 dmg，把「阅笺」拖入「应用程序」 |
+| macOS | `YueJian.Reader_<版本>_universal.dmg` | 打开 dmg，把「YueJian Reader」拖入「应用程序」 |
 | Linux | `YueJian.Reader_<版本>_amd64.deb` | `sudo dpkg -i <文件名>.deb` |
 | Linux | `YueJian.Reader_<版本>_amd64.AppImage` | `chmod +x <文件名>` 后直接运行 |
 
 首次启动的注意事项：
 
 - **macOS**：安装包未做 Apple 公证，系统可能提示“无法验证开发者”。在访达中右键点击应用选择「打开」，或执行
-  `xattr -dr com.apple.quarantine /Applications/阅笺.app` 后再启动。
+  `xattr -dr com.apple.quarantine "/Applications/YueJian Reader.app"` 后再启动。
 - **Windows**：依赖系统 WebView2。Windows 11 已内置，Windows 10 若缺失需先安装 Microsoft Edge WebView2 Runtime。
 - **Linux**：需要 WebKitGTK 4.1；AppImage 自带其余依赖，但不会解压到系统目录。
 

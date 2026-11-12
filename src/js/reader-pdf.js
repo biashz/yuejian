@@ -29,6 +29,8 @@ export class PdfReader {
     this.token = 0;
     this.baseWidth = 720;
     this.aspect = 1.414;
+    // 每页滚动位置的缓存，避免逐帧对所有页做 offsetTop 读取（大文档会明显卡顿）
+    this.tops = null;
 
     this.handleScroll = this.handleScroll.bind(this);
     this.handleResize = this.handleResize.bind(this);
@@ -45,6 +47,11 @@ export class PdfReader {
       cMapPacked: true,
       standardFontDataUrl: `${VENDOR}standard_fonts/`,
       wasmUrl: `${VENDOR}wasm/`,
+      // 大文件关键：关闭后台预取，改为按需分块（1 MB）读取，
+      // 否则 pdf.js 会把整个文件逐步拉进内存，几个 GB 的文件会直接把界面卡死
+      disableAutoFetch: true,
+      disableStream: false,
+      rangeChunkSize: 1024 * 1024,
     };
 
     let pdf;
@@ -52,7 +59,7 @@ export class PdfReader {
       // 优先走 asset 协议（支持 Range 请求，大文件友好）
       pdf = await pdfjsLib.getDocument({ url: convertFileSrc(path), ...options }).promise;
     } catch (primaryError) {
-      // 兜底：通过 IPC 读取字节
+      // 兜底：通过 IPC 读取字节（Rust 侧走二进制通道，且有体积上限）
       const bytes = await invoke("read_pdf_bytes", { path });
       pdf = await pdfjsLib.getDocument({ data: new Uint8Array(bytes), ...options }).promise;
     }
@@ -86,8 +93,11 @@ export class PdfReader {
     this.stack.innerHTML = "";
     this.sheets = [];
     this.rendered.clear();
+    this.tops = null;
     const width = this.pageWidth();
     const height = Math.round(width * this.aspect);
+    // 一次性插入：逐页 appendChild 会让浏览器反复布局，页数多时明显卡住
+    const fragment = document.createDocumentFragment();
 
     for (let i = 1; i <= this.numPages; i++) {
       const sheet = document.createElement("div");
@@ -96,9 +106,11 @@ export class PdfReader {
       sheet.style.width = `${width}px`;
       sheet.style.height = `${height}px`;
       sheet.innerHTML = `<div class="pdf-placeholder" style="width:100%;height:100%">第 ${i} 页</div>`;
-      this.stack.appendChild(sheet);
+      fragment.appendChild(sheet);
       this.sheets.push(sheet);
     }
+
+    this.stack.appendChild(fragment);
 
     this.observer = new IntersectionObserver(
       (entries) => {
@@ -163,17 +175,39 @@ export class PdfReader {
 
     sheet.classList.add("is-ready");
     this.rendered.set(pageNo, this.zoom);
+    // 实际页高与占位高度可能有差异，作废滚动位置缓存
+    this.tops = null;
+  }
+
+  /** 重建每页顶部滚动位置缓存（一次布局读取，之后滚动只做二分查找） */
+  rebuildTops() {
+    this.tops = this.sheets.map((sheet) => sheet.offsetTop);
+  }
+
+  /** 根据滚动偏移量反查页码（1 基） */
+  pageAtOffset(offset) {
+    if (!this.tops) this.rebuildTops();
+    let low = 0;
+    let high = this.tops.length - 1;
+    let page = 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (this.tops[mid] <= offset) {
+        page = mid + 1;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return page;
   }
 
   renderVisible() {
     if (!this.sheets.length) return;
-    const area = this.scrollArea.getBoundingClientRect();
-    this.sheets.forEach((sheet, index) => {
-      const rect = sheet.getBoundingClientRect();
-      if (rect.bottom > area.top - 700 && rect.top < area.bottom + 700) {
-        this.renderPage(index + 1);
-      }
-    });
+    const top = this.scrollArea.scrollTop;
+    const first = Math.max(1, this.pageAtOffset(top - 700) - 1);
+    const last = Math.min(this.numPages, this.pageAtOffset(top + this.scrollArea.clientHeight + 700) + 1);
+    for (let page = first; page <= last; page++) this.renderPage(page);
   }
 
   setZoom(zoom, anchorPage = this.page) {
@@ -188,6 +222,7 @@ export class PdfReader {
       sheet.style.height = `${height}px`;
       sheet.innerHTML = `<div class="pdf-placeholder" style="width:100%;height:100%">第 ${index + 1} 页</div>`;
     });
+    this.tops = null;
 
     this.renderVisible();
     requestAnimationFrame(() => this.goPage(anchorPage, false));
@@ -211,11 +246,7 @@ export class PdfReader {
     this.scrollTicking = requestAnimationFrame(() => {
       this.scrollTicking = 0;
       if (!this.sheets.length) return;
-      const top = this.scrollArea.scrollTop;
-      let current = 1;
-      for (const sheet of this.sheets) {
-        if (sheet.offsetTop - top <= 140) current = Number(sheet.dataset.page);
-      }
+      const current = this.pageAtOffset(this.scrollArea.scrollTop + 140);
       if (current !== this.page) this.page = current;
       this.emitProgress();
     });
@@ -333,6 +364,7 @@ export class PdfReader {
     this.sheets = [];
     this.rendered.clear();
     this.textCache.clear();
+    this.tops = null;
     this.page = 1;
     this.numPages = 0;
   }

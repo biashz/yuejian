@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://yuejian.vercel.app/sitemap.xml
+Sitemap: https://yuejian-reader.vercel.app/sitemap.xml
