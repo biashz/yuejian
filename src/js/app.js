@@ -310,7 +310,7 @@ async function openPdf(doc) {
   updateDocSub();
 
   try {
-    await reader.open(doc.path, { startPage: state.pdfPage, zoom: state.pdfZoom });
+    await reader.open(doc.path, { startPage: state.pdfPage, zoom: state.pdfZoom, size: doc.size || 0 });
   } catch (error) {
     $("#pdfStack").innerHTML = `<div class="pdf-error">无法打开这份 PDF<br><small>${escapeHtml(error?.message || error)}</small></div>`;
     toast("PDF 打开失败，文件可能已被移动");

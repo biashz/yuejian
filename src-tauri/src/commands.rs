@@ -2,6 +2,7 @@ use crate::markdown;
 use crate::store::{self, Book, Progress, Settings, StoreState};
 use serde::Serialize;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use tauri::State;
 
@@ -117,7 +118,12 @@ pub fn import_files(state: State<'_, StoreState>, paths: Vec<String>) -> Result<
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum OpenDoc {
-    Pdf { path: String, pages: u32 },
+    Pdf {
+        path: String,
+        pages: u32,
+        /// 文件体积，前端据此决定走 asset 协议还是 IPC 分块读取
+        size: u64,
+    },
     Markdown {
         html: String,
         toc: Vec<markdown::TocItem>,
@@ -141,7 +147,13 @@ pub async fn open_book(state: State<'_, StoreState>, id: String) -> Result<OpenD
     };
 
     if book.kind == "pdf" {
-        return Ok(OpenDoc::Pdf { path: book.path, pages: book.pages });
+        // 以磁盘上的实际体积为准：旧记录里的 size 可能缺失或不准确
+        let size = fs::metadata(&book.path).map(|meta| meta.len()).unwrap_or(book.size);
+        return Ok(OpenDoc::Pdf {
+            path: book.path,
+            pages: book.pages,
+            size,
+        });
     }
 
     let path = PathBuf::from(&book.path);
@@ -220,4 +232,37 @@ pub fn read_pdf_bytes(path: String) -> Result<tauri::ipc::Response, String> {
     }
     let bytes = fs::read(&path).map_err(|err| format!("读取 PDF 失败：{err}"))?;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// pdf.js 的 PDFDataRangeTransport 按需读取字节区间。
+///
+/// 大文件必须走这里：asset 协议在收到**不带 Range** 的请求时会把整个文件读进内存，
+/// 2 GB 的 PDF 会直接把进程撑死（表现为界面卡死后应用自动退出）。
+/// 本命令只读请求到的那一段，内存占用与文件大小无关。
+#[tauri::command]
+pub fn read_pdf_range(path: String, begin: u64, end: u64) -> Result<tauri::ipc::Response, String> {
+    /// 单次请求的上限，pdf.js 默认每块 1 MB，留足余量
+    const MAX_CHUNK: u64 = 8 * 1024 * 1024;
+
+    let mut file = fs::File::open(&path).map_err(|err| format!("读取 PDF 失败：{err}"))?;
+    let len = file
+        .metadata()
+        .map_err(|err| format!("读取 PDF 失败：{err}"))?
+        .len();
+
+    // 越界请求返回空块，由 pdf.js 按 EOF 处理
+    if begin >= len || end <= begin {
+        return Ok(tauri::ipc::Response::new(Vec::new()));
+    }
+    if end - begin > MAX_CHUNK {
+        return Err("请求的字节区间过大".into());
+    }
+
+    let size = (end.min(len) - begin) as usize;
+    file.seek(SeekFrom::Start(begin))
+        .map_err(|err| format!("读取 PDF 失败：{err}"))?;
+    let mut buffer = vec![0u8; size];
+    file.read_exact(&mut buffer)
+        .map_err(|err| format!("读取 PDF 失败：{err}"))?;
+    Ok(tauri::ipc::Response::new(buffer))
 }
