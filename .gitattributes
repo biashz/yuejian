@@ -1,0 +1,14 @@
+# 统一以 LF 存储，避免 Windows 上出现 CRLF 换行导致的“假修改”
+* text=auto eol=lf
+
+# pdf.js 与界面所需的二进制资源，禁止任何换行转换
+*.bcmap binary
+*.pfb binary
+*.ttf binary
+*.wasm binary
+*.icc binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
