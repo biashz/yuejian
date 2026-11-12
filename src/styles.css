@@ -988,7 +988,6 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 
 .sheet {
   width: min(460px, 92vw);
-  max-height: 86vh;
   margin-left: auto;
   align-self: stretch;
   height: 100%;
