@@ -126,7 +126,8 @@ npm run dev      # 增量编译 debug 版并启动应用
 - 版本号同时存在于 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 与 `Cargo.lock`，由 [scripts/bump-version.mjs](scripts/bump-version.mjs) 一次改齐，任一文件缺少版本字段会直接失败，不会留下半新半旧的版本号。
 - 每次 push 到 `main`，[.github/workflows/version.yml](.github/workflows/version.yml) 会在最新提交上自动 patch 递增（`0.1.0` → `0.1.1`），并以 `chore(release): vX.Y.Z [skip version]` 提交回仓库；同一分支的递增串行执行，避免并发冲突。
 - 因此 CI 递增后本地会落后一个提交，下次推送前先 `git pull --rebase`。
-- 自动递增不创建标签，安装包仍由手动推送的 `v*` 标签触发构建；发版时先 `git pull`，再打标签即可，安装包文件名中的版本取自 `tauri.conf.json`。
+- 自动递增不创建标签，安装包仍由手动推送的 `v*` 标签触发构建；标签必须等于 `v` + 当前版本号（例如版本 `0.1.10` 对应标签 `v0.1.10`），[build.yml](.github/workflows/build.yml) 会校验，不一致直接失败。
+- 因此发版流程是：先 `git pull` 拿到最新版本号，再按该版本号打标签推送；这样安装包、Release 与应用内显示的版本号始终一致。
 - 需要跳过某次递增时，把 `[skip version]` 写在提交信息开头（正文中出现该字样不会触发跳过）。
 
 ## 数据与迁移
