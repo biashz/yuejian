@@ -15,8 +15,8 @@ concurrency:
 
 jobs:
   bump:
-    # 自身提交带 [skip version] 标记；即使改用 PAT 推送也不会再次触发
-    if: ${{ !contains(github.event.head_commit.message, '[skip version]') }}
+    # 仅当提交信息以标记开头时跳过；避免正文里出现同样字样被误判
+    if: ${{ !startsWith(github.event.head_commit.message, '[skip version]') && !startsWith(github.event.head_commit.message, 'chore(release): v') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

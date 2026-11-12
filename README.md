@@ -127,7 +127,7 @@ npm run dev      # 增量编译 debug 版并启动应用
 - 每次 push 到 `main`，[.github/workflows/version.yml](.github/workflows/version.yml) 会在最新提交上自动 patch 递增（`0.1.0` → `0.1.1`），并以 `chore(release): vX.Y.Z [skip version]` 提交回仓库；同一分支的递增串行执行，避免并发冲突。
 - 因此 CI 递增后本地会落后一个提交，下次推送前先 `git pull --rebase`。
 - 自动递增不创建标签，安装包仍由手动推送的 `v*` 标签触发构建；发版时先 `git pull`，再打标签即可，安装包文件名中的版本取自 `tauri.conf.json`。
-- 需要跳过某次递增时，在提交信息中带上 `[skip version]`。
+- 需要跳过某次递增时，把 `[skip version]` 写在提交信息开头（正文中出现该字样不会触发跳过）。
 
 ## 数据与迁移
 
