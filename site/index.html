@@ -1,0 +1,514 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<title>阅笺 YueJian Reader — 免费开源的 PDF 与 Markdown 本地阅读器</title>
+<meta name="description" content="阅笺（YueJian Reader）是一款免费开源的本地桌面阅读器，把 PDF 论文与 Markdown 笔记放进同一个安静的阅读空间：连续滚动渲染、目录与全文搜索、三套主题、可调排版、阅读进度自动记忆。支持 Windows、macOS、Linux，离线可用，文件不上传。" />
+<meta name="keywords" content="PDF阅读器,Markdown阅读器,本地阅读器,开源阅读器,Tauri,Rust,pdf.js,离线阅读,Windows PDF 阅读器,macOS 阅读器,Linux 阅读器" />
+<meta name="author" content="bias" />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#F3EDE1" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#12100E" media="(prefers-color-scheme: dark)" />
+<link rel="canonical" href="https://yuejian.vercel.app/" />
+<link rel="alternate" hreflang="zh-CN" href="https://yuejian.vercel.app/" />
+<link rel="alternate" hreflang="x-default" href="https://yuejian.vercel.app/" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/styles.css" />
+
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="阅笺 YueJian Reader" />
+<meta property="og:locale" content="zh_CN" />
+<meta property="og:url" content="https://yuejian.vercel.app/" />
+<meta property="og:title" content="阅笺 YueJian Reader — 免费开源的 PDF 与 Markdown 本地阅读器" />
+<meta property="og:description" content="一个窗口、一套排版语言、一条连续的阅读动线。PDF 与 Markdown 共享主题、进度与目录，离线运行，免费开源。" />
+<meta property="og:image" content="https://yuejian.vercel.app/assets/og-image.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="阅笺 YueJian Reader 界面预览" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="阅笺 YueJian Reader — PDF 与 Markdown 本地阅读器" />
+<meta name="twitter:description" content="免费开源的本地阅读器：连续滚动 PDF、Markdown 活排版、三套主题与阅读进度记忆。Windows / macOS / Linux。" />
+<meta name="twitter:image" content="https://yuejian.vercel.app/assets/og-image.png" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://yuejian.vercel.app/#website",
+      "url": "https://yuejian.vercel.app/",
+      "name": "阅笺 YueJian Reader",
+      "inLanguage": "zh-CN",
+      "description": "阅笺是一款免费开源的 PDF 与 Markdown 本地阅读器。"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://yuejian.vercel.app/#app",
+      "name": "阅笺 YueJian Reader",
+      "alternateName": "YueJian Reader",
+      "applicationCategory": "UtilitiesApplication",
+      "applicationSubCategory": "阅读器 / 文档工具",
+      "operatingSystem": "Windows 10 及以上, macOS 10.15 及以上, Linux (WebKitGTK 4.1)",
+      "softwareVersion": "0.1.0",
+      "fileSize": "4.4MB",
+      "license": "https://github.com/biashz/yuejian/blob/main/LICENSE",
+      "isAccessibleForFree": true,
+      "inLanguage": "zh-CN",
+      "downloadUrl": "https://github.com/biashz/yuejian/releases/latest",
+      "installUrl": "https://github.com/biashz/yuejian/releases/latest",
+      "codeRepository": "https://github.com/biashz/yuejian",
+      "screenshot": "https://yuejian.vercel.app/assets/screenshot-library.jpg",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "CNY",
+        "availability": "https://schema.org/InStock"
+      },
+      "featureList": [
+        "PDF 连续滚动渲染与文本层选择复制",
+        "PDF 目录、缩略图与全文搜索",
+        "Markdown GFM 渲染与代码高亮",
+        "纸白 / 夜读 / 护眼三套主题",
+        "字号、行高、版心宽度可调",
+        "阅读进度自动保存与恢复",
+        "命令面板（Ctrl/Cmd + K）",
+        "完全本地运行，文件不上传"
+      ],
+      "author": {
+        "@type": "Person",
+        "name": "bias",
+        "url": "https://github.com/biashz"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://yuejian.vercel.app/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "阅笺是免费的吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "是。阅笺以 MIT 协议完全开源，桌面端全部功能免费，不包含会员、订阅或内购。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "我的文档会被上传到服务器吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不会。阅笺没有账号体系、没有云同步、没有遥测，PDF 与 Markdown 文件始终留在本机，阅读时可以断网使用。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "支持哪些文档格式？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "支持 PDF 与 Markdown（.md / .markdown）。Markdown 按 GitHub 风格渲染，包含表格、任务列表、引用、脚注与删除线，并带代码语法高亮。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "阅笺支持 Windows、macOS 和 Linux 吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "三个平台都有安装包：Windows 提供 NSIS 安装程序，macOS 提供通用架构 dmg（Intel 与 Apple Silicon 通用），Linux 提供 deb 与 AppImage。系统要求为 Windows 10 1803 及以上、macOS 10.15 及以上、带 WebKitGTK 4.1 的现代 Linux 发行版。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "macOS 提示“无法验证开发者”怎么办？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "当前安装包未做 Apple 公证。在“访达”中右键点击应用选择“打开”，或执行 xattr -dr com.apple.quarantine /Applications/阅笺.app 之后再启动即可。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "配置和阅读进度保存在哪里？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "全部保存在程序安装目录下的 data 文件夹中（state.json 与 WebView 缓存）。不写入系统其他位置；复制整个程序目录即可迁移阅读记录。"
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<header class="site-header" id="top">
+  <div class="wrap header-inner">
+    <a class="brand" href="/" aria-label="阅笺 YueJian Reader 首页">
+      <span class="brand-mark" aria-hidden="true">阅</span>
+      <span class="brand-text">
+        <strong>阅笺</strong>
+        <em>YUEJIAN READER</em>
+      </span>
+    </a>
+
+    <nav class="site-nav" id="siteNav" aria-label="站点导航">
+      <a href="#features">功能</a>
+      <a href="#screens">界面</a>
+      <a href="#download">下载</a>
+      <a href="#stack">技术</a>
+      <a href="#faq">问答</a>
+      <a class="nav-ext" href="https://github.com/biashz/yuejian" rel="noopener">GitHub</a>
+    </nav>
+
+    <a class="btn btn-primary btn-sm header-cta" href="#download">免费下载</a>
+
+    <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="siteNav" aria-label="展开导航">
+      <span></span><span></span>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ========== HERO ========== -->
+  <section class="hero">
+    <div class="wrap hero-inner">
+      <div class="hero-copy">
+        <p class="eyebrow">— LOCAL READER FOR PDF &amp; MARKDOWN</p>
+        <h1>把 PDF 与 Markdown，<br />放进同一个安静的阅读空间。</h1>
+        <p class="lede">
+          阅笺是一款免费开源的本地桌面阅读器。论文的纸面感与笔记的活排版，共享同一套主题、
+          目录与阅读进度——不登录、不上传、不联网也能读完。
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="https://github.com/biashz/yuejian/releases/latest" rel="noopener">
+            下载阅笺
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/biashz/yuejian" rel="noopener">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19c-4 1.5-4-2.5-6-3m12 5v-3.9a3.4 3.4 0 0 0-1-2.6c3-.3 6-1.5 6-6.5a5 5 0 0 0-1.4-3.5 4.6 4.6 0 0 0-.1-3.5s-1.1-.3-3.5 1.3a12 12 0 0 0-6.4 0C6.2 1 5.1 1.3 5.1 1.3a4.6 4.6 0 0 0-.1 3.5A5 5 0 0 0 3.6 8.4c0 4.9 3 6.2 6 6.5a3.4 3.4 0 0 0-1 2.6V21"/></svg>
+            查看源码
+          </a>
+        </div>
+        <ul class="hero-meta">
+          <li>MIT 开源</li>
+          <li>约 4 MB 安装包</li>
+          <li>Windows · macOS · Linux</li>
+          <li>完全离线</li>
+        </ul>
+      </div>
+
+      <figure class="hero-shot">
+        <div class="window">
+          <div class="window-bar" aria-hidden="true">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="window-title">阅笺 · 书架</span>
+          </div>
+          <img src="/assets/screenshot-library.jpg" width="1440" height="900" fetchpriority="high"
+               alt="阅笺书架界面：左侧为文档库列表，中间是继续阅读卡片与封面网格，显示出 PDF 与 Markdown 文档及各自的阅读进度。" />
+        </div>
+        <figcaption>书架：最近阅读、收藏与进度一览</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ========== 功能 ========== -->
+  <section class="section" id="features">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sec-no">01 — 功能</p>
+        <h2>为长时间阅读而做的取舍</h2>
+        <p class="sec-sub">
+          不做批注云同步、不做书城、不做社交。所有设计都朝向同一件事：让你在文档里待得更久一点。
+        </p>
+      </div>
+
+      <div class="grid grid-3">
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
+          <h3>PDF 连续滚动</h3>
+          <p>pdf.js 渲染到画布，叠加透明文本层，长文档按视口懒加载页面。滚动像翻一本装订好的册子，而不是一页页点击翻页。</p>
+        </article>
+
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+          <h3>目录 · 缩略图 · 全文搜索</h3>
+          <p>同一个侧栏分三格：按章节大纲跳转、按缩略图定位、按关键词在全文中匹配并高亮命中处。</p>
+        </article>
+
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-6 6 6 6"/><path d="m16 6 6 6-6 6"/></svg>
+          <h3>Markdown 活排版</h3>
+          <p>渲染在 Rust 端完成，支持表格、任务列表、脚注、删除线与自动链接，代码块带语法高亮；标题层级自动生成目录锚点。</p>
+        </article>
+
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          <h3>纸白 · 夜读 · 护眼</h3>
+          <p>三套主题不只换底色：纸张纹理、文字对比度、分隔线与代码配色一起变，夜里读长文不再刺眼。</p>
+        </article>
+
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+          <h3>可调的排版</h3>
+          <p>正文字号 15–24px、行高 1.6–2.0、版心 620–820px，另有专注模式收起一切非正文元素。</p>
+        </article>
+
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 6v6c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6Z"/><path d="m9 12 2 2 4-4"/></svg>
+          <h3>本地优先</h3>
+          <p>无账号、无云同步、无遥测。文档与阅读记录只存在本机目录，断网时功能一个不少。</p>
+        </article>
+      </div>
+
+      <ul class="mini-features">
+        <li><strong>进度记忆</strong>页码、缩放与滚动偏移自动保存，下次打开回到原处</li>
+        <li><strong>命令面板</strong>Ctrl / Cmd + K 搜书、跳章节、切主题、开设置</li>
+        <li><strong>拖拽导入</strong>把文件拖进窗口即入书架，收藏条目置顶</li>
+        <li><strong>跨平台</strong>同一份代码构建 Windows、macOS 与 Linux 安装包</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ========== 界面 ========== -->
+  <section class="section section-alt" id="screens">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sec-no">02 — 界面</p>
+        <h2>一套排版语言，两种文档</h2>
+        <p class="sec-sub">标题用楷体，正文用宋体，朱砂色只用来标记"你正在这里"。</p>
+      </div>
+
+      <figure class="shot-wide">
+        <div class="window">
+          <div class="window-bar" aria-hidden="true">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="window-title">阅笺 · PDF 阅读</span>
+          </div>
+          <img src="/assets/screenshot-reading.jpg" width="1440" height="900" loading="lazy"
+               alt="阅笺 PDF 阅读界面：中间为连续滚动的论文页面，右侧为目录面板，底部显示当前页码与阅读进度。" />
+        </div>
+        <figcaption>PDF：连续滚动 + 可折叠目录，页脚显示页码与进度</figcaption>
+      </figure>
+
+      <div class="shot-notes">
+        <div>
+          <h3>书架不是文件列表</h3>
+          <p>封面按纸色分组，进度条压在书脊下沿；最近读的那本永远在最上面，收藏的会被钉住。</p>
+        </div>
+        <div>
+          <h3>正文区只有正文</h3>
+          <p>页眉、页码、工具栏都在边缘待命，专注模式下连侧栏一起收起，版心宽度随窗口自适应。</p>
+        </div>
+        <div>
+          <h3>设置即所见</h3>
+          <p>主题、字号、行高与版心改动立即生效，不需要确认，也不需要重启应用。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 下载 ========== -->
+  <section class="section" id="download">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sec-no">03 — 下载</p>
+        <h2>选择你的平台</h2>
+        <p class="sec-sub">全部安装包来自 GitHub Actions 的三端构建，版本与源码一致，可在 Releases 中校验。</p>
+      </div>
+
+      <div class="grid grid-3 download-grid">
+        <article class="card download-card">
+          <div class="os-head">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5 10.5 4.5v7H3Z"/><path d="M12 4.2 21 3v8.5h-9Z"/><path d="M3 12.5h7.5v7L3 18.5Z"/><path d="M12 12.5h9V21l-9-1.2Z"/></svg>
+            <div>
+              <h3>Windows</h3>
+              <p class="os-sub">NSIS 安装程序 · x64</p>
+            </div>
+          </div>
+          <ul class="os-meta">
+            <li><span>安装包</span><code>YueJian.Reader_x64-setup.exe</code></li>
+            <li><span>大小</span>约 4.4 MB</li>
+            <li><span>要求</span>Windows 10 1803+ / WebView2</li>
+          </ul>
+          <a class="btn btn-primary btn-block" href="https://github.com/biashz/yuejian/releases/latest" rel="noopener">下载 .exe</a>
+        </article>
+
+        <article class="card download-card">
+          <div class="os-head">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>
+            <div>
+              <h3>macOS</h3>
+              <p class="os-sub">DMG 通用二进制</p>
+            </div>
+          </div>
+          <ul class="os-meta">
+            <li><span>安装包</span><code>YueJian.Reader_universal.dmg</code></li>
+            <li><span>大小</span>约 9.7 MB</li>
+            <li><span>要求</span>macOS 10.15+ · Intel / Apple Silicon</li>
+          </ul>
+          <a class="btn btn-primary btn-block" href="https://github.com/biashz/yuejian/releases/latest" rel="noopener">下载 .dmg</a>
+        </article>
+
+        <article class="card download-card">
+          <div class="os-head">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>
+            <div>
+              <h3>Linux</h3>
+              <p class="os-sub">DEB / AppImage</p>
+            </div>
+          </div>
+          <ul class="os-meta">
+            <li><span>安装包</span><code>amd64.deb</code> · <code>amd64.AppImage</code></li>
+            <li><span>大小</span>约 4.9 MB / 83 MB</li>
+            <li><span>要求</span>WebKitGTK 4.1</li>
+          </ul>
+          <a class="btn btn-primary btn-block" href="https://github.com/biashz/yuejian/releases/latest" rel="noopener">下载安装包</a>
+        </article>
+      </div>
+
+      <div class="download-notes">
+        <div class="note-block">
+          <h3>数据只放在程序目录</h3>
+          <p>
+            配置、书架与阅读进度写入安装目录下的 <code>data/</code>（<code>state.json</code> 与 WebView 缓存），
+            AppImage 则写在其同级目录。不向系统其他位置散落文件；把整个目录复制走，阅读记录跟着走。
+          </p>
+        </div>
+        <div class="note-block">
+          <h3>首次打开提示</h3>
+          <p>
+            macOS 安装包未做公证，若提示"无法验证开发者"，请右键点击应用选择「打开」。Linux 的 AppImage
+            需要先 <code>chmod +x</code> 再运行。所有历史版本与校验信息见
+            <a href="https://github.com/biashz/yuejian/releases" rel="noopener">GitHub Releases</a>。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 技术 ========== -->
+  <section class="section section-alt" id="stack">
+    <div class="wrap split">
+      <div>
+        <p class="sec-no">04 — 技术</p>
+        <h2>小体积，少依赖，无网络</h2>
+        <p class="lede-sm">
+          界面是原生 HTML / CSS / ES Module，没有打包器；外壳由 Rust 与 Tauri 2 提供，直接复用系统 WebView，
+          因此安装包只有几 MB，冷启动通常在 2 秒内。Markdown 解析放在 Rust 侧，PDF 交给 pdf.js，
+          两者都不需要联网下载任何资源。
+        </p>
+        <p class="lede-sm">
+          项目使用 MIT 协议开源，构建脚本会把所有下载的依赖收在工作区内，安装包由 GitHub Actions
+          在三个平台上分别产出。
+        </p>
+        <pre class="code"><code><span class="c"># 本地开发</span>
+npm install
+npm run dev
+
+<span class="c"># 构建当前平台安装包</span>
+npm run bundle</code></pre>
+      </div>
+
+      <div class="stack-table">
+        <table>
+          <caption class="visually-hidden">阅笺的技术选型</caption>
+          <thead>
+            <tr><th scope="col">层</th><th scope="col">选型</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">应用外壳</th><td>Tauri 2（Rust）</td></tr>
+            <tr><th scope="row">前端</th><td>原生 HTML / CSS / ES Module</td></tr>
+            <tr><th scope="row">PDF 渲染</th><td>pdf.js</td></tr>
+            <tr><th scope="row">Markdown</th><td>comrak（GFM）</td></tr>
+            <tr><th scope="row">代码高亮</th><td>highlight.js</td></tr>
+            <tr><th scope="row">持久化</th><td>serde_json + 本地文件</td></tr>
+            <tr><th scope="row">图标</th><td>Lucide（内联 SVG）</td></tr>
+            <tr><th scope="row">许可</th><td>MIT</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== FAQ ========== -->
+  <section class="section" id="faq">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sec-no">05 — 问答</p>
+        <h2>常见问题</h2>
+      </div>
+
+      <div class="faq">
+        <details open>
+          <summary>阅笺是免费的吗？</summary>
+          <p>是。阅笺以 MIT 协议完全开源，桌面端全部功能免费，没有会员、订阅或内购。</p>
+        </details>
+        <details>
+          <summary>我的文档会被上传到服务器吗？</summary>
+          <p>不会。阅笺没有账号体系、没有云同步、没有遥测。PDF 与 Markdown 文件始终留在本机，断网也能读完。</p>
+        </details>
+        <details>
+          <summary>支持哪些文档格式？</summary>
+          <p>PDF 与 Markdown（<code>.md</code> / <code>.markdown</code>）。Markdown 按 GitHub 风格渲染，包含表格、任务列表、引用、脚注与删除线，代码块带语法高亮。</p>
+        </details>
+        <details>
+          <summary>支持 Windows、macOS 和 Linux 吗？</summary>
+          <p>三端都有安装包。Windows 提供 NSIS 安装程序，macOS 提供 Intel 与 Apple Silicon 通用的 dmg，Linux 提供 deb 与 AppImage。系统要求：Windows 10 1803+、macOS 10.15+、带 WebKitGTK 4.1 的现代发行版。</p>
+        </details>
+        <details>
+          <summary>macOS 提示"无法验证开发者"怎么办？</summary>
+          <p>安装包尚未做 Apple 公证。在访达中右键点击应用并选择「打开」，或执行 <code>xattr -dr com.apple.quarantine /Applications/阅笺.app</code> 后再启动。</p>
+        </details>
+        <details>
+          <summary>配置和阅读进度保存在哪里？</summary>
+          <p>保存在程序安装目录下的 <code>data/</code> 文件夹（<code>state.json</code> 与 WebView 缓存），不写入系统其他位置。复制整个程序目录即可迁移全部阅读记录。</p>
+        </details>
+        <details>
+          <summary>可以参与开发吗？</summary>
+          <p>可以。源码、构建脚本与设计文档都在 <a href="https://github.com/biashz/yuejian" rel="noopener">GitHub 仓库</a>，欢迎提交 Issue 与 Pull Request。</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 结尾 CTA ========== -->
+  <section class="cta-band">
+    <div class="wrap cta-inner">
+      <p class="eyebrow">— START READING</p>
+      <h2>下一份论文，安静地读完。</h2>
+      <div class="hero-actions center">
+        <a class="btn btn-primary" href="https://github.com/biashz/yuejian/releases/latest" rel="noopener">下载阅笺</a>
+        <a class="btn btn-ghost" href="https://github.com/biashz/yuejian" rel="noopener">在 GitHub 上查看</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <div class="footer-brand">
+      <span class="brand-mark" aria-hidden="true">阅</span>
+      <div>
+        <strong>阅笺 YueJian Reader</strong>
+        <p>PDF 与 Markdown 的本地阅读器 · MIT License</p>
+      </div>
+    </div>
+    <nav class="footer-nav" aria-label="页脚导航">
+      <a href="#features">功能</a>
+      <a href="#download">下载</a>
+      <a href="#faq">问答</a>
+      <a href="https://github.com/biashz/yuejian" rel="noopener">源码</a>
+      <a href="https://github.com/biashz/yuejian/releases" rel="noopener">版本记录</a>
+    </nav>
+    <p class="copyright">© <span id="year">2026</span> bias · 文档与阅读记录始终留在你的设备上</p>
+  </div>
+</footer>
+
+<script src="/main.js" defer></script>
+</body>
+</html>
