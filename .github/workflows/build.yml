@@ -84,4 +84,5 @@ jobs:
             src-tauri/target/*/release/bundle/macos/*.dmg
             src-tauri/target/*/release/bundle/dmg/*.dmg
           fail_on_unmatched_files: false
-          generate_release_notes: true
+          # 三个任务共享同一个 Release，只让其中一个生成变更说明，避免内容重复
+          generate_release_notes: ${{ matrix.platform == 'windows-latest' }}
