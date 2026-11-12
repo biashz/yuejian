@@ -9,7 +9,8 @@
     "build": "node scripts/dev.mjs build --no-bundle",
     "bundle": "node scripts/dev.mjs bundle",
     "tauri": "node scripts/dev.mjs",
-    "vendor": "node scripts/vendor-assets.mjs"
+    "vendor": "node scripts/vendor-assets.mjs",
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

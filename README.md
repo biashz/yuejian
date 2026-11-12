@@ -106,6 +106,7 @@ npm run dev      # 增量编译 debug 版并启动应用
 | `npm run build` | 编译 release 二进制但不生成安装包（`tauri build --no-bundle`） |
 | `npm run bundle` | 构建当前平台的安装包 |
 | `npm run vendor` | 同步前端离线资源到 `src/vendor`：pdf.js 取自 `node_modules`，highlight.js 下载官方浏览器构建 |
+| `npm run version:bump` | 手动递增版本号（默认 patch，可加 `--minor` / `--major` / `--set 1.2.3`） |
 | `npm run tauri -- <args>` | 透传任意 Tauri CLI 参数 |
 
 构建期下载的依赖都收敛在项目内：Cargo 目标目录由脚本指定，npm 缓存由 `.npmrc` 指向 `.cache/npm`；Windows 打包时脚本会把 `%LOCALAPPDATA%\tauri` 临时链接到 `.cache/tauri`，结束后只移除链接。
@@ -120,7 +121,13 @@ npm run dev      # 增量编译 debug 版并启动应用
 
 每个任务上传 Artifact，并在打标签时用 `softprops/action-gh-release` 把本平台产物追加到同名 Release；Release 说明只由 Windows 任务生成，避免重复。
 
-版本号以 [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json) 的 `version` 为准，发版时同步修改后再打标签。
+版本号规则：
+
+- 版本号同时存在于 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 与 `Cargo.lock`，由 [scripts/bump-version.mjs](scripts/bump-version.mjs) 一次改齐，任一文件缺少版本字段会直接失败，不会留下半新半旧的版本号。
+- 每次 push 到 `main`，[.github/workflows/version.yml](.github/workflows/version.yml) 会在最新提交上自动 patch 递增（`0.1.0` → `0.1.1`），并以 `chore(release): vX.Y.Z [skip version]` 提交回仓库；同一分支的递增串行执行，避免并发冲突。
+- 因此 CI 递增后本地会落后一个提交，下次推送前先 `git pull --rebase`。
+- 自动递增不创建标签，安装包仍由手动推送的 `v*` 标签触发构建；发版时先 `git pull`，再打标签即可，安装包文件名中的版本取自 `tauri.conf.json`。
+- 需要跳过某次递增时，在提交信息中带上 `[skip version]`。
 
 ## 数据与迁移
 

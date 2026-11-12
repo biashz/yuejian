@@ -1,0 +1,46 @@
+name: 自动递增版本号
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+# 同一分支的递增串行执行，避免两次推送同时改版本号产生冲突
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # 自身提交带 [skip version] 标记；即使改用 PAT 推送也不会再次触发
+    if: ${{ !contains(github.event.head_commit.message, '[skip version]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 先对齐远端，确保在最新版本号上递增（排队中的任务不会重复）
+      - name: 同步远端
+        run: git pull --rebase origin main
+
+      - name: 递增版本号
+        id: bump
+        # 默认 patch 递增；需要 minor / major 时手动运行脚本
+        run: echo "version=$(node scripts/bump-version.mjs)" >> "$GITHUB_OUTPUT"
+
+      - name: 提交并推送
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git commit -m "chore(release): v${{ steps.bump.outputs.version }} [skip version]"
+          git push origin HEAD:main
