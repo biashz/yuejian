@@ -1,6 +1,6 @@
 [package]
 name = "yuejian"
-version = "0.1.2"
+version = "0.1.3"
 description = "阅笺 · PDF 与 Markdown 本地阅读器"
 authors = ["YueJian"]
 edition = "2021"
