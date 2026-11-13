@@ -183,10 +183,8 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !insertmacro MULTIUSER_PAGE_INSTALLMODE
 !endif
 
-; 4. Custom page to ask user if he wants to reinstall/uninstall
-;    only if a previous installation was detected
-Var ReinstallPageCheck
-Page custom PageReinstall PageLeaveReinstall
+; 4. 不再提供「重装 / 卸载」选择页：安装前会自动卸载已安装的旧版本
+;    （见 Section Install 里的 YueJianUninstallPrevious）
 
 ; Find a previous WiX installation and set $R6 to its uninstall registry key, or to "" if none.
 ;
@@ -215,200 +213,6 @@ Function FindWixInstall
     StrCmp $R0 0 0 wix_loop_done
     StrCpy $R6 "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1"
   wix_loop_done:
-FunctionEnd
-
-Function PageReinstall
-  ; Uninstall previous WiX installation if exists.
-  Call FindWixInstall
-  ${If} $R6 != ""
-    StrCpy $WixMode 1
-    Goto compare_version
-  ${EndIf}
-
-  ; Check if there is an existing installation, if not, abort the reinstall page
-  ReadRegStr $R0 SHCTX "${UNINSTKEY}" ""
-  ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
-  ${IfThen} "$R0$R1" == "" ${|} Abort ${|}
-
-  ; Compare this installar version with the existing installation
-  ; and modify the messages presented to the user accordingly
-  compare_version:
-  StrCpy $R4 "$(older)"
-  ${If} $WixMode = 1
-    ReadRegStr $R0 HKLM "$R6" "DisplayVersion"
-  ${Else}
-    ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
-  ${EndIf}
-  ${IfThen} $R0 == "" ${|} StrCpy $R4 "$(unknown)" ${|}
-
-  nsis_tauri_utils::SemverCompare "${VERSION}" $R0
-  Pop $R0
-
-  ; Read the install choice header through $R5 so a custom language file that only
-  ; defines the misspelled `choowHowToInstall` still shows its own text
-  ; TODO: remove the `choowHowToInstall` fallback in a future major version
-  StrCpy $R5 "$(chooseHowToInstall)"
-  ${IfThen} $R5 == "" ${|} StrCpy $R5 "$(choowHowToInstall)" ${|}
-
-  ; Reinstalling the same version
-  ${If} $R0 = 0
-    StrCpy $R1 "$(alreadyInstalledLong)"
-    StrCpy $R2 "$(addOrReinstall)"
-    StrCpy $R3 "$(uninstallApp)"
-    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(chooseMaintenanceOption)"
-  ; Upgrading
-  ${ElseIf} $R0 = 1
-    StrCpy $R1 "$(olderOrUnknownVersionInstalled)"
-    StrCpy $R2 "$(uninstallBeforeInstalling)"
-    StrCpy $R3 "$(dontUninstall)"
-    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$R5"
-  ; Downgrading
-  ${ElseIf} $R0 = -1
-    StrCpy $R1 "$(newerVersionInstalled)"
-    StrCpy $R2 "$(uninstallBeforeInstalling)"
-    !if "${ALLOWDOWNGRADES}" == "true"
-      StrCpy $R3 "$(dontUninstall)"
-    !else
-      StrCpy $R3 "$(dontUninstallDowngrade)"
-    !endif
-    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$R5"
-  ${Else}
-    Abort
-  ${EndIf}
-
-  ; Skip showing the page if passive
-  ;
-  ; Note that we don't call this earlier at the beginning
-  ; of this function because we need to populate some variables
-  ; related to current installed version if detected and whether
-  ; we are downgrading or not.
-  ${If} $PassiveMode = 1
-    Call PageLeaveReinstall
-  ${Else}
-    nsDialogs::Create 1018
-    Pop $R4
-    ${IfThen} $(^RTL) = 1 ${|} nsDialogs::SetRTL $(^RTL) ${|}
-
-    ${NSD_CreateLabel} 0 0 100% 24u $R1
-    Pop $R1
-
-    ${NSD_CreateRadioButton} 30u 50u -30u 8u $R2
-    Pop $R2
-    ${NSD_OnClick} $R2 PageReinstallUpdateSelection
-
-    ${NSD_CreateRadioButton} 30u 70u -30u 8u $R3
-    Pop $R3
-    ; Disable this radio button if downgrading and downgrades are disabled
-    !if "${ALLOWDOWNGRADES}" == "false"
-      ${IfThen} $R0 = -1 ${|} EnableWindow $R3 0 ${|}
-    !endif
-    ${NSD_OnClick} $R3 PageReinstallUpdateSelection
-
-    ; Check the first radio button if this the first time
-    ; we enter this page or if the second button wasn't
-    ; selected the last time we were on this page
-    ${If} $ReinstallPageCheck <> 2
-      SendMessage $R2 ${BM_SETCHECK} ${BST_CHECKED} 0
-    ${Else}
-      SendMessage $R3 ${BM_SETCHECK} ${BST_CHECKED} 0
-    ${EndIf}
-
-    ${NSD_SetFocus} $R2
-    nsDialogs::Show
-  ${EndIf}
-FunctionEnd
-Function PageReinstallUpdateSelection
-  ${NSD_GetState} $R2 $R1
-  ${If} $R1 == ${BST_CHECKED}
-    StrCpy $ReinstallPageCheck 1
-  ${Else}
-    StrCpy $ReinstallPageCheck 2
-  ${EndIf}
-FunctionEnd
-Function PageLeaveReinstall
-  ${NSD_GetState} $R2 $R1
-
-  ; If migrating from Wix, always uninstall
-  ${If} $WixMode = 1
-    Goto reinst_uninstall
-  ${EndIf}
-
-  ; In update mode, always proceeds without uninstalling
-  ${If} $UpdateMode = 1
-    Goto reinst_done
-  ${EndIf}
-
-  ; $R0 holds whether same(0)/upgrading(1)/downgrading(-1) version
-  ; $R1 holds the radio buttons state:
-  ;   1 => first choice was selected
-  ;   0 => second choice was selected
-  ${If} $R0 = 0 ; Same version, proceed
-    ${If} $R1 = 1              ; User chose to add/reinstall
-      Goto reinst_done
-    ${Else}                    ; User chose to uninstall
-      Goto reinst_uninstall
-    ${EndIf}
-  ${ElseIf} $R0 = 1 ; Upgrading
-    ${If} $R1 = 1              ; User chose to uninstall
-      Goto reinst_uninstall
-    ${Else}
-      Goto reinst_done         ; User chose NOT to uninstall
-    ${EndIf}
-  ${ElseIf} $R0 = -1 ; Downgrading
-    ${If} $R1 = 1              ; User chose to uninstall
-      Goto reinst_uninstall
-    ${Else}
-      Goto reinst_done         ; User chose NOT to uninstall
-    ${EndIf}
-  ${EndIf}
-
-  reinst_uninstall:
-    HideWindow
-    ClearErrors
-
-    ${If} $WixMode = 1
-      ReadRegStr $R1 HKLM "$R6" "UninstallString"
-      ExecWait '$R1' $0
-    ${Else}
-      ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
-      ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
-      ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
-      ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
-      StrCpy $R1 "$R1 _?=$4" ; append uninstall directory
-      ExecWait '$R1' $0
-    ${EndIf}
-
-    BringToFront
-
-    ${IfThen} ${Errors} ${|} StrCpy $0 2 ${|} ; ExecWait failed, set fake exit code
-
-    ${If} $0 <> 0
-    ${OrIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
-      ; User cancelled wix uninstaller? return to select un/reinstall page
-      ${If} $WixMode = 1
-      ${AndIf} $0 = 1602
-        Abort
-      ${EndIf}
-
-      ; User cancelled NSIS uninstaller? return to select un/reinstall page
-      ${If} $0 = 1
-        Abort
-      ${EndIf}
-
-      ; Other errors? show generic error message and return to select un/reinstall page
-      MessageBox MB_ICONEXCLAMATION "$(unableToUninstall)"
-      Abort
-    ${EndIf}
-
-    ; The NSIS uninstaller was run in place (`_?=`), so it cannot delete itself
-    ; and the install directory, clean them up here once the uninstall succeeded
-    ; https://nsis.sourceforge.io/Docs/Chapter3.html#:~:text=path%20contains%20spaces.-,3.2.3%20Examples,-installer.exe%20/NCRC
-    ${If} $WixMode = 0
-    ${AndIf} $4 != ""
-      Delete "$4\uninstall.exe"
-      RMDir "$4"
-    ${EndIf}
-  reinst_done:
 FunctionEnd
 
 ; 5. Choose install directory page
@@ -493,15 +297,8 @@ FunctionEnd
 !insertmacro MUI_UNPAGE_INSTFILES
 
 ;Languages
-; PageReinstall reads the misspelled `choowHowToInstall` as a fallback, and makensis warns
-; about a language string that is read but never set, so default it to an empty string for
-; every language. This runs before the language files are included, so a custom language
-; file that only defines the old spelling overrides the default and the fallback shows its
-; text. `0` as the language id means the language inserted right above.
-; TODO: remove the `choowHowToInstall` fallback in a future major version
 {{#each languages}}
 !insertmacro MUI_LANGUAGE "{{this}}"
-LangString choowHowToInstall 0 ""
 {{/each}}
 !insertmacro MUI_RESERVEFILE_LANGDLL
 {{#each language_files}}
@@ -518,6 +315,9 @@ LangString YueJianLangDllTitle ${LANG_SIMPCHINESE} "安装语言"
 LangString YueJianLangDllTitle ${LANG_ENGLISH} "Installer Language"
 LangString YueJianLangDllInfo ${LANG_SIMPCHINESE} "请选择安装程序使用的语言："
 LangString YueJianLangDllInfo ${LANG_ENGLISH} "Please select a language."
+; 安装前自动卸载旧版本时的进度提示
+LangString YueJianUninstallingOld ${LANG_SIMPCHINESE} "正在卸载已安装的旧版本…"
+LangString YueJianUninstallingOld ${LANG_ENGLISH} "Uninstalling the previous version…"
 !define MUI_LANGDLL_WINDOWTITLE "$(YueJianLangDllTitle)"
 !define MUI_LANGDLL_INFO "$(YueJianLangDllInfo)"
 ; 每次安装都显示语言选择（含重装与升级）：MUI 默认在注册表已有语言时直接跳过对话框，
@@ -730,7 +530,93 @@ Section WebView2
   ${EndIf}
 SectionEnd
 
+; 安装前先卸载已安装的旧版本：避免新旧文件混装、卸载列表出现重复项。
+; 用户数据（$INSTDIR\data 下的书架与设置）不在此处删除，静默卸载不会勾选「删除应用数据」。
+Function YueJianUninstallPrevious
+  StrCpy $R7 ""
+  StrCpy $R8 ""
+  StrCpy $R9 0 ; 0 = NSIS 安装，1 = WiX 安装
+
+  ReadRegStr $R7 SHCTX "${MANUPRODUCTKEY}" ""
+  ReadRegStr $R8 SHCTX "${UNINSTKEY}" "UninstallString"
+  ${If} $R7 == ""
+  ${AndIf} $R8 == ""
+    ; 旧版可能由 WiX 安装，走同样的检测路径
+    Call FindWixInstall
+    ${If} $R6 != ""
+      StrCpy $R9 1
+      StrCpy $WixMode 1
+      ReadRegStr $R8 HKLM "$R6" "UninstallString"
+      ReadRegStr $R7 HKLM "$R6" "InstallLocation"
+    ${EndIf}
+  ${EndIf}
+
+  ${If} $R8 == ""
+  ${AndIf} $R7 == ""
+    Return ; 没有检测到已安装版本，直接全新安装
+  ${EndIf}
+
+  ; 个别安装方式会把路径连引号一起写进注册表，先去掉首尾引号
+  StrCpy $R0 $R7 1
+  ${If} $R0 == '"'
+    StrCpy $R7 $R7 "" 1
+  ${EndIf}
+  StrCpy $R0 $R7 1 -1
+  ${If} $R0 == '"'
+    StrCpy $R7 $R7 -1
+  ${EndIf}
+
+  ; 安装位置缺失时从 UninstallString 推导
+  ${If} $R7 == ""
+    StrCpy $R7 "$R8"
+    StrCpy $R0 $R7 1
+    ${If} $R0 == '"'
+      StrCpy $R7 $R7 "" 1
+    ${EndIf}
+    StrCpy $R0 $R7 1 -1
+    ${If} $R0 == '"'
+      StrCpy $R7 $R7 -1
+    ${EndIf}
+    ${GetParent} "$R7" $R7
+  ${EndIf}
+
+  ; 卸载程序已不存在时视为已清理，注册表项会被本次安装覆盖
+  ${If} $R9 = 0
+  ${AndIfNot} ${FileExists} "$R7\uninstall.exe"
+    Return
+  ${EndIf}
+
+  DetailPrint "$(YueJianUninstallingOld)"
+  HideWindow
+  ClearErrors
+  ${If} $R9 = 1
+    ExecWait '$R8' $0
+  ${Else}
+    ; /S 静默卸载；_?= 让卸载程序在原目录内联执行，ExecWait 才能等到它真正退出
+    ExecWait '"$R7\uninstall.exe" /S _?=$R7' $0
+  ${EndIf}
+  ${If} ${Errors}
+    StrCpy $0 2 ; ExecWait 失败，按出错处理
+  ${EndIf}
+  BringToFront
+
+  ${If} $0 <> 0
+  ${OrIf} ${FileExists} "$R7\${MAINBINARYNAME}.exe"
+    MessageBox MB_ICONEXCLAMATION "$(unableToUninstall)"
+    Abort
+  ${EndIf}
+
+  ; 原地卸载（_?=）不会删除自己与安装目录，这里补删（目录非空时 RMDir 会失败，正好保留 data）
+  ${If} $R9 = 0
+    Delete "$R7\uninstall.exe"
+    RMDir "$R7"
+  ${EndIf}
+FunctionEnd
+
 Section Install
+  ; 安装前先卸载已安装的旧版本
+  Call YueJianUninstallPrevious
+
   SetOutPath $INSTDIR
 
   !ifmacrodef NSIS_HOOK_PREINSTALL
