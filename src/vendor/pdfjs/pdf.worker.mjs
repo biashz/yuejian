@@ -57542,7 +57542,9 @@ class XRef {
         }
         obj = dict.get("Prev");
         if (Number.isInteger(obj)) {
-          this.startXRefQueue.push(obj);
+          // 部分合并工具把超过 2 GB 的偏移写成有符号 32 位整数（负数），
+          // 这里按无符号 32 位还原，否则整条 xref 链断裂，pdf.js 会退化成扫描整个文件
+          this.startXRefQueue.push(obj < 0 ? obj >>> 0 : obj);
         } else if (obj instanceof Ref) {
           this.startXRefQueue.push(obj.num);
         }

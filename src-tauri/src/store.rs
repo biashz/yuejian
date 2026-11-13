@@ -41,8 +41,9 @@ pub struct Book {
 }
 
 /// 阅读偏好
+/// 容器级 serde(default)：旧版 state.json 缺少新增字段时用默认值补齐，避免升级后读取失败
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub theme: String,
     pub font_size: u32,
@@ -50,6 +51,12 @@ pub struct Settings {
     pub measure: u32,
     pub show_ctx: bool,
     pub zen: bool,
+    /// 是否启用左右双栏
+    pub split: bool,
+    /// 双栏打开同一份文档时是否联动翻页/滚动
+    pub link_sync: bool,
+    /// 界面语言：zh | en
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -61,6 +68,9 @@ impl Default for Settings {
             measure: 720,
             show_ctx: true,
             zen: false,
+            split: false,
+            link_sync: true,
+            language: "zh".into(),
         }
     }
 }

@@ -1,5 +1,7 @@
 # 阅笺 YueJian Reader
 
+[English](README.en.md) · 简体中文
+
 > 把 PDF 论文与 Markdown 笔记放进同一个安静的阅读空间。
 
 本地优先的桌面阅读器：Rust + Tauri 2 外壳、pdf.js 渲染 PDF、comrak 渲染 Markdown。无账号、无云同步、无遥测，所有文档与阅读记录都留在本机。
@@ -20,6 +22,7 @@
 - **阅读排版**：纸白 / 夜读 / 护眼三套主题；正文字号 15 / 17 / 19 / 21px、行高 1.7 / 1.9 / 2.1、版心 620 / 720 / 820px；专注模式收起非正文元素。
 - **阅读进度**：页码、缩放与滚动位置自动保存，下次打开回到原处。
 - **命令面板**：`Ctrl/Cmd + K` 搜书、跳章节、切换主题、打开设置、导入文件。
+- **双语界面**：简体中文 / English 可在设置中即时切换，选择会被记住。
 - **本地优先**：书架、设置与进度写在程序目录内的 `data/`，断网可用，复制目录即可迁移。
 
 其他界面见 [官网](https://yuejian-reader.vercel.app) 与 [用户手册](docs/usage.md)。
@@ -63,6 +66,7 @@ yuejian/
 │   ├── js/
 │   │   ├── app.js           # 应用装配、书架、命令面板、设置
 │   │   ├── api.js           # 前端调用 Rust 命令的唯一出口
+│   │   ├── i18n.js          # 中英文案字典与语言切换
 │   │   ├── reader-pdf.js    # pdf.js 封装：渲染、翻页、缩放、搜索
 │   │   └── reader-md.js     # Markdown 渲染与目录滚动同步
 │   └── vendor/              # 由 npm run vendor 生成的离线资源
@@ -165,7 +169,8 @@ data/
     "lineHeight": 1.9,
     "measure": 720,
     "showCtx": true,
-    "zen": false
+    "zen": false,
+    "language": "zh"               // zh | en
   }
 }
 ```

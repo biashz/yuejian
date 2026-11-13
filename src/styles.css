@@ -421,6 +421,10 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .view-library {
   flex-direction: column;
   overflow-y: auto;
+  /* 封面高度随宽度变化，滚动条出现会挤窄内容、内容变矮后又不需要滚动条，
+     两者来回震荡时浏览器会一直把滚动条留着；固定预留槽位即可消除
+     「没内容可滚却显示滚动条」的情况 */
+  scrollbar-gutter: stable;
   padding: 34px 44px 56px;
   background:
     radial-gradient(120% 80% at 82% -10%, color-mix(in srgb, var(--surface-2) 70%, transparent), transparent 60%),
@@ -478,10 +482,17 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   overflow: hidden;
   box-shadow: var(--shadow-md);
 }
+.resume-info { min-width: 0; }
 .resume-info h3 {
   font-family: var(--font-display);
   font-size: 24px; font-weight: 400; letter-spacing: 0.04em;
   margin-bottom: 6px;
+  /* 超长书名最多两行，后面省略，避免把右侧进度条挤走 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .resume-info p { color: var(--ink-2); font-size: 12px; letter-spacing: 0.02em; }
 .resume-meta {
@@ -557,10 +568,23 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   font-family: var(--font-display);
   font-size: 21px; line-height: 1.32; letter-spacing: 0.06em;
   margin-top: auto;
-  text-wrap: balance;
+  /* 书名可能很长：限制行数，避免把封面底部的页数/体积挤出去 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .cover-rule { width: 22px; height: 1px; background: rgba(255, 255, 255, 0.5); margin: 10px 0; }
-.cover-author { font-size: 9.5px; letter-spacing: 0.1em; opacity: 0.72; }
+.cover-author {
+  font-size: 9.5px; letter-spacing: 0.1em; opacity: 0.72;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none;
+}
+/* 继续阅读的小封面只有 96×128，标题字号与行数都要更克制 */
+.resume-cover .cover-title {
+  font-size: 12px; line-height: 1.3; letter-spacing: 0.04em;
+  -webkit-line-clamp: 3;
+}
 .cover-badge {
   position: absolute; top: 12px; right: 12px;
   width: 24px; height: 24px;
@@ -574,6 +598,19 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 }
 .cover-badge .ic { width: 13px; height: 13px; }
 .book-card:hover .cover-badge, .cover-badge.is-on { opacity: 1; transform: scale(1); }
+/* 已收藏：纸白圆底 + 实心星，与「悬停才出现的空心星」拉开区分 */
+.cover-badge.is-on {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 2px 8px -2px rgba(40, 32, 20, 0.45);
+}
+.cover-badge.is-on .ic { fill: currentColor; stroke: currentColor; stroke-width: 1.2; }
+/* 悬停已收藏的星标时变回空心：提示再点一下是取消收藏 */
+.cover-badge.is-on:hover .ic { fill: none; }
+.cover-badge:not(.is-on):hover {
+  background: rgba(255, 255, 255, 0.32);
+  color: #fff;
+}
 
 .card-meta { padding-top: 12px; }
 .card-title {
@@ -614,6 +651,36 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .doc-actions { display: flex; gap: 2px; }
 
 .reader-body { flex: 1; min-height: 0; display: flex; position: relative; }
+/* 双栏阅读：左右各占一半，中缝用 1px 分隔线 */
+.reader-panes { flex: 1; min-width: 0; display: flex; }
+.reader-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.reader-pane[hidden] { display: none; }
+.reader-panes.is-split .reader-pane + .reader-pane { border-left: 1px solid var(--line); }
+.pane-head {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 30px; padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 90%, var(--surface));
+  font-size: 11px; color: var(--ink-3);
+}
+.pane-head[hidden] { display: none; }
+.reader-pane.is-active .pane-head { box-shadow: inset 0 2px 0 var(--accent); }
+.pane-tag {
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em;
+  color: var(--accent); padding: 1px 4px; border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+}
+.pane-title {
+  flex: 1; min-width: 0; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pane-pos { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pane-open {
+  display: grid; place-items: center; width: 22px; height: 22px;
+  border-radius: var(--r-sm); color: var(--ink-3);
+}
+.pane-open:hover { color: var(--accent); background: var(--accent-weak); }
+.pane-open .ic { width: 13px; height: 13px; }
 .scroll-area {
   flex: 1; min-width: 0;
   overflow-y: auto;
@@ -651,8 +718,13 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   line-height: 0;
   transition: box-shadow 240ms var(--ease);
 }
+/* 屏外占位页跳过内部布局与绘制：几千页的大文档滚动/重排时收益明显。
+   已渲染页不参与，避免 pageIn 动画在重新进入视口时重播 */
+.pdf-sheet:not(.is-ready) { content-visibility: auto; }
 .pdf-sheet.is-ready { animation: pageIn 420ms var(--ease) both; }
 .pdf-sheet canvas { display: block; }
+/* 缩放过程中旧画布被临时拉伸顶着，此时文本层坐标已失效，先藏起来避免选中错位 */
+.pdf-sheet.is-scaling .textLayer { visibility: hidden; }
 .pdf-placeholder {
   display: grid; place-items: center;
   background: var(--surface);
@@ -670,7 +742,12 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   color: var(--ink-3);
 }
 .pdf-error { color: var(--accent); }
-.textLayer ::selection { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+/* 文本层平时是透明的，只有选区底色可见；选中时若给文字上色，
+   会和画布上已经画好的同一段字叠在一起，看起来就是重影 */
+.textLayer ::selection {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: transparent;
+}
 
 /* Markdown */
 .md-doc {
@@ -806,6 +883,66 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 .tool-btn:disabled:hover { background: none; }
 .tool-btn .ic { width: 15px; height: 15px; }
 .tool-btn.is-on { background: var(--accent-weak); color: var(--accent); }
+
+/* 缩放比例：点中间百分比弹出常用比例，不必反复点加减 */
+.zoom-anchor { position: relative; display: inline-flex; }
+.zoom-label { min-width: 52px; justify-content: center; gap: 5px; }
+/* 小三角提示「此处可展开」，展开后翻向下 */
+.zoom-label::after {
+  content: "";
+  width: 4px; height: 4px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(-135deg) translate(-1px, -1px);
+  opacity: 0.55;
+  transition: transform 160ms var(--ease);
+}
+.zoom-label[aria-expanded="true"]::after { transform: rotate(45deg) translate(-1px, -1px); }
+
+.zoom-menu {
+  position: absolute;
+  bottom: calc(100% + 14px);
+  left: 50%; margin-left: -79px;
+  width: 158px; padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  animation: pop 160ms var(--ease) both;
+}
+.zoom-menu[hidden] { display: none; }
+/* 指向百分比按钮的小尖角 */
+.zoom-menu::after {
+  content: "";
+  position: absolute; bottom: -5px; left: 50%; margin-left: -4.5px;
+  width: 9px; height: 9px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  transform: rotate(45deg);
+}
+.zoom-menu-head {
+  padding: 4px 8px 6px;
+  font-family: var(--font-mono);
+  font-size: 9px; letter-spacing: 0.18em;
+  color: var(--ink-3);
+}
+.zoom-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; height: 28px; padding: 0 8px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+.zoom-item > span { flex: 1; text-align: left; }
+.zoom-item:hover { background: var(--surface-2); color: var(--ink); }
+.zoom-item[aria-checked="true"] { background: var(--accent-weak); color: var(--accent); }
+.zoom-check { width: 13px; height: 13px; opacity: 0; }
+.zoom-item[aria-checked="true"] .zoom-check { opacity: 1; }
+.zoom-fit { width: 13px; height: 13px; }
+.zoom-menu-sep { display: block; height: 1px; margin: 5px 6px; background: var(--line); }
 .page-input {
   width: 30px; height: 22px;
   text-align: center;
@@ -818,6 +955,46 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 }
 .page-input::-webkit-outer-spin-button, .page-input::-webkit-inner-spin-button { -webkit-appearance: none; }
 .page-total { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+
+/* 演示模式：全屏单页放映（固定深色底，避免投影时被主题色干扰） */
+.present-stage {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center;
+  background: #101216;
+  overflow: hidden;
+  user-select: none;
+  animation: fade 200ms var(--ease) both;
+}
+.present-stage[hidden] { display: none; }
+.present-stage.is-leaving { animation: presentStageOut 150ms var(--ease) both; }
+@keyframes presentStageOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.present-stage canvas {
+  display: block;
+  background: #fff;
+  box-shadow: 0 26px 90px rgba(0, 0, 0, 0.6);
+  /* 显示尺寸始终交给视口约束：全屏过渡时页面随窗口平滑缩放，
+     之后替换成高清位图也只提升清晰度、不会跳尺寸，避免过渡抖动 */
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  width: auto;
+  height: auto;
+}
+.present-hint, .present-page {
+  position: absolute; bottom: 22px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.55);
+  transition: opacity 320ms var(--ease);
+}
+.present-hint {
+  left: 50%; transform: translateX(-50%);
+  padding: 6px 14px; border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.07);
+}
+.present-hint.is-hidden { opacity: 0; }
+.present-page { right: 22px; }
 
 /* 目录面板 */
 .context-panel {
@@ -1077,6 +1254,96 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
   background: color-mix(in srgb, var(--paper) 60%, var(--surface));
 }
 
+/* 移出书架确认：纸感「注销单」——砖红压印线 + 斜贴的注销印章 */
+.confirm-card {
+  position: relative;
+  width: min(404px, 88vw);
+  padding: 30px 30px 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  animation: pop 220ms var(--ease) both;
+}
+/* 单据本体只作为焦点锚点，不需要额外描边 */
+.confirm-card:focus { outline: none; }
+/* 顶端一道渐隐的砖红压印线，与命令面板的 accent 上边框呼应 */
+.confirm-card::before {
+  content: "";
+  position: absolute; top: -1px; left: 30px; right: 30px; height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent 72%);
+}
+/* 印章：稍微斜贴并探出卡片上沿，像盖在借书卡上的注销章 */
+.confirm-stamp {
+  position: absolute; top: -20px; right: 26px;
+  width: 56px; height: 56px;
+  display: grid; place-items: center;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: var(--shadow-md);
+  transform: rotate(8deg);
+  animation: stampIn 320ms var(--ease) both;
+}
+.confirm-stamp::after {
+  content: "";
+  position: absolute; inset: 4px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 50%;
+}
+.confirm-stamp .ic { width: 20px; height: 20px; }
+
+/* 内容分段落入，读起来像一张刚撕下来的单据 */
+.confirm-card > :not(.confirm-stamp) { animation: rise 300ms var(--ease) both; }
+.confirm-card > .eyebrow { animation-delay: 30ms; }
+.confirm-card > h2 { animation-delay: 60ms; }
+.confirm-card > .confirm-book { animation-delay: 100ms; }
+.confirm-card > .confirm-note { animation-delay: 140ms; }
+.confirm-card > .confirm-foot { animation-delay: 180ms; }
+
+.confirm-card .eyebrow { margin-bottom: 8px; }
+.confirm-card h2 {
+  font-family: var(--font-display);
+  font-size: 23px; font-weight: 400;
+  line-height: 1.2; letter-spacing: 0.08em;
+}
+.confirm-book {
+  margin-top: 14px;
+  padding: 9px 12px;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--surface-2);
+  font-family: var(--font-read);
+  font-size: 14px; line-height: 1.5; color: var(--ink);
+}
+/* 书名可能很长：内层裁到两行。外层留着内边距，避免第三行的字顶部从 padding 里漏出来 */
+.confirm-book > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.confirm-note { margin-top: 12px; font-size: 11.5px; line-height: 1.8; color: var(--ink-3); }
+.confirm-foot {
+  display: flex; justify-content: flex-end; align-items: center; gap: 10px;
+  margin-top: 22px; padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.confirm-foot .ghost-btn { height: 32px; padding: 0 16px; }
+.confirm-ok {
+  height: 32px; padding: 0 18px;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--surface);
+  letter-spacing: 0.04em;
+  box-shadow: 0 8px 18px -12px var(--accent-ink);
+  transition: background 160ms var(--ease), transform 120ms var(--ease);
+}
+.confirm-ok:hover { background: var(--accent-ink); }
+.confirm-ok:active { transform: translateY(1px); }
+
 /* ---------- 11. Toast ---------- */
 .toast-wrap {
   position: fixed; left: 50%; bottom: 74px;
@@ -1117,6 +1384,11 @@ html[data-theme="night"] .toast { background: var(--surface-2); color: var(--ink
 @keyframes floatIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes toastOut { to { opacity: 0; transform: translateY(-6px); } }
+/* 印章落章：从更斜的角度压下来，最终停在微斜的静止角 */
+@keyframes stampIn {
+  from { opacity: 0; transform: rotate(-14deg) scale(0.82); }
+  to { opacity: 1; transform: rotate(8deg) scale(1); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

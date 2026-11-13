@@ -5,17 +5,25 @@
 import { invoke, isTauri, currentWindow } from "./api.js";
 import { PdfReader } from "./reader-pdf.js";
 import { renderMarkdown, setupScrollSpy, scrollToHeading } from "./reader-md.js";
+import { t, getLanguage, setLanguage, applyDom, formatMonthDay } from "./i18n.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-const THEME_LABEL = { paper: "纸白主题", night: "夜读主题", sepia: "护眼主题" };
 const THEME_ORDER = ["paper", "night", "sepia"];
 const KIND_LABEL = { pdf: "PDF", markdown: "MARKDOWN" };
 const KIND_CLASS = { pdf: "pdf", markdown: "md" };
+/* 主题名与文档类型名随语言切换，用函数取值避免缓存旧语言文案 */
+const themeLabel = (theme) => t(`status.theme.${theme}`);
+const kindLabel = (kind) => KIND_LABEL[kind] || t("library.document");
 const TINTS = ["clay", "indigo", "olive", "sand", "plum"];
 const SIZE_STEPS = [15, 17, 19, 21];
-const DEFAULT_SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true, zen: false };
+/* 常用缩放比例：点击工具栏中间的百分比即可选，不必反复点加减 */
+const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+const DEFAULT_SETTINGS = {
+  theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720,
+  showCtx: true, zen: false, linkSync: true, language: "zh",
+};
 
 const state = {
   books: [],
@@ -37,15 +45,16 @@ const state = {
 };
 
 /* 模块级句柄，避免反复创建 */
-let pdfReader = null;
+/* 双栏阅读：每个分栏各自持有 DOM、PDF reader 与阅读位置 */
+const panes = [];
+let activePaneIndex = 0;
+let splitMode = false;
+let linkSync = true;
 let saveTimer = 0;
 let findTimer = 0;
 let findToken = 0;
-let spyCleanup = () => {};
-let headingEls = [];
-let mdHits = [];
 let thumbObserver = null;
-let scrollTick = 0;
+let zoomMenuOpen = false;
 
 /* ---------------- 小工具 ---------------- */
 const escapeHtml = (value) =>
@@ -66,14 +75,14 @@ function percentOf(book) {
 }
 
 function formatRelative(ms) {
-  if (!ms) return "未打开";
+  if (!ms) return t("time.notOpened");
   const diff = Date.now() - ms;
-  if (diff < 60_000) return "刚刚";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+  if (diff < 60_000) return t("time.justNow");
+  if (diff < 3_600_000) return t("time.minutesAgo", { count: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return t("time.hoursAgo", { count: Math.floor(diff / 3_600_000) });
+  if (diff < 7 * 86_400_000) return t("time.daysAgo", { count: Math.floor(diff / 86_400_000) });
   const date = new Date(ms);
-  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+  return formatMonthDay(date.getMonth(), date.getDate());
 }
 
 function formatBytes(size) {
@@ -98,16 +107,21 @@ function visibleBooks() {
 
 function bookProgressText(book) {
   if (book.kind === "pdf") {
-    return book.pages ? `${book.pages} 页 · ${formatBytes(book.size)}` : formatBytes(book.size);
+    const pages = book.pages ? t("reader.pagesCount", { count: book.pages }) : "";
+    return pages ? `${pages} · ${formatBytes(book.size)}` : formatBytes(book.size);
   }
-  return `${book.words ? `${book.words} 字` : "Markdown"} · ${formatBytes(book.size)}`;
+  const words = book.words ? t("reader.wordsCount", { count: book.words }) : "Markdown";
+  return `${words} · ${formatBytes(book.size)}`;
 }
 
 function renderBookList(books) {
   const list = $("#bookList");
   $("#libCount").textContent = state.books.length;
   if (!books.length) {
-    list.innerHTML = `<div class="ctx-empty">${state.books.length ? "没有匹配的文档<br>换个关键词试试" : "书架还是空的<br>导入 PDF 或 Markdown"}</div>`;
+    const emptyText = state.books.length
+      ? `${t("library.noMatch")}<br>${t("library.tryAnother")}`
+      : `${t("library.emptyList")}<br>${t("library.emptyListHint")}`;
+    list.innerHTML = `<div class="ctx-empty">${emptyText}</div>`;
     return;
   }
   list.innerHTML = books.map((book) => `
@@ -116,11 +130,11 @@ function renderBookList(books) {
       <div class="book-row-main">
         <div class="book-row-title">${escapeHtml(book.title)}</div>
         <div class="book-row-meta">
-          <i class="type-dot ${KIND_CLASS[book.kind] || "md"}"></i>${KIND_LABEL[book.kind] || "文档"} · ${formatRelative(book.lastOpenedAt)}
+          <i class="type-dot ${KIND_CLASS[book.kind] || "md"}"></i>${kindLabel(book.kind)} · ${formatRelative(book.lastOpenedAt)}
         </div>
         <div class="progress-line"><i style="width:${percentOf(book)}%"></i></div>
       </div>
-      <button class="remove-btn" data-remove="${book.id}" title="从书架移除">
+      <button class="remove-btn" data-remove="${book.id}" title="${t("library.remove")}">
         <svg class="ic"><use href="#i-trash"/></svg>
       </button>
     </div>`).join("");
@@ -129,25 +143,25 @@ function renderBookList(books) {
 function renderGrid(books) {
   const grid = $("#bookGrid");
   if (!books.length) {
-    grid.innerHTML = state.books.length ? `<div class="ctx-empty">没有匹配的文档</div>` : "";
+    grid.innerHTML = state.books.length ? `<div class="ctx-empty">${t("library.noMatch")}</div>` : "";
     return;
   }
   grid.innerHTML = books.map((book, index) => `
     <div class="book-card" data-book="${book.id}" tabindex="0" style="animation-delay:${140 + index * 40}ms">
       <div class="cover tint-${tintOf(book.id)}">
         <div class="cover-inner">
-          <span class="cover-kind">${KIND_LABEL[book.kind] || "文档"}</span>
+          <span class="cover-kind">${kindLabel(book.kind)}</span>
           <span class="cover-title">${escapeHtml(book.title)}</span>
           <span class="cover-rule"></span>
           <span class="cover-author">${escapeHtml(bookProgressText(book))}</span>
         </div>
-        <span class="cover-badge ${book.favorite ? "is-on" : ""}" data-star="${book.id}" title="收藏">
+        <span class="cover-badge ${book.favorite ? "is-on" : ""}" data-star="${book.id}" title="${book.favorite ? t("library.unfavorite") : t("library.favorite")}">
           <svg class="ic"><use href="#i-star"/></svg>
         </span>
       </div>
       <div class="card-meta">
         <div class="card-title">${escapeHtml(book.title)}</div>
-        <div class="card-sub">${KIND_LABEL[book.kind] || "文档"} · ${formatRelative(book.lastOpenedAt)}</div>
+        <div class="card-sub">${kindLabel(book.kind)} · ${formatRelative(book.lastOpenedAt)}</div>
         <div class="card-foot">
           <span class="progress-line"><i style="width:${percentOf(book)}%"></i></span>
           <span class="card-pct">${percentOf(book)}%</span>
@@ -176,26 +190,26 @@ function renderResume() {
   card.innerHTML = `
     <div class="resume-cover tint-${tintOf(candidate.id)}">
       <div class="cover-inner">
-        <span class="cover-kind">${KIND_LABEL[candidate.kind] || "文档"}</span>
-        <span class="cover-title" style="font-size:17px">${escapeHtml(candidate.title)}</span>
+        <span class="cover-kind">${kindLabel(candidate.kind)}</span>
+        <span class="cover-title">${escapeHtml(candidate.title)}</span>
         <span class="cover-rule"></span>
         <span class="cover-author">${escapeHtml(bookProgressText(candidate))}</span>
       </div>
     </div>
     <div class="resume-info">
       <h3>${escapeHtml(candidate.title)}</h3>
-      <p>${KIND_LABEL[candidate.kind] || "文档"} · ${escapeHtml(bookProgressText(candidate))}</p>
+      <p>${kindLabel(candidate.kind)} · ${escapeHtml(bookProgressText(candidate))}</p>
       <div class="resume-meta">
-        <span>${candidate.kind === "pdf" ? `第 <b>${page}</b> 页` : "上次阅读位置已记录"}</span>
-        <span><b>${formatRelative(candidate.lastOpenedAt)}</b>打开</span>
+        <span>${candidate.kind === "pdf" ? t("reader.pageN", { page: `<b>${page}</b>` }) : t("reader.lastPosition")}</span>
+        <span>${t("reader.openedAt", { time: `<b>${formatRelative(candidate.lastOpenedAt)}</b>` })}</span>
       </div>
-      <span class="resume-go" data-book="${candidate.id}">继续阅读
+      <span class="resume-go" data-book="${candidate.id}">${t("reader.continue")}
         <svg class="ic" style="width:13px;height:13px"><use href="#i-chevron-right"/></svg>
       </span>
     </div>
     <div class="resume-progress">
       <div class="bar"><i style="width:${percent}%"></i></div>
-      <div class="label"><span>阅读进度</span><span>${percent}%</span></div>
+      <div class="label"><span>${t("reader.readingProgress")}</span><span>${percent}%</span></div>
     </div>`;
 }
 
@@ -229,189 +243,484 @@ function setView(view) {
     const nav = button.dataset.nav;
     button.classList.toggle("is-active", nav === (isReading ? "reading" : "library"));
   });
-  $("#tbTitle").textContent = isReading ? ($("#docTitle").textContent || "阅读") : "书架";
+  $("#tbTitle").textContent = isReading ? ($("#docTitle").textContent || t("nav.reading")) : t("nav.shelf");
   if (!isReading) {
+    exitPresent();
     flushProgress();
     renderLibrary();
   }
   updateStatus();
 }
 
-/* ---------------- 打开文档 ---------------- */
-async function openBook(id) {
-  const book = state.books.find((item) => item.id === id);
-  if (!book) return;
+/* ---------------- 双栏阅读 ---------------- */
+/** 当前活动栏：工具栏、目录、状态栏都以它为准 */
+function activePane() {
+  return panes[activePaneIndex] || null;
+}
 
-  flushProgress();
-  spyCleanup();
-  spyCleanup = () => {};
-  mdHits = [];
-  state.currentId = id;
-  state.current = book;
-  state.pdfOutline = null;
-  state.findQuery = "";
-  state.ctxTab = "toc";
-  state.pdfPage = clamp(book.progress.page || 1, 1, Math.max(1, book.pages || 1));
-  state.pdfZoom = clamp(book.progress.zoom || 1, 0.5, 2.5);
-  state.pdfTotal = book.pages || 0;
+function activeReader() {
+  return activePane()?.reader || null;
+}
 
-  $("#docTitle").textContent = book.title;
-  $("#starBtn").classList.toggle("is-on", book.favorite);
-  $("#pdfStack").style.display = book.kind === "pdf" ? "flex" : "none";
-  $("#mdDoc").style.display = book.kind === "pdf" ? "none" : "block";
-  $("#ctxTabs").style.display = "flex";
-  $("#ctxTabs [data-ctx='thumbs']").hidden = book.kind !== "pdf";
-  $("#ctxTabs [data-ctx='toc']").classList.add("is-on");
-  $("#ctxTabs [data-ctx='find']").classList.remove("is-on");
-  $("#ctxTabs [data-ctx='thumbs']").classList.remove("is-on");
+/** 两栏是否打开同一份文档（联动只在同文档时生效） */
+function canLinkPanes() {
+  return Boolean(splitMode && panes[0]?.book && panes[1]?.book && panes[0].book.id === panes[1].book.id);
+}
 
-  setView("reading");
+/** 把活动栏的阅读状态回写到全局 state，复用原有工具栏/状态栏逻辑 */
+function mirrorPane(pane) {
+  state.currentId = pane.book?.id || null;
+  state.current = pane.book || null;
+  state.doc = pane.doc || null;
+  state.pdfPage = pane.page;
+  state.pdfZoom = pane.zoom;
+  state.pdfTotal = pane.total;
+  state.pdfOutline = pane.outline;
+  state.findQuery = pane.query;
+}
+
+function initPanes() {
+  $$("[data-pane-root]").forEach((root) => {
+    const index = Number(root.dataset.paneRoot);
+    const pane = {
+      index,
+      root,
+      head: $(".pane-head", root),
+      headTitle: $(".pane-title", root),
+      headPos: $(".pane-pos", root),
+      scrollArea: $(".scroll-area", root),
+      pdfStack: $(".pdf-stack", root),
+      mdDoc: $(".md-doc", root),
+      reader: null,
+      doc: null,
+      book: null,
+      page: 1,
+      zoom: 1,
+      total: 0,
+      ratio: 0,
+      outline: null,
+      query: "",
+      hits: [],
+      headingEls: [],
+      spyCleanup: () => {},
+      loadToken: 0,
+    };
+
+    // 点击或滚轮即激活该栏，避免“看着右栏却在操作左栏”
+    root.addEventListener("pointerdown", () => activatePane(index));
+    root.addEventListener("wheel", () => activatePane(index), { passive: true });
+    $(".pane-open", root)?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      activatePane(index);
+      openPalette();
+    });
+
+    // Markdown 滚动：记录本栏位置，活动栏同时更新全局进度与联动
+    let ticking = 0;
+    pane.scrollArea.addEventListener("scroll", () => {
+      if (ticking) return;
+      ticking = requestAnimationFrame(() => {
+        ticking = 0;
+        const area = pane.scrollArea;
+        const max = Math.max(1, area.scrollHeight - area.clientHeight);
+        const ratio = clamp(area.scrollTop / max, 0, 1);
+        pane.ratio = ratio;
+        updatePaneHeads();
+        if (pane.index !== activePaneIndex) return;
+        if (pane.doc?.kind !== "markdown" || !pane.book) return;
+        pane.book.progress = { ratio, page: 0, zoom: 1 };
+        updateStatus();
+        scheduleSave();
+        maybeSync(pane, { page: 0, ratio });
+      });
+    }, { passive: true });
+
+    panes[index] = pane;
+  });
+}
+
+/** 同文档联动：把活动栏的位置同步给另一栏（PDF 精确到页内相对位置） */
+function maybeSync(source, { page, ratio, pageOffset }) {
+  if (!splitMode || !linkSync || source.index !== activePaneIndex) return;
+  if (!canLinkPanes()) return;
+  const target = panes[1 - source.index];
+  if (!target?.book) return;
+  if (source.book.kind === "pdf") {
+    // 只同步页码会因两栏页内滚动量不同而错位，这里按页码 + 页内比例对齐
+    if (!target.reader?.sheets?.length) return;
+    target.reader.goPosition(page, pageOffset || 0);
+    return;
+  }
+  if (Math.abs((target.ratio || 0) - ratio) < 0.002) return;
+  scrollPaneToRatio(target, ratio);
+}
+
+/** 把另一栏对齐到活动栏当前位置：开启联动、分栏后新栏加载完成时调用 */
+function syncToActivePane() {
+  const source = activePane();
+  if (!source?.book) return;
+  const pos = source.reader?.currentPosition?.();
+  maybeSync(source, { page: pos?.page ?? source.page, ratio: source.ratio, pageOffset: pos?.fraction ?? 0 });
+}
+
+function scrollPaneToRatio(pane, ratio) {
+  const area = pane.scrollArea;
+  const max = Math.max(0, area.scrollHeight - area.clientHeight);
+  // 容器默认平滑滚动，联动时必须直接落位，否则每次同步都会重新开一段动画导致两栏追不上
+  const previous = area.style.scrollBehavior;
+  area.style.scrollBehavior = "auto";
+  area.scrollTop = Math.round(clamp(ratio, 0, 1) * max);
+  area.style.scrollBehavior = previous;
+  pane.ratio = ratio;
+}
+
+/** 切换活动栏：把全局阅读状态切到新栏后刷新工具栏/目录/状态栏 */
+function activatePane(index, force = false) {
+  if (!panes[index]) return;
+  if (index === activePaneIndex && !force) return;
+  activePaneIndex = index;
+  panes.forEach((pane) => pane.root.classList.toggle("is-active", pane.index === index));
+  const pane = panes[index];
+  // 用户接管这一栏后，放弃还没走完的联动落位校正
+  pane.reader?.clearAnchor?.();
+  mirrorPane(pane);
+
+  $("#docTitle").textContent = pane.book?.title || t("reader.untitled");
+  $("#starBtn").classList.toggle("is-on", Boolean(pane.book?.favorite));
+  $("#ctxTabs").style.display = pane.book ? "flex" : "none";
+  $("#ctxTabs [data-ctx='thumbs']").hidden = pane.book?.kind !== "pdf";
+  $("#presentBtn").hidden = pane.book?.kind !== "pdf";
+  // Markdown 栏没有缩略图，切回目录
+  if (state.ctxTab === "thumbs" && pane.book?.kind !== "pdf") setCtxTabActive("toc");
+  if (!pane.book) $("#ctxBody").innerHTML = "";
+
   updateDocSub();
+  renderToolbar();
+  renderCtx();
+  updateStatus();
+  updatePaneHeads();
+}
+
+function updatePaneHeads() {
+  panes.forEach((pane) => {
+    pane.head.hidden = !splitMode;
+    pane.head.classList.toggle("is-active", pane.index === activePaneIndex);
+    const book = pane.book;
+    pane.headTitle.textContent = book?.title || t("reader.untitled");
+    pane.headPos.textContent = book
+      ? (book.kind === "pdf" ? t("reader.pageOf", { page: pane.page, total: pane.total || book.pages || "…" }) : `${Math.round((pane.ratio || 0) * 100)}%`)
+      : "";
+  });
+}
+
+/** 清空某个分栏；reader 实例保留，下次 open 时会自行重置 */
+function closePaneDoc(pane) {
+  pane.spyCleanup();
+  pane.spyCleanup = () => {};
+  pane.reader?.destroy();
+  pane.doc = null;
+  pane.book = null;
+  pane.outline = null;
+  pane.query = "";
+  pane.hits = [];
+  pane.headingEls = [];
+  pane.page = 1;
+  pane.zoom = 1;
+  pane.total = 0;
+  pane.ratio = 0;
+  pane.loadToken += 1;
+  pane.pdfStack.innerHTML = "";
+  pane.mdDoc.innerHTML = "";
+  pane.pdfStack.style.display = "none";
+  pane.mdDoc.style.display = "none";
+  pane.scrollArea.scrollTop = 0;
+  if (pane.index === activePaneIndex) mirrorPane(pane);
+  updatePaneHeads();
+}
+
+/** 拆分 / 合并双栏。拆分时右栏默认打开当前正在读的同一份文档 */
+function setSplit(enabled) {
+  if (enabled === splitMode || !panes[1]) return;
+  splitMode = enabled;
+  panes[1].root.hidden = !enabled;
+  $("#readerPanes").classList.toggle("is-split", enabled);
+
+  if (enabled) {
+    if (panes[0].book) openBook(panes[0].book.id, panes[1]);
+  } else {
+    flushPaneProgress(panes[1]);
+    // 左栏为空而只有右栏有文档时，把文档接回左栏，避免合并后什么都看不到
+    const orphanId = panes[0].book ? null : panes[1].book?.id;
+    closePaneDoc(panes[1]);
+    if (activePaneIndex === 1) activatePane(0, true);
+    if (orphanId) openBook(orphanId, panes[0]);
+  }
+
+  renderToolbar();
+  updatePaneHeads();
+  // 栏宽变化后重新计算 PDF 的适配宽度
+  requestAnimationFrame(() => panes.forEach((pane) => pane.reader?.handleResize()));
+}
+
+function setLink(enabled) {
+  linkSync = enabled;
+  state.settings.linkSync = enabled;
+  persistSettings();
+  renderToolbar();
+  // 开启联动时立刻把另一栏对齐到当前阅读位置，避免两栏停在各自位置等下一次滚动
+  if (enabled && canLinkPanes()) syncToActivePane();
+  toast(enabled ? t("toast.linkOn") : t("toast.linkOff"));
+}
+
+/* ---------------- 打开文档 ---------------- */
+async function openBook(id, pane = activePane()) {
+  const book = state.books.find((item) => item.id === id);
+  if (!book || !pane) return;
+
+  // 同栏已打开同一份文档：不重新解析，直接切回阅读视图
+  if (pane.book?.id === id && pane.doc) {
+    if (pane.index === activePaneIndex) {
+      activatePane(pane.index, true);
+      setView("reading");
+    }
+    return;
+  }
+
+  const wasActive = pane.index === activePaneIndex;
+
+  // 替换文档只影响本栏：另一栏保持原文档不变，两栏内容是否相同由用户各自选择
+  flushPaneProgress(pane);
+  closePaneDoc(pane);
+
+  pane.book = book;
+  pane.page = clamp(book.progress.page || 1, 1, Math.max(1, book.pages || 1));
+  // 每次打开都从「适合页面」开始，不恢复上次的缩放比例
+  pane.zoom = 1;
+  pane.ratio = clamp(book.progress.ratio || 0, 0, 1);
+  pane.total = book.pages || 0;
+  pane.loadToken += 1;
+  const token = pane.loadToken;
+
+  pane.pdfStack.style.display = book.kind === "pdf" ? "flex" : "none";
+  pane.mdDoc.style.display = book.kind === "pdf" ? "none" : "block";
+
+  if (wasActive) {
+    setCtxTabActive("toc");
+    activatePane(pane.index, true);
+    setView("reading");
+  }
+  updatePaneHeads();
 
   let doc;
   try {
     doc = await invoke("open_book", { id });
   } catch (error) {
+    if (token !== pane.loadToken) return;
     toast(String(error));
-    state.currentId = null;
-    state.current = null;
-    state.doc = null;
-    setView("library");
+    closePaneDoc(pane);
+    if (!panes.some((item) => item.book)) setView("library");
+    if (wasActive) activatePane(pane.index, true);
     return;
   }
-  if (state.currentId !== id) return;
-  state.doc = doc;
+  if (token !== pane.loadToken) return;  // 已被同栏更新的打开请求取代
+  pane.doc = doc;
+  if (wasActive) state.doc = doc;
 
-  if (doc.kind === "pdf") {
-    await openPdf(doc);
-  } else {
-    openMarkdown(doc);
-  }
+  if (doc.kind === "pdf") await openPdf(doc, pane);
+  else openMarkdown(doc, pane);
 
-  setCtxOpen(state.settings.showCtx);
   renderBookList(visibleBooks());
   renderGrid(visibleBooks());
+  updatePaneHeads();
+  if (wasActive) {
+    setCtxOpen(state.settings.showCtx);
+    activatePane(pane.index, true);
+  }
+  // 本栏文档变化后刷新工具栏：两栏是否同文档决定联动按钮的显示
+  renderToolbar();
   updateStatus();
+  // 分栏中新栏刚加载完：两栏同文档时立即对齐到活动栏位置，避免联动起点错位
+  if (splitMode && pane.index !== activePaneIndex) syncToActivePane();
 }
 
 function updateDocSub() {
   const book = state.current;
-  if (!book) return;
-  $("#docSub").textContent = book.kind === "pdf"
-    ? `PDF · ${state.pdfTotal || book.pages || "…"} 页 · ${formatBytes(book.size)}`
-    : `MARKDOWN · ${book.words || 0} 字 · ${formatBytes(book.size)}`;
+  const sub = $("#docSub");
+  if (!book) {
+    sub.textContent = "";
+    return;
+  }
+  sub.textContent = book.kind === "pdf"
+    ? t("reader.docSubPdf", { pages: state.pdfTotal || book.pages || "…", size: formatBytes(book.size) })
+    : t("reader.docSubMd", { words: book.words || 0, size: formatBytes(book.size) });
 }
 
-async function openPdf(doc) {
-  state.pdfTotal = doc.pages || state.pdfTotal || state.current?.pages || 0;
-  const reader = ensurePdfReader();
-  renderToolbar();
-  renderCtx();
-  updateDocSub();
+async function openPdf(doc, pane) {
+  pane.total = doc.pages || pane.total || pane.book?.pages || 0;
+  if (pane.index === activePaneIndex) state.pdfTotal = pane.total;
+  const reader = ensurePdfReader(pane);
+  if (pane.index === activePaneIndex) {
+    renderToolbar();
+    renderCtx();
+    updateDocSub();
+  }
 
   try {
-    await reader.open(doc.path, { startPage: state.pdfPage, zoom: state.pdfZoom, size: doc.size || 0 });
+    // 不传 zoom：由阅读器按可视区计算出「适合页面」的比例
+    await reader.open(doc.path, { startPage: pane.page, size: doc.size || 0 });
   } catch (error) {
-    $("#pdfStack").innerHTML = `<div class="pdf-error">无法打开这份 PDF<br><small>${escapeHtml(error?.message || error)}</small></div>`;
-    toast("PDF 打开失败，文件可能已被移动");
+    pane.pdfStack.innerHTML = `<div class="pdf-error">${t("reader.pdfErrorTitle")}<br><small>${escapeHtml(error?.message || error)}</small></div>`;
+    toast(t("reader.pdfErrorToast"));
   }
 }
 
-function openMarkdown(doc) {
-  const area = $("#scrollArea");
+function openMarkdown(doc, pane) {
+  const area = pane.scrollArea;
   area.scrollTop = 0;
-  headingEls = renderMarkdown(doc, $("#mdDoc"));
-  spyCleanup = setupScrollSpy(area, headingEls, (id) => markTocActive(id));
-  renderToolbar();
-  renderCtx();
-
-  requestAnimationFrame(() => {
-    const max = Math.max(0, $("#mdDoc").scrollHeight - area.clientHeight);
-    area.scrollTop = Math.round((state.current?.progress.ratio || 0) * max);
+  pane.headingEls = renderMarkdown(doc, pane.mdDoc);
+  pane.spyCleanup = setupScrollSpy(area, pane.headingEls, (id) => {
+    if (pane.index === activePaneIndex) markTocActive(id);
   });
+  if (pane.index === activePaneIndex) {
+    renderToolbar();
+    renderCtx();
+  }
+
+  requestAnimationFrame(() => scrollPaneToRatio(pane, pane.book?.progress.ratio || 0));
 }
 
 /* ---------------- PDF 阅读器 ---------------- */
-function ensurePdfReader() {
-  if (pdfReader) return pdfReader;
-  pdfReader = new PdfReader({
-    stack: $("#pdfStack"),
-    scrollArea: $("#scrollArea"),
-    onPageChange: ({ page, zoom, ratio, total }) => {
-      state.pdfPage = page;
-      state.pdfZoom = zoom;
-      if (total) state.pdfTotal = total;
-      if (state.current) {
-        state.current.progress = { ratio, page, zoom };
-        if (total) state.current.pages = total;
-      }
-      updateToolbarPage();
-      markThumbActive();
-      markTocActive();
-      updateDocSub();
-      updateStatus();
-      scheduleSave();
-    },
-    onReady: ({ pages }) => {
-      state.pdfTotal = pages;
-      if (state.current) state.current.pages = pages;
-      updateToolbarPage();
-      updateDocSub();
-      updateStatus();
-      renderToolbar();
-      renderCtx();
-      flushProgress();
-    },
+function ensurePdfReader(pane) {
+  if (pane.reader) return pane.reader;
+  pane.reader = new PdfReader({
+    stack: pane.pdfStack,
+    scrollArea: pane.scrollArea,
+    onPageChange: (info) => handlePageChange(pane, info),
+    onReady: ({ pages }) => handlePdfReady(pane, pages),
   });
-  return pdfReader;
+  return pane.reader;
+}
+
+function handlePageChange(pane, { page, zoom, ratio, total, pageOffset }) {
+  pane.page = page;
+  pane.zoom = zoom;
+  pane.ratio = ratio;
+  if (total) pane.total = total;
+  if (pane.book) {
+    pane.book.progress = { ratio, page, zoom };
+    if (total) pane.book.pages = total;
+  }
+  updatePaneHeads();
+  if (pane.index !== activePaneIndex) return;
+
+  state.pdfPage = page;
+  state.pdfZoom = zoom;
+  if (total) state.pdfTotal = total;
+  updateToolbarPage();
+  markThumbActive();
+  markTocActive();
+  updateDocSub();
+  updateStatus();
+  scheduleSave();
+  maybeSync(pane, { page, ratio, pageOffset });
+}
+
+function handlePdfReady(pane, pages) {
+  pane.total = pages;
+  if (pane.book) pane.book.pages = pages;
+  if (pane.index !== activePaneIndex) {
+    updatePaneHeads();
+    return;
+  }
+  state.pdfTotal = pages;
+  updateToolbarPage();
+  updateDocSub();
+  updateStatus();
+  renderToolbar();
+  renderCtx();
+  flushProgress();
 }
 
 /* ---------------- 工具栏 ---------------- */
+/** 缩放比例气泡菜单：常用比例 + 适合页面 */
+function zoomMenuHtml() {
+  return `<div class="zoom-menu" role="menu" aria-label="${t("reader.zoomMenu")}" hidden>
+    <p class="zoom-menu-head">${t("reader.zoomMenu")}</p>
+    ${ZOOM_PRESETS.map((value) => `
+      <button class="zoom-item" role="menuitemradio" aria-checked="false" data-zoom="${value}">
+        <span>${Math.round(value * 100)}%</span>
+        <svg class="ic zoom-check"><use href="#i-check"/></svg>
+      </button>`).join("")}
+    <span class="zoom-menu-sep"></span>
+    <button class="zoom-item" role="menuitem" data-fit-zoom>
+      <svg class="ic zoom-fit"><use href="#i-maximize"/></svg>${t("reader.fitPage")}
+    </button>
+  </div>`;
+}
+
 function renderToolbar() {
   const book = state.current;
   const bar = $("#readToolbar");
+  // 工具栏整体重建，缩放菜单随之关闭
+  zoomMenuOpen = false;
   if (!book) {
     bar.innerHTML = "";
     return;
   }
 
+  // 双栏开关对所有文档生效；联动开关只在两栏同文档时出现
+  const paneTools = `
+      <span class="tool-sep"></span>
+      <div class="tool-group">
+        <button class="tool-btn ${splitMode ? "is-on" : ""}" data-act="split" title="${t("reader.split")}">
+          <svg class="ic"><use href="#i-columns"/></svg>
+        </button>
+        ${canLinkPanes() ? `<button class="tool-btn ${linkSync ? "is-on" : ""}" data-act="link" title="${t("reader.link")}">
+          <svg class="ic"><use href="#i-link"/></svg>
+        </button>` : ""}
+      </div>`;
+
   if (book.kind === "pdf") {
     const total = state.pdfTotal || book.pages || 0;
     bar.innerHTML = `
       <div class="tool-group">
-        <button class="tool-btn" data-act="prev" title="上一页"><svg class="ic"><use href="#i-chevron-left"/></svg></button>
-        <input class="page-input" id="pageInput" type="number" min="1" max="${total || 1}" value="${state.pdfPage}" aria-label="页码" />
+        <button class="tool-btn" data-act="prev" title="${t("reader.prev")}"><svg class="ic"><use href="#i-chevron-left"/></svg></button>
+        <input class="page-input" id="pageInput" type="number" min="1" max="${total || 1}" value="${state.pdfPage}" aria-label="${t("reader.pageInput")}" />
         <span class="page-total">/ ${total || "…"}</span>
-        <button class="tool-btn" data-act="next" title="下一页"><svg class="ic"><use href="#i-chevron-right"/></svg></button>
+        <button class="tool-btn" data-act="next" title="${t("reader.next")}"><svg class="ic"><use href="#i-chevron-right"/></svg></button>
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">
-        <button class="tool-btn" data-act="zoom-out" title="缩小"><svg class="ic"><use href="#i-minus"/></svg></button>
-        <button class="tool-btn" data-act="zoom-label" title="重置缩放">${Math.round(state.pdfZoom * 100)}%</button>
-        <button class="tool-btn" data-act="zoom-in" title="放大"><svg class="ic"><use href="#i-plus"/></svg></button>
-        <button class="tool-btn" data-act="fit" title="适合宽度"><svg class="ic"><use href="#i-maximize"/></svg></button>
+        <button class="tool-btn" data-act="zoom-out" title="${t("reader.zoomOut")}"><svg class="ic"><use href="#i-minus"/></svg></button>
+        <span class="zoom-anchor">
+          <button class="tool-btn zoom-label" data-act="zoom-menu" aria-haspopup="menu" aria-expanded="false" title="${t("reader.zoomMenu")}">${Math.round(state.pdfZoom * 100)}%</button>
+          ${zoomMenuHtml()}
+        </span>
+        <button class="tool-btn" data-act="zoom-in" title="${t("reader.zoomIn")}"><svg class="ic"><use href="#i-plus"/></svg></button>
+        <button class="tool-btn" data-act="fit" title="${t("reader.fitPage")}"><svg class="ic"><use href="#i-maximize"/></svg></button>
+        <button class="tool-btn" data-act="present" title="${t("reader.present")}"><svg class="ic"><use href="#i-present"/></svg></button>
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">
-        <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="目录面板"><svg class="ic"><use href="#i-list"/></svg></button>
-      </div>`;
+        <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
+      </div>${paneTools}`;
   } else {
     const settings = state.settings;
     bar.innerHTML = `
       <div class="tool-group">
-        <button class="tool-btn" data-act="font-down" title="减小字号">A−</button>
+        <button class="tool-btn" data-act="font-down" title="${t("reader.fontDown")}">A−</button>
         <span class="page-total" style="min-width:34px;text-align:center">${settings.fontSize}px</span>
-        <button class="tool-btn" data-act="font-up" title="增大字号">A+</button>
+        <button class="tool-btn" data-act="font-up" title="${t("reader.fontUp")}">A+</button>
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">
-        <button class="tool-btn" data-act="lh" title="切换行高">行高 ${settings.lineHeight}</button>
-        <button class="tool-btn" data-act="measure" title="切换版心">版心 ${settings.measure}</button>
+        <button class="tool-btn" data-act="lh" title="${t("reader.lineHeightTip")}">${t("reader.lineHeightBtn", { value: settings.lineHeight })}</button>
+        <button class="tool-btn" data-act="measure" title="${t("reader.measureTip")}">${t("reader.measureBtn", { value: settings.measure })}</button>
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">
-        <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="目录面板"><svg class="ic"><use href="#i-list"/></svg></button>
-      </div>`;
+        <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
+      </div>${paneTools}`;
   }
   updateToolbarPage();
 }
@@ -419,23 +728,63 @@ function renderToolbar() {
 function updateToolbarPage() {
   const input = $("#pageInput");
   if (input) input.value = state.pdfPage;
-  const label = $('[data-act="zoom-label"]');
+  const label = $('[data-act="zoom-menu"]');
   if (label) label.textContent = `${Math.round(state.pdfZoom * 100)}%`;
   const prev = $('[data-act="prev"]');
   const next = $('[data-act="next"]');
   if (prev) prev.disabled = state.pdfPage <= 1;
   if (next) next.disabled = state.pdfTotal > 0 && state.pdfPage >= state.pdfTotal;
+  syncZoomMenu();
+}
+
+/** 展开 / 收起缩放比例菜单 */
+function setZoomMenu(open) {
+  const menu = $(".zoom-menu");
+  const label = $('[data-act="zoom-menu"]');
+  if (!menu || !label) return;
+  zoomMenuOpen = open;
+  menu.hidden = !open;
+  label.setAttribute("aria-expanded", String(open));
+  label.classList.toggle("is-on", open);
+  if (open) syncZoomMenu();
+}
+
+/** 当前比例在菜单里打勾 */
+function syncZoomMenu() {
+  const menu = $(".zoom-menu");
+  if (!menu) return;
+  $$("[data-zoom]", menu).forEach((item) => {
+    item.setAttribute("aria-checked", String(Math.abs(Number(item.dataset.zoom) - state.pdfZoom) < 0.005));
+  });
 }
 
 function goPage(page, smooth = true) {
-  if (!pdfReader) return;
-  pdfReader.goPage(page, smooth);
+  const reader = activeReader();
+  if (!reader) return;
+  reader.goPage(page, smooth);
 }
 
 function setZoom(zoom) {
-  if (!pdfReader) return;
-  pdfReader.setZoom(zoom, state.pdfPage);
-  state.pdfZoom = pdfReader.zoom;
+  const reader = activeReader();
+  if (!reader) return;
+  reader.setZoom(zoom, state.pdfPage);
+  applyReaderZoom(reader);
+}
+
+/** 适合页面（与菜单项、工具栏按钮共用）：整页完整显示 */
+function fitPdfPage() {
+  const reader = activeReader();
+  if (!reader) return;
+  reader.fitPage();
+  applyReaderZoom(reader);
+  toast(t("reader.fitToast"));
+}
+
+/** 把阅读器当前缩放回写到全局状态与工具栏 */
+function applyReaderZoom(reader) {
+  state.pdfZoom = reader.zoom;
+  const pane = activePane();
+  if (pane) pane.zoom = reader.zoom;
   updateToolbarPage();
   updateStatus();
 }
@@ -449,9 +798,13 @@ function setCtxOpen(open) {
   if (button) button.classList.toggle("is-on", open);
 }
 
-function switchCtxTab(tab) {
+function setCtxTabActive(tab) {
   state.ctxTab = tab;
   $$("#ctxTabs .ctx-tab").forEach((item) => item.classList.toggle("is-on", item.dataset.ctx === tab));
+}
+
+function switchCtxTab(tab) {
+  setCtxTabActive(tab);
   renderCtx();
 }
 
@@ -465,40 +818,42 @@ function renderCtx() {
 
 async function renderToc() {
   const body = $("#ctxBody");
-  const book = state.current;
+  const pane = activePane();
+  const book = pane?.book;
   if (!book) return;
 
   if (book.kind === "pdf") {
-    if (!state.pdfOutline) {
+    if (!pane.outline) {
       // PDF 尚未解析完成时先占位，等 onReady 再取大纲
-      if (!pdfReader?.pdf) {
-        body.innerHTML = `<div class="ctx-empty">正在读取目录…</div>`;
+      if (!pane.reader?.pdf) {
+        body.innerHTML = `<div class="ctx-empty">${t("reader.tocLoading")}</div>`;
         return;
       }
       let outline = [];
       try {
-        outline = await pdfReader.outline() || [];
+        outline = await pane.reader.outline() || [];
       } catch (_) {
         outline = [];
       }
-      if (state.ctxTab !== "toc" || state.currentId !== book.id) return;
+      if (state.ctxTab !== "toc" || activePane() !== pane || pane.book?.id !== book.id) return;
+      pane.outline = outline;
       state.pdfOutline = outline;
     }
-    if (!state.pdfOutline.length) {
-      body.innerHTML = `<div class="ctx-empty">这份 PDF 没有内嵌目录<br>可用页码或缩略图跳转</div>`;
+    if (!pane.outline.length) {
+      body.innerHTML = `<div class="ctx-empty">${t("reader.tocPdfEmpty")}</div>`;
       return;
     }
-    body.innerHTML = state.pdfOutline.map((item) => `
-      <button class="toc-item ${item.page === state.pdfPage ? "is-active" : ""}"
+    body.innerHTML = pane.outline.map((item) => `
+      <button class="toc-item ${item.page === pane.page ? "is-active" : ""}"
         data-level="${item.level}" data-goto="${item.page}" data-kind="pdf">
         ${escapeHtml(item.text)}<span class="toc-page">${item.page}</span>
       </button>`).join("");
     return;
   }
 
-  const toc = state.doc?.toc || [];
+  const toc = pane.doc?.toc || [];
   if (!toc.length) {
-    body.innerHTML = `<div class="ctx-empty">这份 Markdown 没有标题层级<br>用「搜索」定位内容</div>`;
+    body.innerHTML = `<div class="ctx-empty">${t("reader.tocMdEmpty")}</div>`;
     return;
   }
   body.innerHTML = toc.map((item) => `
@@ -515,26 +870,28 @@ function markTocActive(id) {
     items.forEach((item) => item.classList.toggle("is-active", item.dataset.goto === id));
     return;
   }
-  if (!state.pdfOutline?.length) return;
+  const pane = activePane();
+  if (!pane?.outline?.length) return;
   // PDF：取最后一个页码不超过当前页的条目
   let activeIndex = 0;
-  state.pdfOutline.forEach((item, index) => {
-    if (item.page <= state.pdfPage) activeIndex = index;
+  pane.outline.forEach((item, index) => {
+    if (item.page <= pane.page) activeIndex = index;
   });
   items.forEach((item, index) => item.classList.toggle("is-active", index === activeIndex));
 }
 
 function renderThumbs() {
   const body = $("#ctxBody");
-  const total = state.pdfTotal || state.current?.pages || 0;
+  const pane = activePane();
+  const total = pane?.total || pane?.book?.pages || 0;
   if (!total) {
-    body.innerHTML = `<div class="ctx-empty">正在准备缩略图…</div>`;
+    body.innerHTML = `<div class="ctx-empty">${t("reader.thumbsLoading")}</div>`;
     return;
   }
   body.innerHTML = Array.from({ length: total }, (_, index) => `
-    <button class="thumb-item ${index + 1 === state.pdfPage ? "is-active" : ""}" data-goto="${index + 1}" data-kind="pdf">
+    <button class="thumb-item ${index + 1 === pane.page ? "is-active" : ""}" data-goto="${index + 1}" data-kind="pdf">
       <div class="thumb-page"><canvas data-thumb="${index + 1}"></canvas></div>
-      <span class="thumb-no">第 ${index + 1} 页</span>
+      <span class="thumb-no">${t("reader.pageN", { page: index + 1 })}</span>
     </button>`).join("");
 
   thumbObserver?.disconnect();
@@ -545,7 +902,7 @@ function renderThumbs() {
       thumbObserver.unobserve(canvas);
       if (canvas.dataset.done) continue;
       canvas.dataset.done = "1";
-      pdfReader?.renderThumb(Number(canvas.dataset.thumb), canvas).catch(() => {});
+      pane.reader?.renderThumb(Number(canvas.dataset.thumb), canvas).catch(() => {});
     }
   }, { root: body, rootMargin: "200px" });
   $$("canvas[data-thumb]", body).forEach((canvas) => thumbObserver.observe(canvas));
@@ -554,27 +911,33 @@ function renderThumbs() {
 }
 
 function markThumbActive() {
+  const pane = activePane();
   $$("#ctxBody .thumb-item").forEach((item) => {
-    item.classList.toggle("is-active", Number(item.dataset.goto) === state.pdfPage);
+    item.classList.toggle("is-active", Number(item.dataset.goto) === pane?.page);
   });
 }
 
 function renderFind() {
   const body = $("#ctxBody");
+  const pane = activePane();
+  const query = pane?.query || "";
   body.innerHTML = `
     <div class="find-box">
-      <input id="findInput" type="text" placeholder="在文档内搜索…" value="${escapeHtml(state.findQuery)}" />
+      <input id="findInput" type="text" placeholder="${t("reader.findPlaceholder")}" value="${escapeHtml(query)}" />
     </div>
-    <div class="find-summary" id="findSummary">输入关键词开始搜索</div>
+    <div class="find-summary" id="findSummary">${t("reader.findHint")}</div>
     <div id="findHits"></div>`;
 
   const input = $("#findInput");
   input.addEventListener("input", () => {
-    state.findQuery = input.value.trim();
+    const current = activePane();
+    if (!current) return;
+    current.query = input.value.trim();
+    state.findQuery = current.query;
     clearTimeout(findTimer);
     findTimer = setTimeout(runFind, 320);
   });
-  if (state.findQuery) {
+  if (query) {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
     runFind();
@@ -582,19 +945,20 @@ function renderFind() {
 }
 
 async function runFind() {
-  const query = state.findQuery;
+  const pane = activePane();
+  const query = pane?.query || "";
   const summary = $("#findSummary");
   const hitsWrap = $("#findHits");
   if (!summary || !hitsWrap) return;
   if (!query) {
-    summary.textContent = "输入关键词开始搜索";
+    summary.textContent = t("reader.findHint");
     hitsWrap.innerHTML = "";
     return;
   }
 
   const token = ++findToken;
-  const book = state.current;
-  summary.textContent = book?.kind === "pdf" ? "正在检索全文…" : "正在检索…";
+  const book = pane?.book;
+  summary.textContent = book?.kind === "pdf" ? t("reader.findFullText") : t("reader.findSearching");
 
   const mark = (text) => {
     const safe = escapeHtml(text);
@@ -604,29 +968,277 @@ async function runFind() {
 
   let hits = [];
   if (book?.kind === "pdf") {
-    hits = await pdfReader?.search(query) || [];
-    if (token !== findToken) return;
-    summary.textContent = hits.length ? `找到 ${hits.length} 处匹配${hits.length >= 60 ? "（仅显示前 60 处）" : ""}` : "没有匹配结果";
+    hits = await pane.reader?.search(query) || [];
+    if (token !== findToken || activePane() !== pane) return;
+    summary.textContent = hits.length
+      ? `${t("reader.findMatches", { count: hits.length })}${hits.length >= 60 ? t("reader.findMatchesTrunc") : ""}`
+      : t("reader.findNone");
     hitsWrap.innerHTML = hits.map((hit, index) => `
       <button class="find-hit" data-hit="${index}" data-page="${hit.page}" data-kind="pdf">
-        <span class="hit-page">第 ${hit.page} 页</span>${mark(hit.text)}
+        <span class="hit-page">${t("reader.pageN", { page: hit.page })}</span>${mark(hit.text)}
       </button>`).join("");
-    mdHits = [];
+    pane.hits = [];
     return;
   }
 
-  const nodes = $$("#mdDoc h1, #mdDoc h2, #mdDoc h3, #mdDoc p, #mdDoc li, #mdDoc td, #mdDoc blockquote");
-  mdHits = nodes.filter((node) => node.textContent.includes(query)).slice(0, 40);
-  summary.textContent = mdHits.length ? `找到 ${mdHits.length} 处匹配` : "没有匹配结果";
-  hitsWrap.innerHTML = mdHits.map((node, index) => {
+  const nodes = $$("h1, h2, h3, p, li, td, blockquote", pane.mdDoc);
+  pane.hits = nodes.filter((node) => node.textContent.includes(query)).slice(0, 40);
+  summary.textContent = pane.hits.length ? t("reader.findMatches", { count: pane.hits.length }) : t("reader.findNone");
+  hitsWrap.innerHTML = pane.hits.map((node, index) => {
     const text = node.textContent.trim();
     const at = text.indexOf(query);
     const snippet = text.length > 70 ? `${text.slice(Math.max(0, at - 24), at + 46)}…` : text;
-    const label = /^H[123]$/.test(node.tagName) ? `标题 ${node.tagName.slice(1)}` : "正文";
+    const label = /^H[123]$/.test(node.tagName) ? t("reader.findHeading", { level: node.tagName.slice(1) }) : t("reader.findBody");
     return `<button class="find-hit" data-hit="${index}" data-kind="md">
       <span class="hit-page">${label}</span>${mark(snippet)}
     </button>`;
   }).join("");
+}
+
+/* ---------------- 演示模式（全屏单页放映，仅 PDF） ---------------- */
+let presenting = false;
+let presentPage = 1;
+/// 每次翻页自增，用于丢弃过期的渲染结果
+let presentRun = 0;
+/// 串行队列：同一块离屏画布不能被两次 render 同时写入
+let presentChain = Promise.resolve();
+let presentBuffer = null;
+let presentHintTimer = 0;
+/// 首帧/尺寸变化的防抖：全屏过渡会连续触发 resize，等尺寸稳定后只画一次
+let presentPaintTimer = 0;
+/// 已画好的「页码 + 尺寸」，用于跳过重复渲染
+let presentPaintedKey = "";
+/// 全屏请求尚未落地：这段时间不重新渲染，避免和全屏动画抢帧
+let presentEntering = false;
+/// 滚轮翻页：先累积触控板的小增量，再用冷却避免一次滑动连翻多页
+let presentWheelDelta = 0;
+let presentWheelTimer = 0;
+let presentWheelLock = 0;
+
+function canPresent() {
+  const pane = activePane();
+  return Boolean(pane?.book && pane.book.kind === "pdf" && pane.reader?.pdf);
+}
+
+function enterPresent() {
+  if (presenting) return;
+  if (!canPresent()) {
+    toast(t("reader.presentPdfOnly"));
+    return;
+  }
+  presenting = true;
+  presentPage = state.pdfPage || 1;
+  presentPaintedKey = "";
+
+  // 放映期间挂起背后阅读器的尺寸自适应与页渲染：全屏会改变窗口尺寸，
+  // 若阅读器跟着重排重绘，会和首帧渲染抢主线程，切换时就会卡
+  panes.forEach((pane) => pane.reader?.suspend());
+
+  // 放映层先不显示：等首帧画好再和画布一起出现，中途不会露出纯黑底
+  const canvas = $("#presentCanvas");
+  canvas.style.visibility = "hidden";
+  $("#presentStage").classList.remove("is-leaving");
+
+  // 全屏请求必须紧跟用户手势，所以先发出去；过渡期间不做整页渲染，
+  // 等尺寸稳定后再补一次（与首帧尺寸一致时会被去重，不会重复画）
+  presentEntering = true;
+  let settled = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    presentEntering = false;
+    // 全屏动画刚结束时主线程仍忙，稍等一拍再做整页渲染，切换更顺
+    schedulePresentPaint(80);
+  };
+  const request = document.documentElement.requestFullscreen?.();
+  if (request?.then) request.then(settle, settle);
+  else settle();
+  // 兜底：个别环境 fullscreen 的 promise 不落地，超时后照常放映
+  setTimeout(settle, 600);
+
+  // 先用屏幕上已经画好的那一页顶上：进入瞬间就有画面，
+  // 整页高清渲染留到全屏动画结束之后，不和过渡抢主线程
+  if (!showPresentSnapshot()) presentPaint();
+}
+
+/** 进入演示时复用阅读器已渲染的页面做首帧：不必等整页重绘，切换没有空窗 */
+function showPresentSnapshot() {
+  if (!$("#presentStage").hidden) return false;
+  const reader = activeReader();
+  const source = reader?.pageSnapshot(presentPage);
+  if (!source) return false;
+  const sourceWidth = source.width;
+  const sourceHeight = source.height;
+  if (!sourceWidth || !sourceHeight) return false;
+
+  const viewWidth = window.innerWidth;
+  const viewHeight = window.innerHeight;
+  // 等比放进放映区（留 12px 边），与高清渲染使用同一套尺寸口径
+  const scale = Math.min((viewWidth - 24) / sourceWidth, (viewHeight - 24) / sourceHeight);
+  const cssWidth = Math.max(1, Math.floor(sourceWidth * scale));
+  const cssHeight = Math.max(1, Math.floor(sourceHeight * scale));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const canvas = $("#presentCanvas");
+  canvas.width = Math.floor(cssWidth * dpr);
+  canvas.height = Math.floor(cssHeight * dpr);
+  // 显示尺寸交给 CSS 按视口约束，不写死像素：切换/替换位图都不会跳尺寸
+  canvas.style.width = "";
+  canvas.style.height = "";
+  canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+  canvas.style.visibility = "visible";
+  showPresentStage();
+  $("#presentPage").textContent = `${presentPage} / ${reader.numPages || state.pdfTotal || 0}`;
+  return true;
+}
+
+/** 首帧就绪后再放出放映层：避免「先黑屏、再出现页面」的闪烁 */
+function showPresentStage() {
+  const stage = $("#presentStage");
+  if (!stage.hidden) return;
+  stage.hidden = false;
+  const hint = $("#presentHint");
+  hint.classList.remove("is-hidden");
+  clearTimeout(presentHintTimer);
+  presentHintTimer = setTimeout(() => hint.classList.add("is-hidden"), 2800);
+}
+
+/** 排一次放映页渲染；延迟期间有新的调用（如 resize）会重新计时 */
+function schedulePresentPaint(delay = 120) {
+  clearTimeout(presentPaintTimer);
+  presentPaintTimer = setTimeout(() => {
+    presentPaintTimer = 0;
+    presentPaint();
+  }, delay);
+}
+
+function exitPresent() {
+  if (!presenting) return;
+  presenting = false;
+  presentEntering = false;
+  presentRun += 1;
+  clearTimeout(presentPaintTimer);
+  presentPaintTimer = 0;
+  clearTimeout(presentWheelTimer);
+  presentWheelTimer = 0;
+  presentWheelDelta = 0;
+  presentPaintedKey = "";
+  activeReader()?.cancelPaintFit();
+
+  // 退出时先不收起放映层：全屏收回的动画期间屏幕上保持放映页，
+  // 等系统真正退出全屏后再淡出、恢复阅读视图，中间不会闪出底下的阅读页
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    document.removeEventListener("fullscreenchange", release);
+    const stage = $("#presentStage");
+    const restore = () => {
+      stage.hidden = true;
+      stage.classList.remove("is-leaving");
+      panes.forEach((pane) => pane.reader?.resume());
+      const reader = activeReader();
+      // 回到放映时停留的页，阅读位置与演示保持一致
+      reader?.goPage(presentPage, false);
+      // 全屏期间尺寸被挂起，退出后补一次适配（rAF 等布局稳定）
+      requestAnimationFrame(() => reader?.handleResize());
+    };
+    // 放映层从未显示过（首帧还没画完就退出）：直接恢复
+    if (stage.hidden) {
+      restore();
+      return;
+    }
+    // 150ms 淡出，与进入时的淡入对称，切换不会「啪」地硬切
+    stage.classList.add("is-leaving");
+    setTimeout(restore, 150);
+  };
+
+  // 先复位状态再退出全屏，避免 fullscreenchange 再次进来
+  if (document.fullscreenElement) {
+    document.addEventListener("fullscreenchange", release);
+    document.exitFullscreen?.().catch(release);
+    // 兜底：个别环境不派发 fullscreenchange，避免阅读器一直处于挂起状态
+    setTimeout(release, 600);
+  } else {
+    release();
+  }
+}
+
+function presentStep(delta) {
+  if (!presenting) return;
+  const total = activeReader()?.numPages || state.pdfTotal || 0;
+  if (!total) return;
+  const next = clamp(presentPage + delta, 1, total);
+  if (next === presentPage) return;
+  presentPage = next;
+  state.pdfPage = next;
+  presentPaint();
+}
+
+/** 滚轮翻页：向下下一页、向上上一页；触控板的小增量先累积，再用冷却避免连翻多页 */
+function handlePresentWheel(event) {
+  if (!presenting) return;
+  event.preventDefault();
+  const now = performance.now();
+  if (now < presentWheelLock) return;
+  presentWheelDelta += event.deltaY;
+  clearTimeout(presentWheelTimer);
+  presentWheelTimer = setTimeout(() => {
+    presentWheelDelta = 0;
+  }, 160);
+  if (Math.abs(presentWheelDelta) < 40) return;
+  const direction = presentWheelDelta > 0 ? 1 : -1;
+  presentWheelDelta = 0;
+  presentWheelLock = now + 400;
+  presentStep(direction);
+}
+
+function presentPaint() {
+  const reader = activeReader();
+  if (!presenting || !reader) return;
+  const pageNo = presentPage;
+  // 尺寸统一取当前可视区：全屏后 innerWidth 就是屏幕尺寸，
+  // 不必用 screen 预估，也避免刚进入时页面被放大出可视区
+  const box = { width: window.innerWidth - 24, height: window.innerHeight - 24 };
+  const key = `${pageNo}:${box.width}x${box.height}`;
+  // 同一页、同一尺寸已经画好：重复的 resize 事件不必再渲染
+  if (key === presentPaintedKey) {
+    showPresentStage();
+    return;
+  }
+
+  const run = ++presentRun;
+  // 旧页还在渲染时先取消，翻页/全屏切换不用排队等它画完
+  reader.cancelPaintFit();
+
+  presentChain = presentChain.then(async () => {
+    // 队列里已有更新的翻页请求，这一帧直接跳过
+    if (!presenting || run !== presentRun) return;
+    presentBuffer ??= document.createElement("canvas");
+    // 传一个失效判断：getPage 等待期间若又翻页，就不必再启动这一页的渲染
+    const painted = await reader.paintFit(pageNo, presentBuffer, box, () => !presenting || run !== presentRun);
+    if (!presenting || run !== presentRun) return;
+    // 渲染失败也要把放映层放出来，否则看起来像点击没反应
+    if (!painted) {
+      showPresentStage();
+      return;
+    }
+
+    // 离屏画好后一次性贴到可见画布，翻页不会闪白
+    const canvas = $("#presentCanvas");
+    canvas.width = presentBuffer.width;
+    canvas.height = presentBuffer.height;
+    // 清掉内联尺寸，继续由 CSS 按视口约束显示，避免替换时尺寸跳变
+    canvas.style.width = "";
+    canvas.style.height = "";
+    canvas.getContext("2d").drawImage(presentBuffer, 0, 0);
+    canvas.style.visibility = "visible";
+    // 首帧与放映层同一帧出现，不会先露黑底
+    showPresentStage();
+    presentPaintedKey = key;
+    $("#presentPage").textContent = `${pageNo} / ${reader.numPages || state.pdfTotal || 0}`;
+  }).catch(() => {
+    // 单帧失败不能污染队列，否则后续翻页都会停在 rejected 状态
+  });
 }
 
 /* ---------------- 主题与排版 ---------------- */
@@ -642,10 +1254,10 @@ function setTheme(theme, silent = false) {
   state.settings.theme = theme;
   document.documentElement.dataset.theme = theme;
   $("#themeBtn use").setAttribute("href", theme === "night" ? "#i-moon" : "#i-sun");
-  $("#statusMid").textContent = THEME_LABEL[theme] || THEME_LABEL.paper;
+  $("#statusMid").textContent = themeLabel(theme);
   $$(".theme-swatch").forEach((item) => item.classList.toggle("is-on", item.dataset.themeValue === theme));
   persistSettings();
-  if (!silent) toast(`已切换至${THEME_LABEL[theme] || "纸白主题"}`);
+  if (!silent) toast(t("theme.switched", { theme: themeLabel(theme) }));
 }
 
 function cycleTheme() {
@@ -658,7 +1270,7 @@ function toggleZen() {
   applySettings();
   syncSettingsUI();
   persistSettings();
-  toast(state.settings.zen ? "已进入专注模式" : "已退出专注模式");
+  toast(state.settings.zen ? t("zen.on") : t("zen.off"));
 }
 
 /* ---------------- 持久化 ---------------- */
@@ -677,7 +1289,16 @@ function scheduleSave() {
 
 function flushProgress() {
   clearTimeout(saveTimer);
-  const book = state.current;
+  const seen = new Set();
+  for (const pane of panes) {
+    if (!pane.book || seen.has(pane.book.id)) continue;
+    seen.add(pane.book.id);
+    flushPaneProgress(pane);
+  }
+}
+
+function flushPaneProgress(pane) {
+  const book = pane?.book;
   if (!book) return;
   invoke("save_progress", {
     id: book.id,
@@ -694,13 +1315,13 @@ function updateStatus() {
   if (state.view === "reading" && book) {
     $("#statusLeft").textContent = book.title;
     $("#statusRight").textContent = book.kind === "pdf"
-      ? `第 ${state.pdfPage} / ${state.pdfTotal || book.pages || "…"} 页 · ${Math.round(state.pdfZoom * 100)}%`
-      : `MARKDOWN · ${book.words || 0} 字 · ${state.settings.fontSize}px / ${state.settings.lineHeight}`;
+      ? t("status.page", { page: state.pdfPage, total: state.pdfTotal || book.pages || "…", zoom: Math.round(state.pdfZoom * 100) })
+      : t("status.markdown", { words: book.words || 0, size: state.settings.fontSize, lh: state.settings.lineHeight });
   } else {
-    $("#statusLeft").textContent = "就绪";
-    $("#statusRight").textContent = `${state.books.length} 份文档 · 本地存储`;
+    $("#statusLeft").textContent = t("status.ready");
+    $("#statusRight").textContent = t("status.documents", { count: state.books.length });
   }
-  $("#statusMid").textContent = THEME_LABEL[state.settings.theme] || THEME_LABEL.paper;
+  $("#statusMid").textContent = themeLabel(state.settings.theme);
 }
 
 /* ---------------- Toast ---------------- */
@@ -748,31 +1369,92 @@ async function importDocuments(paths) {
 
   const normalized = list.map((path) => path.replace(/\//g, "\\").toLowerCase());
   const imported = state.books.find((book) => normalized.includes(book.path.toLowerCase()));
-  toast(`已导入 ${list.length} 份文档`);
+  toast(t("toast.imported", { count: list.length }));
   if (list.length === 1 && imported) openBook(imported.id);
   return list.length;
+}
+
+/* ---------------- 确认弹框 ---------------- */
+let confirmSettle = null;
+
+/**
+ * 纸感「注销单」确认框，替代系统弹框。
+ * 返回 Promise<boolean>：点「移出」为 true，取消 / ESC / 点遮罩为 false。
+ */
+function askConfirm({ title, book, note, okText }) {
+  const overlay = $("#confirmOverlay");
+  const card = $("#confirmCard");
+  const lastFocus = document.activeElement;
+  $("#confirmTitle").textContent = title;
+  // 书名放进内层 span，由 CSS 单独做两行截断（外层 padding 不参与裁切）
+  $("#confirmBook").innerHTML = "<span></span>";
+  $("#confirmBook span").textContent = book;
+  $("#confirmNote").textContent = note;
+  $("#confirmOk").textContent = okText;
+  overlay.hidden = false;
+  // 焦点落在单据本体而非按钮上：避免默认聚焦「取消」造成的强调边框，Tab 再进入按钮
+  card.focus();
+
+  return new Promise((resolve) => {
+    // 结算只做一次：双击按钮、ESC 与遮罩点击不会重复触发
+    const settle = (result) => {
+      if (!confirmSettle) return;
+      confirmSettle = null;
+      overlay.hidden = true;
+      overlay.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown, true);
+      lastFocus?.focus?.();
+      resolve(result);
+    };
+    const onClick = (event) => {
+      if (event.target.closest("#confirmOk")) settle(true);
+      else if (event.target === overlay || event.target.closest("#confirmCancel")) settle(false);
+    };
+    // 捕获阶段截下 ESC：否则会继续冒泡触发全局「退出阅读」快捷键
+    const onKeydown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      settle(false);
+    };
+    confirmSettle = settle;
+    overlay.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown, true);
+  });
 }
 
 async function removeBook(id) {
   const book = state.books.find((item) => item.id === id);
   if (!book) return;
-  if (!window.confirm(`从书架移除《${book.title}》？\n只会移除记录，不会删除本地文件。`)) return;
+  const confirmed = await askConfirm({
+    title: t("confirm.title"),
+    book: book.title,
+    note: t("confirm.note"),
+    okText: t("confirm.ok"),
+  });
+  if (!confirmed) return;
   try {
     state.books = await invoke("remove_book", { id });
   } catch (error) {
     toast(String(error));
     return;
   }
-  if (state.currentId === id) {
-    state.currentId = null;
-    state.current = null;
-    state.doc = null;
-    pdfReader?.destroy();
-    setView("library");
+  // 任何一栏打开了这份文档都要一起关闭
+  let closedActive = false;
+  panes.forEach((pane) => {
+    if (pane.book?.id !== id) return;
+    if (pane.index === activePaneIndex) closedActive = true;
+    closePaneDoc(pane);
+  });
+  if (!panes.some((pane) => pane.book)) setView("library");
+  else if (closedActive) {
+    // 活动栏被清空时切到还有文档的那一栏
+    const fallback = panes.find((pane) => pane.book) || activePane();
+    activatePane(fallback.index, true);
   }
   renderLibrary();
   updateStatus();
-  toast(`已移除《${book.title}》`);
+  toast(t("confirm.removed", { title: book.title }));
 }
 
 async function toggleFavorite(id) {
@@ -780,10 +1462,16 @@ async function toggleFavorite(id) {
     const updated = await invoke("toggle_favorite", { id });
     const index = state.books.findIndex((book) => book.id === id);
     if (index >= 0) state.books[index] = updated;
-    if (state.currentId === id) state.current = updated;
-    $("#starBtn").classList.toggle("is-on", updated.favorite);
+    // 分栏里保存的是书籍对象引用，替换后要同步，否则收藏状态会丢
+    panes.forEach((pane) => {
+      if (pane.book?.id === id) pane.book = updated;
+    });
+    if (state.currentId === id) {
+      state.current = updated;
+      $("#starBtn").classList.toggle("is-on", updated.favorite);
+    }
     renderLibrary();
-    toast(updated.favorite ? `已收藏《${updated.title}》` : `已取消收藏《${updated.title}》`);
+    toast(updated.favorite ? t("toast.favorited", { title: updated.title }) : t("toast.unfavorited", { title: updated.title }));
   } catch (error) {
     toast(String(error));
   }
@@ -809,21 +1497,23 @@ function paletteItems(query) {
     .filter((book) => !keyword || `${book.title} ${book.author}`.toLowerCase().includes(keyword))
     .slice(0, 6)
     .map((book) => ({
-      group: "文档",
+      group: t("palette.documents"),
       icon: book.kind === "pdf" ? "file-text" : "book-open",
       title: book.title,
-      sub: `${KIND_LABEL[book.kind] || "文档"} · ${formatRelative(book.lastOpenedAt)}`,
+      sub: `${kindLabel(book.kind)} · ${formatRelative(book.lastOpenedAt)}`,
       run: `open:${book.id}`,
     }));
 
   const actions = [
-    { title: "导入本地文档", sub: "系统文件对话框 · PDF / Markdown", icon: "folder-plus", run: "import" },
-    { title: "切换主题", sub: "纸白 / 夜读 / 护眼", icon: "sun", run: "theme" },
-    { title: "专注模式", sub: "隐藏书架与导航", icon: "maximize", run: "zen" },
-    { title: "阅读设置", sub: "字号、行高、版心", icon: "settings", run: "settings" },
-    { title: "返回书架", sub: "关闭当前文档", icon: "library", run: "back" },
+    { title: t("palette.import"), sub: t("palette.importSub"), icon: "folder-plus", run: "import" },
+    { title: t("palette.theme"), sub: t("palette.themeSub"), icon: "sun", run: "theme" },
+    { title: t("palette.zen"), sub: t("palette.zenSub"), icon: "maximize", run: "zen" },
+    { title: splitMode ? t("palette.merge") : t("palette.split"), sub: t("palette.splitSub"), icon: "columns", run: "split" },
+    { title: t("palette.present"), sub: t("palette.presentSub"), icon: "present", run: "present" },
+    { title: t("palette.settings"), sub: t("palette.settingsSub"), icon: "settings", run: "settings" },
+    { title: t("palette.back"), sub: t("palette.backSub"), icon: "library", run: "back" },
   ].filter((action) => !keyword || `${action.title} ${action.sub}`.toLowerCase().includes(keyword))
-    .map((action) => ({ ...action, group: "动作" }));
+    .map((action) => ({ ...action, group: t("palette.actions") }));
 
   return [...books, ...actions];
 }
@@ -832,7 +1522,7 @@ function renderPalette(query) {
   const items = paletteItems(query);
   const list = $("#paletteList");
   if (!items.length) {
-    list.innerHTML = `<div class="ctx-empty">没有匹配项</div>`;
+    list.innerHTML = `<div class="ctx-empty">${t("palette.empty")}</div>`;
     return;
   }
   state.paletteIndex = clamp(state.paletteIndex, 0, items.length - 1);
@@ -865,6 +1555,8 @@ function runPalette(run) {
   if (run === "import") return importDocuments();
   if (run === "theme") return cycleTheme();
   if (run === "zen") return toggleZen();
+  if (run === "split") return setSplit(!splitMode);
+  if (run === "present") return enterPresent();
   if (run === "settings") return openSettings();
   if (run === "back") return setView("library");
 }
@@ -884,11 +1576,45 @@ function syncSettingsUI() {
   $$("#fontSizeSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.size) === settings.fontSize));
   $$("#lineHeightSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.lh) === settings.lineHeight));
   $$("#measureSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.measure) === settings.measure));
+  $$("#langSeg button").forEach((button) => button.classList.toggle("is-on", button.dataset.lang === getLanguage()));
   $("#switchCtx").classList.toggle("is-on", settings.showCtx);
   $("#switchCtx").setAttribute("aria-checked", String(settings.showCtx));
   $("#switchZen").classList.toggle("is-on", settings.zen);
   $("#switchZen").setAttribute("aria-checked", String(settings.zen));
   $$(".theme-swatch").forEach((item) => item.classList.toggle("is-on", item.dataset.themeValue === settings.theme));
+}
+
+/* ---------------- 语言切换 ---------------- */
+/** 原生窗口标题跟随界面语言（任务栏 / Alt+Tab 上显示的名称） */
+function syncWindowTitle() {
+  currentWindow?.setTitle(t("app.title"));
+}
+
+/**
+ * 切换界面语言：重填静态文案，并按新语言重绘所有动态区域，无需重启应用。
+ * 只改变界面语言，不影响文档内容与阅读进度。
+ */
+function switchLanguage(language) {
+  if (!language || language === getLanguage()) return;
+  setLanguage(language);
+  state.settings.language = getLanguage();
+  applyDom();
+  syncWindowTitle();
+
+  syncSettingsUI();
+  renderLibrary();
+  renderToolbar();
+  renderCtx();
+  updateDocSub();
+  updatePaneHeads();
+  updateStatus();
+  $("#docTitle").textContent = state.current?.title || t("reader.untitled");
+  $("#tbTitle").textContent = state.view === "reading"
+    ? ($("#docTitle").textContent || t("nav.reading"))
+    : t("nav.shelf");
+  // 命令面板打开时按新语言重建列表
+  if (!$("#paletteOverlay").hidden) renderPalette($("#paletteInput").value);
+  persistSettings();
 }
 
 /* ---------------- 事件绑定 ---------------- */
@@ -912,18 +1638,20 @@ function bind() {
       const href = anchor.getAttribute("href") || "";
       if (/^https?:/i.test(href)) {
         event.preventDefault();
-        toast("外部链接已复制到剪贴板：" + href);
+        toast(t("toast.linkCopied", { url: href }));
         navigator.clipboard?.writeText(href).catch(() => {});
         return;
       }
       if (href.startsWith("#")) {
         event.preventDefault();
-        scrollToHeading($("#scrollArea"), href.slice(1));
+        const paneRoot = event.target.closest("[data-pane-root]");
+        const area = paneRoot ? $(".scroll-area", paneRoot) : null;
+        if (area) scrollToHeading(area, href.slice(1));
         return;
       }
       if (/\.(md|markdown)$/i.test(href)) {
         event.preventDefault();
-        toast("暂不支持跨文档跳转");
+        toast(t("toast.crossDoc"));
         return;
       }
     }
@@ -936,9 +1664,18 @@ function bind() {
     const nav = button.dataset.nav;
     if (nav === "library") setView("library");
     if (nav === "reading") {
-      if (state.currentId) setView("reading");
-      else if (state.books.length) openBook(state.books.slice().sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)[0].id);
-      else toast("书架还是空的，先导入一份文档");
+      if (state.currentId) {
+        setView("reading");
+      } else if (panes.some((pane) => pane.book)) {
+        // 活动栏为空但另一栏有文档时，直接切到有文档的那一栏
+        const opened = panes.find((pane) => pane.book);
+        activatePane(opened.index, true);
+        setView("reading");
+      } else if (state.books.length) {
+        openBook(state.books.slice().sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)[0].id);
+      } else {
+        toast(t("toast.emptyShelf"));
+      }
     }
     if (nav === "search") openPalette();
     if (nav === "settings") openSettings();
@@ -966,6 +1703,24 @@ function bind() {
   $("#backBtn").addEventListener("click", () => setView("library"));
   $("#starBtn").addEventListener("click", () => state.current && toggleFavorite(state.current.id));
   $("#zenBtn").addEventListener("click", toggleZen);
+  $("#presentBtn").addEventListener("click", enterPresent);
+  // 点击右半屏下一页、左半屏上一页，方便鼠标/投屏笔操作
+  $("#presentStage").addEventListener("click", (event) => {
+    // 底部是提示与页码区域，不当作翻页
+    if (event.clientY > window.innerHeight - 60) return;
+    presentStep(event.clientX < window.innerWidth / 2 ? -1 : 1);
+  });
+  // 滚轮/触控板翻页：向下下一页、向上上一页
+  $("#presentStage").addEventListener("wheel", handlePresentWheel, { passive: false });
+  window.addEventListener("resize", () => {
+    // 全屏切换会连续触发 resize：防抖后只重画最后一次的尺寸；
+    // 全屏过渡期间先不画，等 fullscreen 的 promise 落地后再排首帧
+    if (presenting && !presentEntering) schedulePresentPaint();
+  });
+  document.addEventListener("fullscreenchange", () => {
+    // 用户按系统快捷键退出全屏时，同步退出演示（presenting 已复位则不会递归）
+    if (presenting && !document.fullscreenElement) exitPresent();
+  });
   $("#ctxBtn").addEventListener("click", () => {
     setCtxOpen(!state.ctxOpen);
     renderToolbar();
@@ -982,16 +1737,17 @@ function bind() {
     const goto = event.target.closest("[data-goto]");
     if (goto) {
       if (goto.dataset.kind === "pdf") goPage(Number(goto.dataset.goto));
-      else scrollToHeading($("#scrollArea"), goto.dataset.goto);
+      else if (activePane()) scrollToHeading(activePane().scrollArea, goto.dataset.goto);
       return;
     }
     const hit = event.target.closest("[data-hit]");
     if (hit) {
       if (hit.dataset.kind === "pdf") goPage(Number(hit.dataset.page));
       else {
-        const node = mdHits[Number(hit.dataset.hit)];
-        if (node) {
-          const area = $("#scrollArea");
+        const pane = activePane();
+        const node = pane?.hits[Number(hit.dataset.hit)];
+        if (node && pane) {
+          const area = pane.scrollArea;
           const offset = node.getBoundingClientRect().top - area.getBoundingClientRect().top;
           area.scrollTo({ top: area.scrollTop + offset - 80, behavior: "smooth" });
         }
@@ -1001,6 +1757,18 @@ function bind() {
 
   // 阅读工具栏
   $("#readToolbar").addEventListener("click", (event) => {
+    // 缩放菜单里的选项先于 [data-act] 处理（菜单项没有 data-act）
+    const preset = event.target.closest("[data-zoom]");
+    if (preset) {
+      setZoom(Number(preset.dataset.zoom));
+      setZoomMenu(false);
+      return;
+    }
+    if (event.target.closest("[data-fit-zoom]")) {
+      fitPdfPage();
+      setZoomMenu(false);
+      return;
+    }
     const button = event.target.closest("[data-act]");
     if (!button) return;
     const act = button.dataset.act;
@@ -1009,17 +1777,15 @@ function bind() {
     if (act === "next") goPage(state.pdfPage + 1);
     if (act === "zoom-in") setZoom(state.pdfZoom + 0.1);
     if (act === "zoom-out") setZoom(state.pdfZoom - 0.1);
-    if (act === "zoom-label") setZoom(1);
-    if (act === "fit") {
-      pdfReader?.fitWidth();
-      state.pdfZoom = pdfReader?.zoom || 1;
-      updateToolbarPage();
-      toast("已适合宽度");
-    }
+    if (act === "zoom-menu") setZoomMenu(!zoomMenuOpen);
+    if (act === "fit") fitPdfPage();
     if (act === "ctx") {
       setCtxOpen(!state.ctxOpen);
       renderToolbar();
     }
+    if (act === "split") setSplit(!splitMode);
+    if (act === "link") setLink(!linkSync);
+    if (act === "present") enterPresent();
     if (act === "font-up" || act === "font-down") {
       const index = SIZE_STEPS.indexOf(settings.fontSize);
       const nextIndex = clamp((index < 0 ? 1 : index) + (act === "font-up" ? 1 : -1), 0, SIZE_STEPS.length - 1);
@@ -1051,6 +1817,11 @@ function bind() {
     if (event.target.id === "pageInput") goPage(Number(event.target.value) || 1);
   });
 
+  // 点工具栏以外的地方收起缩放比例菜单
+  document.addEventListener("click", (event) => {
+    if (zoomMenuOpen && !event.target.closest(".zoom-anchor")) setZoomMenu(false);
+  });
+
   // 命令面板
   $("#paletteBtn").addEventListener("click", openPalette);
   $("#paletteOverlay").addEventListener("click", (event) => {
@@ -1069,6 +1840,10 @@ function bind() {
 
   // 设置
   $("#themeBtn").addEventListener("click", cycleTheme);
+  // 导航栏语言按钮：在中文 / English 之间直接切换
+  $("#langBtn").addEventListener("click", () => {
+    switchLanguage(getLanguage() === "zh" ? "en" : "zh");
+  });
   $("#settingsOverlay").addEventListener("click", (event) => {
     if (event.target.id === "settingsOverlay") closeSettings();
   });
@@ -1080,6 +1855,10 @@ function bind() {
       setTheme(swatch.dataset.themeValue);
       syncSettingsUI();
     }
+  });
+  $("#langSeg").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-lang]");
+    if (button) switchLanguage(button.dataset.lang);
   });
   $("#fontSizeSeg").addEventListener("click", (event) => {
     const button = event.target.closest("[data-size]");
@@ -1115,39 +1894,26 @@ function bind() {
     setCtxOpen(state.settings.showCtx);
     syncSettingsUI();
     persistSettings();
-    toast(state.settings.showCtx ? "打开文档时显示目录" : "打开文档时隐藏目录");
+    toast(state.settings.showCtx ? t("settings.showCtxOn") : t("settings.showCtxOff"));
   });
   $("#switchZen").addEventListener("click", toggleZen);
   $("#resetBtn").addEventListener("click", () => {
-    state.settings = { ...DEFAULT_SETTINGS };
+    if (splitMode) setSplit(false);  // 默认设置是单栏，先合并再重置
+    // 恢复默认不应把界面语言改回中文，保留当前语言
+    state.settings = { ...DEFAULT_SETTINGS, language: getLanguage() };
     setTheme("paper", true);
     applySettings();
     syncSettingsUI();
     renderToolbar();
     updateStatus();
     persistSettings();
-    toast("已恢复默认设置");
+    toast(t("settings.resetDone"));
   });
 
   // 窗口按钮
   $("#winMin").addEventListener("click", () => currentWindow?.minimize());
   $("#winMax").addEventListener("click", () => currentWindow?.toggleMaximize());
   $("#winClose").addEventListener("click", () => currentWindow?.close());
-
-  // 阅读区滚动（Markdown 进度）
-  $("#scrollArea").addEventListener("scroll", () => {
-    if (scrollTick) return;
-    scrollTick = requestAnimationFrame(() => {
-      scrollTick = 0;
-      if (state.doc?.kind !== "markdown" || !state.current) return;
-      const area = $("#scrollArea");
-      const max = Math.max(1, area.scrollHeight - area.clientHeight);
-      const ratio = clamp(area.scrollTop / max, 0, 1);
-      state.current.progress = { ratio, page: 0, zoom: 1 };
-      updateStatus();
-      scheduleSave();
-    });
-  }, { passive: true });
 
   // 拖拽导入（Tauri 窗口级事件）
   if (currentWindow?.onDragDropEvent) {
@@ -1161,7 +1927,7 @@ function bind() {
       if (payload.type !== "drop") return;
       const paths = (payload.paths || []).filter((path) => /\.(pdf|md|markdown|mdown)$/i.test(path));
       if (!paths.length) {
-        toast("只支持 PDF 与 Markdown 文件");
+        toast(t("toast.onlySupported"));
         return;
       }
       importDocuments(paths);
@@ -1174,6 +1940,17 @@ function bind() {
     const settingsOpen = !$("#settingsOverlay").hidden;
     const modifier = event.ctrlKey || event.metaKey;
 
+    // 演示模式：只认翻页与退出，屏蔽其它快捷键
+    if (presenting) {
+      event.preventDefault();
+      if (event.key === "Escape" || event.key === "F5") exitPresent();
+      else if (["ArrowRight", "ArrowDown", "PageDown", " ", "Spacebar", "Enter"].includes(event.key)) presentStep(1);
+      else if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(event.key)) presentStep(-1);
+      else if (event.key === "Home") presentStep(1 - presentPage);
+      else if (event.key === "End") presentStep((activeReader()?.numPages || 0) - presentPage);
+      return;
+    }
+
     if (modifier && event.key.toLowerCase() === "k") {
       event.preventDefault();
       paletteOpen ? closePalette() : openPalette();
@@ -1184,8 +1961,15 @@ function bind() {
       importDocuments();
       return;
     }
+    // F5 进入演示（避免 WebView 刷新整个界面）
+    if (event.key === "F5") {
+      event.preventDefault();
+      enterPresent();
+      return;
+    }
     if (event.key === "Escape") {
-      if (paletteOpen) closePalette();
+      if (zoomMenuOpen) setZoomMenu(false);
+      else if (paletteOpen) closePalette();
       else if (settingsOpen) closeSettings();
       else if (state.view === "reading") setView("library");
       return;
@@ -1233,6 +2017,11 @@ function bind() {
       setCtxOpen(!state.ctxOpen);
       renderToolbar();
     }
+    // Ctrl+\ 拆分 / 合并双栏
+    if (modifier && event.key === "\\") {
+      event.preventDefault();
+      setSplit(!splitMode);
+    }
     if (modifier && event.key.toLowerCase() === "d") {
       event.preventDefault();
       toggleZen();
@@ -1246,12 +2035,16 @@ function bind() {
 async function boot() {
   $("#emptyLibrary").hidden = true;
   applySettings();
+  initPanes();
 
   if (!isTauri) {
+    setLanguage(state.settings.language);
+    applyDom();
+    applySplitState();
     renderLibrary();
     bind();
     setView("library");
-    toast("请通过 npm run dev 启动桌面应用");
+    toast(t("toast.desktopOnly"));
     return;
   }
 
@@ -1260,15 +2053,29 @@ async function boot() {
     state.settings = { ...DEFAULT_SETTINGS, ...(settings || {}) };
     state.books = books || [];
   } catch (error) {
-    toast(`读取本地数据失败：${error}`);
+    toast(t("toast.loadFailed", { error }));
   }
 
+  // 语言必须在其余渲染之前落地：后续动态文案都依赖当前语言
+  setLanguage(state.settings.language);
+  applyDom();
+  syncWindowTitle();
   setTheme(state.settings.theme, true);
   applySettings();
   syncSettingsUI();
+  applySplitState();
   bind();
   renderLibrary();
   setView("library");
+}
+
+/** 分栏是临时操作，启动时一律单栏；联动开关按上次选择恢复（不自动打开文档） */
+function applySplitState() {
+  splitMode = false;
+  linkSync = state.settings.linkSync !== false;
+  if (panes[1]) panes[1].root.hidden = true;
+  $("#readerPanes").classList.remove("is-split");
+  updatePaneHeads();
 }
 
 boot();

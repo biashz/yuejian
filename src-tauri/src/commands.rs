@@ -9,6 +9,9 @@ use tauri::State;
 const MAX_TEXT_SIZE: u64 = 16 * 1024 * 1024;
 /// asset 协议失效时兜底读取的上限，超过后直接报错而不是把内存吃光
 const MAX_PDF_BYTES: u64 = 128 * 1024 * 1024;
+/// 单次 range 读取的安全上限：正常页面对象远小于该值，
+/// 一旦超过说明 PDF 结构异常（例如 pdf.js 退化成整份读取），此时报错而不是让进程崩掉
+const MAX_RANGE_BYTES: u64 = 256 * 1024 * 1024;
 
 fn lock<'a>(state: &'a State<'_, StoreState>) -> Result<std::sync::MutexGuard<'a, store::AppState>, String> {
     state.data.lock().map_err(|_| "书架状态已损坏".to_string())
@@ -241,9 +244,6 @@ pub fn read_pdf_bytes(path: String) -> Result<tauri::ipc::Response, String> {
 /// 本命令只读请求到的那一段，内存占用与文件大小无关。
 #[tauri::command]
 pub fn read_pdf_range(path: String, begin: u64, end: u64) -> Result<tauri::ipc::Response, String> {
-    /// 单次请求的上限，pdf.js 默认每块 1 MB，留足余量
-    const MAX_CHUNK: u64 = 8 * 1024 * 1024;
-
     let mut file = fs::File::open(&path).map_err(|err| format!("读取 PDF 失败：{err}"))?;
     let len = file
         .metadata()
@@ -254,14 +254,27 @@ pub fn read_pdf_range(path: String, begin: u64, end: u64) -> Result<tauri::ipc::
     if begin >= len || end <= begin {
         return Ok(tauri::ipc::Response::new(Vec::new()));
     }
-    if end - begin > MAX_CHUNK {
-        return Err("请求的字节区间过大".into());
-    }
 
-    let size = (end.min(len) - begin) as usize;
+    // 正常对象都是 KB～几十 MB 级；一次要上百 MB 说明文件结构已损坏
+    // （pdf.js 会退化成整份读取），此时明确报错，避免分配几个 GB 把进程撑崩
+    let size = (end.min(len) - begin) as u64;
+    if size > MAX_RANGE_BYTES {
+        return Err(format!(
+            "这份 PDF 的结构异常，需要一次读取 {:.0} MB 数据，超出安全上限",
+            size as f64 / 1024.0 / 1024.0
+        ));
+    }
+    let size = size as usize;
+    let mut buffer = Vec::new();
+    buffer.try_reserve_exact(size).map_err(|_| {
+        format!(
+            "内存不足，无法读取这份 PDF 的 {:.0} MB 数据",
+            size as f64 / 1024.0 / 1024.0
+        )
+    })?;
+    buffer.resize(size, 0);
     file.seek(SeekFrom::Start(begin))
         .map_err(|err| format!("读取 PDF 失败：{err}"))?;
-    let mut buffer = vec![0u8; size];
     file.read_exact(&mut buffer)
         .map_err(|err| format!("读取 PDF 失败：{err}"))?;
     Ok(tauri::ipc::Response::new(buffer))

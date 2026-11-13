@@ -4,6 +4,8 @@
     "targets": ["nsis"],
     "windows": {
       "nsis": {
+        "displayLanguageSelector": true,
+        "template": "nsis/installer.nsi",
         "installerHooks": "nsis/installer-hooks.nsh"
       }
     }
