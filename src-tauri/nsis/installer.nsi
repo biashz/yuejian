@@ -520,6 +520,9 @@ LangString YueJianLangDllInfo ${LANG_SIMPCHINESE} "请选择安装程序使用�
 LangString YueJianLangDllInfo ${LANG_ENGLISH} "Please select a language."
 !define MUI_LANGDLL_WINDOWTITLE "$(YueJianLangDllTitle)"
 !define MUI_LANGDLL_INFO "$(YueJianLangDllInfo)"
+; 每次安装都显示语言选择（含重装与升级）：MUI 默认在注册表已有语言时直接跳过对话框，
+; 这里强制显示，默认选中项仍沿用上次保存的语言
+!define MUI_LANGDLL_ALWAYSSHOW
 
 ; hooks 在语言文件之后加载，确保 LANG_SIMPCHINESE 等语言常量已定义
 {{#if installer_hooks}}
