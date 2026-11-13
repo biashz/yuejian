@@ -66,6 +66,15 @@ const escapeHtml = (value) =>
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
+/* PDF 文本层里是否已有选中的文字：有选区才放行原生右键菜单，复制才有意义 */
+function isSelectionInTextLayer() {
+  const selection = document.getSelection();
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) return false;
+  const anchor = selection.anchorNode;
+  const element = anchor instanceof Element ? anchor : anchor?.parentElement;
+  return Boolean(element?.closest(".textLayer"));
+}
+
 function tintOf(id) {
   let hash = 0;
   for (const ch of String(id)) hash = (hash * 31 + ch.charCodeAt(0)) % 997;
@@ -2002,6 +2011,17 @@ function bind() {
       importDocuments(paths);
     });
   }
+
+  // 屏蔽 WebView2 默认右键菜单（刷新 / 另存为 / 检查等），保持桌面应用观感；
+  // 输入框、可编辑区域以及 PDF 文本层中已选中的文字保留原生菜单，便于复制粘贴
+  document.addEventListener("contextmenu", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      if (target.isContentEditable || target.closest("input, textarea")) return;
+      if (target.closest(".textLayer") && isSelectionInTextLayer()) return;
+    }
+    event.preventDefault();
+  });
 
   // 键盘
   document.addEventListener("keydown", (event) => {
