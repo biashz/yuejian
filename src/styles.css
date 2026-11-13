@@ -725,6 +725,20 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .pdf-sheet canvas { display: block; }
 /* 缩放过程中旧画布被临时拉伸顶着，此时文本层坐标已失效，先藏起来避免选中错位 */
 .pdf-sheet.is-scaling .textLayer { visibility: hidden; }
+/* 目录页识别出的条目：透明按钮盖在文字上，点击即跳到对应页 */
+.pdf-toc-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.pdf-toc-hit {
+  position: absolute;
+  padding: 0; border: 0; border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.pdf-toc-hit:hover,
+.pdf-toc-hit:focus-visible {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: none;
+}
 .pdf-placeholder {
   display: grid; place-items: center;
   background: var(--surface);

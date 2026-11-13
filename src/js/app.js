@@ -3,7 +3,7 @@
  * 书架（Rust 持久化）→ 打开文档 → PDF（pdf.js）/ Markdown（comrak）阅读
  */
 import { invoke, isTauri, currentWindow } from "./api.js";
-import { PdfReader } from "./reader-pdf.js";
+import { PdfReader, ZOOM_MAX, ZOOM_MIN } from "./reader-pdf.js";
 import { renderMarkdown, setupScrollSpy, scrollToHeading } from "./reader-md.js";
 import { t, getLanguage, setLanguage, applyDom, formatMonthDay } from "./i18n.js";
 
@@ -18,8 +18,10 @@ const themeLabel = (theme) => t(`status.theme.${theme}`);
 const kindLabel = (kind) => KIND_LABEL[kind] || t("library.document");
 const TINTS = ["clay", "indigo", "olive", "sand", "plum"];
 const SIZE_STEPS = [15, 17, 19, 21];
-/* 常用缩放比例：点击工具栏中间的百分比即可选，不必反复点加减 */
-const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+/* 缩放档位：按钮、Ctrl+滚轮与快捷键都按档位步进，与常见阅读器一致 */
+const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
+/* 菜单里展示的常用比例：点击即可切换，不必反复点加减 */
+const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 const DEFAULT_SETTINGS = {
   theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720,
   showCtx: true, zen: false, linkSync: true, language: "zh",
@@ -309,6 +311,23 @@ function initPanes() {
     // 点击或滚轮即激活该栏，避免“看着右栏却在操作左栏”
     root.addEventListener("pointerdown", () => activatePane(index));
     root.addEventListener("wheel", () => activatePane(index), { passive: true });
+    // Ctrl + 滚轮缩放：与常见阅读器一致，同时拦住 WebView 默认的整页缩放。
+    // 触控板会连续发出大量小 delta，累计到阈值才步进一档，避免一次手势跳好几档
+    let zoomWheelAccum = 0;
+    let zoomWheelTimer = 0;
+    root.addEventListener("wheel", (event) => {
+      if (!event.ctrlKey || pane.doc?.kind !== "pdf") return;
+      event.preventDefault();
+      if (pane.index !== activePaneIndex) activatePane(index);
+      zoomWheelAccum += event.deltaY;
+      clearTimeout(zoomWheelTimer);
+      zoomWheelTimer = setTimeout(() => {
+        zoomWheelAccum = 0;
+      }, 220);
+      if (Math.abs(zoomWheelAccum) < 40) return;
+      zoomByStep(zoomWheelAccum < 0 ? 1 : -1);
+      zoomWheelAccum = 0;
+    }, { passive: false });
     $(".pane-open", root)?.addEventListener("click", (event) => {
       event.stopPropagation();
       activatePane(index);
@@ -597,8 +616,17 @@ function ensurePdfReader(pane) {
     scrollArea: pane.scrollArea,
     onPageChange: (info) => handlePageChange(pane, info),
     onReady: ({ pages }) => handlePdfReady(pane, pages),
+    onZoom: (zoom) => handleZoomChange(pane, zoom),
   });
   return pane.reader;
+}
+
+/** 缩放变化（含窗口适配重算）：同步到该栏与工具栏 */
+function handleZoomChange(pane, zoom) {
+  pane.zoom = zoom;
+  if (pane.index !== activePaneIndex) return;
+  state.pdfZoom = zoom;
+  updateToolbarPage();
 }
 
 function handlePageChange(pane, { page, zoom, ratio, total, pageOffset }) {
@@ -642,7 +670,7 @@ function handlePdfReady(pane, pages) {
 }
 
 /* ---------------- 工具栏 ---------------- */
-/** 缩放比例气泡菜单：常用比例 + 适合页面 */
+/** 缩放比例气泡菜单：常用比例 + 适合宽度 / 适合页面 */
 function zoomMenuHtml() {
   return `<div class="zoom-menu" role="menu" aria-label="${t("reader.zoomMenu")}" hidden>
     <p class="zoom-menu-head">${t("reader.zoomMenu")}</p>
@@ -652,8 +680,15 @@ function zoomMenuHtml() {
         <svg class="ic zoom-check"><use href="#i-check"/></svg>
       </button>`).join("")}
     <span class="zoom-menu-sep"></span>
-    <button class="zoom-item" role="menuitem" data-fit-zoom>
-      <svg class="ic zoom-fit"><use href="#i-maximize"/></svg>${t("reader.fitPage")}
+    <button class="zoom-item" role="menuitemradio" aria-checked="false" data-fit-width>
+      <svg class="ic zoom-fit"><use href="#i-fit-width"/></svg>
+      <span>${t("reader.fitWidth")}</span>
+      <svg class="ic zoom-check"><use href="#i-check"/></svg>
+    </button>
+    <button class="zoom-item" role="menuitemradio" aria-checked="false" data-fit-zoom>
+      <svg class="ic zoom-fit"><use href="#i-maximize"/></svg>
+      <span>${t("reader.fitPage")}</span>
+      <svg class="ic zoom-check"><use href="#i-check"/></svg>
     </button>
   </div>`;
 }
@@ -697,7 +732,6 @@ function renderToolbar() {
           ${zoomMenuHtml()}
         </span>
         <button class="tool-btn" data-act="zoom-in" title="${t("reader.zoomIn")}"><svg class="ic"><use href="#i-plus"/></svg></button>
-        <button class="tool-btn" data-act="fit" title="${t("reader.fitPage")}"><svg class="ic"><use href="#i-maximize"/></svg></button>
         <button class="tool-btn" data-act="present" title="${t("reader.present")}"><svg class="ic"><use href="#i-present"/></svg></button>
       </div>
       <span class="tool-sep"></span>
@@ -734,6 +768,11 @@ function updateToolbarPage() {
   const next = $('[data-act="next"]');
   if (prev) prev.disabled = state.pdfPage <= 1;
   if (next) next.disabled = state.pdfTotal > 0 && state.pdfPage >= state.pdfTotal;
+  // 到缩放上下限时禁用对应按钮，避免点了没反应
+  const zoomOut = $('[data-act="zoom-out"]');
+  const zoomIn = $('[data-act="zoom-in"]');
+  if (zoomOut) zoomOut.disabled = state.pdfZoom <= ZOOM_MIN + 0.005;
+  if (zoomIn) zoomIn.disabled = state.pdfZoom >= ZOOM_MAX - 0.005;
   syncZoomMenu();
 }
 
@@ -749,13 +788,17 @@ function setZoomMenu(open) {
   if (open) syncZoomMenu();
 }
 
-/** 当前比例在菜单里打勾 */
+/** 当前比例与适配模式在菜单里打勾 */
 function syncZoomMenu() {
   const menu = $(".zoom-menu");
   if (!menu) return;
+  const fitMode = activeReader()?.fitMode || null;
   $$("[data-zoom]", menu).forEach((item) => {
-    item.setAttribute("aria-checked", String(Math.abs(Number(item.dataset.zoom) - state.pdfZoom) < 0.005));
+    const matched = !fitMode && Math.abs(Number(item.dataset.zoom) - state.pdfZoom) < 0.005;
+    item.setAttribute("aria-checked", String(matched));
   });
+  $("[data-fit-width]", menu)?.setAttribute("aria-checked", String(fitMode === "width"));
+  $("[data-fit-zoom]", menu)?.setAttribute("aria-checked", String(fitMode === "page"));
 }
 
 function goPage(page, smooth = true) {
@@ -767,17 +810,39 @@ function goPage(page, smooth = true) {
 function setZoom(zoom) {
   const reader = activeReader();
   if (!reader) return;
-  reader.setZoom(zoom, state.pdfPage);
+  // 不传页码：以当前阅读位置为锚点，缩放后视线保持在同一处
+  reader.setZoom(zoom);
   applyReaderZoom(reader);
 }
 
-/** 适合页面（与菜单项、工具栏按钮共用）：整页完整显示 */
+/** 按档位步进缩放：方向 1 放大、-1 缩小；到头则停在边界 */
+function zoomByStep(direction) {
+  if (state.current?.kind !== "pdf" || !activeReader()) return;
+  const current = state.pdfZoom;
+  const epsilon = 0.005;
+  const target = direction > 0
+    ? ZOOM_STEPS.find((step) => step > current + epsilon)
+    : [...ZOOM_STEPS].reverse().find((step) => step < current - epsilon);
+  if (target == null) return;
+  setZoom(target);
+}
+
+/** 适合页面（菜单项）：整页完整显示 */
 function fitPdfPage() {
   const reader = activeReader();
   if (!reader) return;
   reader.fitPage();
   applyReaderZoom(reader);
   toast(t("reader.fitToast"));
+}
+
+/** 适合宽度（菜单项）：页宽撑满显示区域 */
+function fitPdfWidth() {
+  const reader = activeReader();
+  if (!reader) return;
+  reader.fitWidth();
+  applyReaderZoom(reader);
+  toast(t("reader.fitWidthToast"));
 }
 
 /** 把阅读器当前缩放回写到全局状态与工具栏 */
@@ -1764,6 +1829,11 @@ function bind() {
       setZoomMenu(false);
       return;
     }
+    if (event.target.closest("[data-fit-width]")) {
+      fitPdfWidth();
+      setZoomMenu(false);
+      return;
+    }
     if (event.target.closest("[data-fit-zoom]")) {
       fitPdfPage();
       setZoomMenu(false);
@@ -1775,10 +1845,9 @@ function bind() {
     const settings = state.settings;
     if (act === "prev") goPage(state.pdfPage - 1);
     if (act === "next") goPage(state.pdfPage + 1);
-    if (act === "zoom-in") setZoom(state.pdfZoom + 0.1);
-    if (act === "zoom-out") setZoom(state.pdfZoom - 0.1);
+    if (act === "zoom-in") zoomByStep(1);
+    if (act === "zoom-out") zoomByStep(-1);
     if (act === "zoom-menu") setZoomMenu(!zoomMenuOpen);
-    if (act === "fit") fitPdfPage();
     if (act === "ctx") {
       setCtxOpen(!state.ctxOpen);
       renderToolbar();
@@ -2004,13 +2073,24 @@ function bind() {
       event.preventDefault();
       goPage(state.pdfPage - 1);
     }
+    // 缩放：Ctrl +/- 按档位步进，Ctrl+0 回到 100%；不带修饰键的 +/- 同样可用
+    if (modifier && (event.key === "+" || event.key === "=" || event.key === "-")) {
+      event.preventDefault();
+      zoomByStep(event.key === "-" ? -1 : 1);
+      return;
+    }
+    if (modifier && event.key === "0") {
+      event.preventDefault();
+      setZoom(1);
+      return;
+    }
     if ((event.key === "+" || event.key === "=") && state.current?.kind === "pdf") {
       event.preventDefault();
-      setZoom(state.pdfZoom + 0.1);
+      zoomByStep(1);
     }
     if (event.key === "-" && state.current?.kind === "pdf") {
       event.preventDefault();
-      setZoom(state.pdfZoom - 0.1);
+      zoomByStep(-1);
     }
     if (modifier && event.key.toLowerCase() === "b") {
       event.preventDefault();

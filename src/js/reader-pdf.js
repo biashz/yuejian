@@ -9,8 +9,9 @@ const VENDOR = new URL("../vendor/pdfjs/", import.meta.url).href;
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("../vendor/pdfjs/pdf.worker.mjs", import.meta.url).href;
 
 // 下限放到 25%：窗口较小时「适合页面」需要把整页缩到 50% 以下才能看全
-const ZOOM_MIN = 0.25;
-const ZOOM_MAX = 2.5;
+export const ZOOM_MIN = 0.25;
+/// 上限与常见阅读器一致（400%）
+export const ZOOM_MAX = 4;
 
 /// 超过该体积的 PDF 改走 IPC 分块读取：
 /// asset 协议收到不带 Range 的请求时会把整个文件读进内存，GB 级文件会直接压垮进程
@@ -24,6 +25,76 @@ const KEEP_AHEAD = 3;
 const READ_POINT = 140;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, Number(value) || 0));
+
+/* ---------------- 目录页识别 ---------------- */
+/// 目录页标题：中英文常见写法
+const TOC_TITLE_RE = /^(目\s*录|contents?|table\s+of\s+contents)$/i;
+/// 目录条目：「标题 + 分隔符 + 页码」，页脚页码允许阿拉伯数字或罗马数字
+const TOC_ENTRY_RE = /^(.*?)[\s.·…]{1,}(\d{1,4}|[ivxlcdm]{1,7})$/i;
+
+/** 把文本项按纵坐标聚成行（自上而下），行内再按横坐标排好 */
+function groupTextLines(items) {
+  const rows = [];
+  for (const item of items) {
+    if (!item.str || !item.str.trim()) continue;
+    const y = item.transform[5];
+    const gap = Math.max(3, (Math.abs(item.height) || 10) * 0.4);
+    let row = rows.find((candidate) => Math.abs(candidate.y - y) <= gap);
+    if (!row) {
+      row = { y, items: [] };
+      rows.push(row);
+    }
+    row.items.push(item);
+  }
+  rows.sort((a, b) => b.y - a.y);
+  return rows.map((row) => {
+    row.items.sort((a, b) => a.transform[4] - b.transform[4]);
+    return { y: row.y, items: row.items, text: lineText(row.items) };
+  });
+}
+
+/** 拼接一行文本：横向间距明显时补空格，避免「标题」和右侧页码粘在一起 */
+function lineText(items) {
+  let text = "";
+  let prevRight = null;
+  for (const item of items) {
+    const left = item.transform[4];
+    if (prevRight != null && left - prevRight > (Math.abs(item.height) || 10) * 0.5) text += " ";
+    text += item.str;
+    prevRight = left + (item.width || 0);
+  }
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** 解析一行目录条目；不像条目时返回 null */
+function parseTocEntry(raw) {
+  const text = String(raw || "").replace(/\s+/g, " ").trim();
+  const matched = text.match(TOC_ENTRY_RE);
+  if (!matched) return null;
+  const title = matched[1].replace(/[.·…\s]+$/, "").trim();
+  // 纯数字的「标题」多半是页码行或图表编号，跳过
+  if (!title || /^\d+$/.test(title)) return null;
+  return { title, printed: matched[2].toLowerCase() };
+}
+
+/** 行在页面上的实际像素矩形：用与文本层相同的变换把 PDF 坐标换算过来 */
+function lineDeviceRect(line, viewport) {
+  if (!line?.items.length) return null;
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const item of line.items) {
+    const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+    const fontHeight = Math.hypot(tx[2], tx[3]) || 10;
+    left = Math.min(left, tx[4]);
+    top = Math.min(top, tx[5] - fontHeight);
+    right = Math.max(right, tx[4] + (item.width || 0) * viewport.scale);
+    bottom = Math.max(bottom, tx[5] + fontHeight * 0.25);
+  }
+  if (!Number.isFinite(left) || right <= left) return null;
+  return { left, top, width: right - left, height: Math.max(10, bottom - top) };
+}
 
 /** 把 pdf.js 的按需读取接到 Rust 侧的分块读取命令上 */
 class IpcRangeTransport extends pdfjsLib.PDFDataRangeTransport {
@@ -57,17 +128,19 @@ class IpcRangeTransport extends pdfjsLib.PDFDataRangeTransport {
 }
 
 export class PdfReader {
-  constructor({ stack, scrollArea, onPageChange, onReady, onError }) {
+  constructor({ stack, scrollArea, onPageChange, onReady, onError, onZoom }) {
     this.stack = stack;
     this.scrollArea = scrollArea;
     this.onPageChange = onPageChange;
     this.onReady = onReady;
     this.onError = onError;
+    this.onZoom = onZoom;
 
     this.pdf = null;
     this.zoom = 1;
-    // 是否处于「适合页面」模式：窗口或分栏尺寸变化时按可视区重新适配
-    this.fitMode = false;
+    // 适配模式："page" 适合页面、"width" 适合宽度、null 固定比例；
+    // 前两者在窗口或分栏尺寸变化时按可视区重新计算
+    this.fitMode = null;
     this.lastHeight = 0;
     // 演示模式放映期间挂起尺寸自适应：全屏改变窗口大小不应让背后的阅读视图重排重绘
     this.suspended = false;
@@ -89,9 +162,15 @@ export class PdfReader {
     this.tops = null;
     // 联动落位时目标页可能还没渲染：占位页高度是估算值，等真实高度出来后再校正一次
     this.pendingAnchor = null;
+    // 识别出的目录页：页码 -> 条目（行号、标题、目标页），用于生成可点击区域
+    this.tocPages = null;
+    this.tocEntries = [];
 
     this.handleScroll = this.handleScroll.bind(this);
     this.handleResize = this.handleResize.bind(this);
+    this.handleStackClick = this.handleStackClick.bind(this);
+    // 目录页的点击区域是动态插入的，用事件委托挂在栈上
+    this.stack.addEventListener("click", this.handleStackClick);
   }
 
   /** 打开文档；不传 zoom 时默认「适合页面」，即打开就完整看到一页 */
@@ -159,7 +238,7 @@ export class PdfReader {
     const base = first.getViewport({ scale: 1 });
     this.aspect = base.height / base.width;
 
-    this.fitMode = zoom == null;
+    this.fitMode = zoom == null ? "page" : null;
     this.zoom = this.fitMode ? this.fitPageZoom() : this.clampZoom(zoom);
     this.lastHeight = this.scrollArea.clientHeight;
 
@@ -169,6 +248,8 @@ export class PdfReader {
 
     this.onReady?.({ pages: this.numPages });
     this.goPage(startPage, false);
+    // 目录页识别放后台跑：不拖慢打开速度，识别完成后给已渲染的目录页补上跳转区域
+    this.detectTocPages().catch(() => {});
   }
 
   pageWidth() {
@@ -303,10 +384,178 @@ export class PdfReader {
     sheet.classList.remove("is-scaling");
     sheet.classList.add("is-ready");
     this.rendered.set(pageNo, this.zoom);
+    // 目录页：把识别出的条目盖成可点击区域（异步，不阻塞绘制）
+    this.buildTocHits(sheet, pageNo, page, viewport);
     // 实际页高与占位高度可能有差异，作废滚动位置缓存
     this.tops = null;
     // 若正按联动锚点落位，这一页的真实高度会改变布局，需要重新校正一次
     this.alignToAnchor();
+  }
+
+  /* ---------------- 目录页识别与跳转 ---------------- */
+
+  /** 点击目录页条目：跳到识别出的目标页 */
+  handleStackClick(event) {
+    const hit = event.target.closest?.(".pdf-toc-hit");
+    if (!hit) return;
+    const target = Number(hit.dataset.tocTarget);
+    if (target) this.goPage(target, false);
+  }
+
+  /** 取一页的文本行；pdf.js 会缓存文本内容，重复调用开销很小 */
+  async pageLines(pageNo) {
+    if (!this.pdf) return null;
+    try {
+      const page = await this.pdf.getPage(pageNo);
+      const content = await page.getTextContent();
+      return groupTextLines(content.items);
+    } catch (_) {
+      return null; // 文档已切换或该页无法解析
+    }
+  }
+
+  /**
+   * 识别目录页：扫描开头若干页，找带「目录 / Contents」标题
+   * （或条目足够密集）的页，并解析出「标题 + 页码」条目。
+   */
+  async detectTocPages() {
+    if (!this.pdf || !this.numPages) return;
+    const token = this.token;
+    const scanCount = Math.min(this.numPages, 15);
+    const pages = [];
+    for (let pageNo = 1; pageNo <= scanCount; pageNo++) {
+      const lines = await this.pageLines(pageNo);
+      if (token !== this.token) return;
+      if (!lines?.length) continue;
+      const hasTitle = lines.slice(0, 8).some((line) => TOC_TITLE_RE.test(line.text));
+      const items = [];
+      lines.forEach((line, index) => {
+        const entry = parseTocEntry(line.text);
+        if (entry) items.push({ line: index, ...entry });
+      });
+      // 没有标题时要求条目足够多，避免把索引页、参考文献当成目录
+      if (!items.length || (!hasTitle && items.length < 8)) continue;
+      pages.push({ pageNo, items });
+    }
+    if (!pages.length || token !== this.token) return;
+
+    // 印刷页码 -> 实际页码：优先用 PDF 自带的页码标签，缺失时按页脚数字推算偏移
+    const labels = await this.pageLabels();
+    let offset;
+    const resolveTarget = async (printed) => {
+      const key = printed.toLowerCase();
+      if (labels?.has(key)) return labels.get(key);
+      if (!/^\d{1,4}$/.test(key)) return null;
+      if (offset === undefined) offset = await this.estimatePageOffset(pages[pages.length - 1].pageNo, token);
+      if (offset == null) return null;
+      const target = Number(key) + offset;
+      return target >= 1 && target <= this.numPages ? target : null;
+    };
+
+    const tocPages = new Map();
+    const entries = [];
+    for (const page of pages) {
+      const resolved = [];
+      for (const item of page.items) {
+        const targetPage = await resolveTarget(item.printed);
+        // 指向自身或无法定位的条目不生成点击区域，避免点了没反应
+        if (!targetPage || targetPage === page.pageNo) continue;
+        resolved.push({ line: item.line, title: item.title, targetPage });
+      }
+      if (!resolved.length) continue;
+      tocPages.set(page.pageNo, resolved);
+      resolved.forEach((entry) => entries.push({ page: page.pageNo, ...entry }));
+    }
+    if (token !== this.token || !tocPages.size) return;
+
+    this.tocPages = tocPages;
+    this.tocEntries = entries;
+    // 识别是后台完成的：已经渲染好的目录页需要补一次点击区域
+    for (const pageNo of tocPages.keys()) this.refreshTocOverlay(pageNo);
+  }
+
+  /** PDF 自带的页码标签（如封面无标签、前言 i/ii、正文 1、2…） */
+  async pageLabels() {
+    try {
+      const labels = await this.pdf.getPageLabels();
+      if (!Array.isArray(labels) || !labels.length) return null;
+      const map = new Map();
+      labels.forEach((label, index) => {
+        const key = String(label || "").trim().toLowerCase();
+        if (key) map.set(key, index + 1);
+      });
+      return map.size ? map : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** 用目录之后的页脚数字推算「印刷页码 -> 实际页码」的偏移 */
+  async estimatePageOffset(afterPage, token) {
+    const offsets = [];
+    const last = Math.min(this.numPages, afterPage + 4);
+    for (let pageNo = afterPage + 1; pageNo <= last; pageNo++) {
+      const lines = await this.pageLines(pageNo);
+      if (token !== this.token) return null;
+      if (!lines?.length) continue;
+      // 页脚/页眉里单独成行的纯数字最可能是印刷页码，优先取最靠下的
+      const numberLine = [...lines].reverse().find((line) => /^\d{1,4}$/.test(line.text));
+      if (!numberLine) continue;
+      const printed = Number(numberLine.text);
+      if (printed > this.numPages) continue;
+      offsets.push(pageNo - printed);
+    }
+    if (!offsets.length) return null;
+    // 采样里可能混进非页码的数字，取出现次数最多的偏移
+    const counts = new Map();
+    offsets.forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  }
+
+  /** 给已渲染的目录页补上点击区域 */
+  async refreshTocOverlay(pageNo) {
+    const sheet = this.sheets[pageNo - 1];
+    if (!sheet?.classList.contains("is-ready") || !this.pdf) return;
+    try {
+      const page = await this.pdf.getPage(pageNo);
+      const base = page.getViewport({ scale: 1 });
+      const width = parseFloat(sheet.style.width) || this.pageWidth();
+      this.buildTocHits(sheet, pageNo, page, page.getViewport({ scale: width / base.width }));
+    } catch (_) {
+      /* 文档已切换 */
+    }
+  }
+
+  /** 在目录页上按行生成透明按钮，点击即跳到对应页 */
+  async buildTocHits(sheet, pageNo, page, viewport) {
+    const entries = this.tocPages?.get(pageNo);
+    if (!entries?.length || sheet.querySelector(".pdf-toc-layer")) return;
+    let content;
+    try {
+      content = await page.getTextContent();
+    } catch (_) {
+      return;
+    }
+    // 等待期间可能已缩放或换文档，此时坐标与当前尺寸不再匹配
+    if (!sheet.isConnected || Math.abs((parseFloat(sheet.style.width) || 0) - viewport.width) > 1.5) return;
+    const lines = groupTextLines(content.items);
+    const layer = document.createElement("div");
+    layer.className = "pdf-toc-layer";
+    for (const entry of entries) {
+      const rect = lineDeviceRect(lines[entry.line], viewport);
+      if (!rect) continue;
+      const hit = document.createElement("button");
+      hit.type = "button";
+      hit.className = "pdf-toc-hit";
+      hit.dataset.tocTarget = String(entry.targetPage);
+      hit.title = `${entry.title} · ${t("reader.pageN", { page: entry.targetPage })}`;
+      hit.style.left = `${rect.left}px`;
+      hit.style.top = `${rect.top}px`;
+      hit.style.width = `${rect.width}px`;
+      hit.style.height = `${rect.height}px`;
+      layer.appendChild(hit);
+    }
+    if (layer.childElementCount) sheet.appendChild(layer);
   }
 
   /** 重建每页顶部滚动位置缓存（一次布局读取，之后滚动只做二分查找） */
@@ -365,15 +614,36 @@ export class PdfReader {
     return Math.floor(Math.min(byWidth, byHeight) * 100) / 100;
   }
 
+  /** 「适合宽度」的比例：页宽刚好撑满可视区，页面高度可超出，需上下滚动 */
+  fitWidthZoom() {
+    // .pdf-stack 左右各留白 32px，扣掉后即为可用宽度
+    const availableWidth = Math.max(240, this.scrollArea.clientWidth - 64);
+    return Math.floor((availableWidth / this.baseWidth) * 100) / 100;
+  }
+
   /** 适合页面：完整展示一页 */
   fitPage() {
     if (!this.pdf || !this.sheets.length) return;
-    this.setZoom(this.fitPageZoom(), this.page, true);
+    this.setZoom(this.fitPageZoom(), null, "page");
   }
 
-  setZoom(zoom, anchorPage = this.page, fitMode = false) {
+  /** 适合宽度：页宽撑满显示区域 */
+  fitWidth() {
+    if (!this.pdf || !this.sheets.length) return;
+    this.setZoom(this.fitWidthZoom(), null, "width");
+  }
+
+  /**
+   * 设置缩放比例。
+   * anchorPage 为 null 时以当前阅读位置（页码 + 页内相对位置）为锚点，
+   * 缩放后视线不跳动——这是常见阅读器的行为；显式传页码则回到该页顶部。
+   */
+  setZoom(zoom, anchorPage = null, fitMode = null) {
+    const anchor = anchorPage == null ? this.currentPosition() : null;
     this.fitMode = fitMode;
     this.zoom = this.clampZoom(zoom);
+    // 窗口变化导致的适配缩放也要刷新工具栏百分比
+    this.onZoom?.(this.zoom);
     const width = this.pageWidth();
     const height = Math.round(width * this.aspect);
     // 缩放后所有画布都失效，先统一取消在途渲染并释放
@@ -385,6 +655,8 @@ export class PdfReader {
     this.sheets.forEach((sheet, index) => {
       sheet.style.width = `${width}px`;
       sheet.style.height = `${height}px`;
+      // 目录页点击区域是按旧比例算的坐标，先移除，重绘后再按新尺寸生成
+      sheet.querySelector(".pdf-toc-layer")?.remove();
       const canvas = sheet.querySelector("canvas");
       if (canvas && sheet.classList.contains("is-ready")) {
         // 已渲染的页：先把旧画布拉伸到新尺寸顶着，等新画布画好再替换，
@@ -402,7 +674,10 @@ export class PdfReader {
     this.tops = null;
 
     this.renderWindow();
-    requestAnimationFrame(() => this.goPage(anchorPage, false));
+    requestAnimationFrame(() => {
+      if (anchor) this.goPosition(anchor.page, anchor.fraction);
+      else this.goPage(anchorPage, false);
+    });
   }
 
   goPage(page, smooth = true) {
@@ -510,12 +785,15 @@ export class PdfReader {
     const width = Math.min(780, Math.max(360, area.clientWidth - 96));
     const height = area.clientHeight;
     const widthChanged = Math.abs(width - this.baseWidth) >= 24;
-    // 适合页面模式下高度变化同样影响整页能否看全，需要重新适配
-    const heightChanged = this.fitMode && Math.abs(height - this.lastHeight) >= 24;
+    // 「适合页面」时高度变化同样影响整页能否看全；「适合宽度」只与宽度有关
+    const heightChanged = this.fitMode === "page" && Math.abs(height - this.lastHeight) >= 24;
     if (!widthChanged && !heightChanged) return;
     this.baseWidth = width;
     this.lastHeight = height;
-    this.setZoom(this.fitMode ? this.fitPageZoom() : this.zoom, this.page, this.fitMode);
+    const fitZoom = this.fitMode === "page" ? this.fitPageZoom()
+      : this.fitMode === "width" ? this.fitWidthZoom()
+      : this.zoom;
+    this.setZoom(fitZoom, null, this.fitMode);
   }
 
   /** 解析大纲为扁平目录 */
@@ -683,6 +961,8 @@ export class PdfReader {
     this.textCache.clear();
     this.tops = null;
     this.pendingAnchor = null;
+    this.tocPages = null;
+    this.tocEntries = [];
     this.page = 1;
     this.numPages = 0;
   }
