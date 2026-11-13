@@ -592,8 +592,17 @@ Function YueJianUninstallPrevious
   ${If} $R9 = 1
     ExecWait '$R8' $0
   ${Else}
-    ; /S 静默卸载；_?= 让卸载程序在原目录内联执行，ExecWait 才能等到它真正退出
-    ExecWait '"$R7\uninstall.exe" /S _?=$R7' $0
+    ; 默认带界面运行旧卸载程序：用户既能看到卸载进度，也能在它的「删除应用数据」选项里
+    ; 决定是否保留书架与设置（该复选框默认不勾选，即保留）；静默 / 被动安装没有交互，
+    ; 分别用 /S、/P 走无确认流程（数据同样默认保留）
+    StrCpy $R1 '"$R7\uninstall.exe" _?=$R7'
+    ${If} ${Silent}
+      StrCpy $R1 '"$R7\uninstall.exe" /S _?=$R7'
+    ${ElseIf} $PassiveMode = 1
+      StrCpy $R1 '"$R7\uninstall.exe" /P _?=$R7'
+    ${EndIf}
+    ; _?= 让卸载程序在原目录内联执行，ExecWait 才能等到它真正退出
+    ExecWait $R1 $0
   ${EndIf}
   ${If} ${Errors}
     StrCpy $0 2 ; ExecWait 失败，按出错处理
