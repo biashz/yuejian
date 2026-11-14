@@ -1,7 +1,7 @@
 {
   "name": "yuejian-reader",
   "private": true,
-  "version": "0.1.13",
+  "version": "0.1.14",
   "type": "module",
   "description": "阅笺 · PDF 与 Markdown 本地阅读器（Rust + Tauri 2）",
   "scripts": {
