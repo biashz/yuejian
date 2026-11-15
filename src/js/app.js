@@ -6,6 +6,16 @@ import { invoke, isTauri, currentWindow } from "./api.js";
 import { PdfReader, ZOOM_MAX, ZOOM_MIN } from "./reader-pdf.js";
 import { renderMarkdown, setupScrollSpy, scrollToHeading } from "./reader-md.js";
 import { t, getLanguage, setLanguage, applyDom, formatMonthDay } from "./i18n.js";
+import {
+  compareVersion,
+  downloadInstaller,
+  fetchLatestRelease,
+  getCurrentVersion,
+  isWindows,
+  onDownloadProgress,
+  openReleasePage,
+  runInstaller,
+} from "./update.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -25,6 +35,7 @@ const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 const DEFAULT_SETTINGS = {
   theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720,
   showCtx: true, zen: false, linkSync: true, language: "zh",
+  autoCheckUpdate: true,
 };
 
 const state = {
@@ -1655,7 +1666,162 @@ function syncSettingsUI() {
   $("#switchCtx").setAttribute("aria-checked", String(settings.showCtx));
   $("#switchZen").classList.toggle("is-on", settings.zen);
   $("#switchZen").setAttribute("aria-checked", String(settings.zen));
+  const autoUpdate = settings.autoCheckUpdate !== false;
+  $("#switchAutoUpdate").classList.toggle("is-on", autoUpdate);
+  $("#switchAutoUpdate").setAttribute("aria-checked", String(autoUpdate));
   $$(".theme-swatch").forEach((item) => item.classList.toggle("is-on", item.dataset.themeValue === settings.theme));
+}
+
+/* ---------------- 更新 ---------------- */
+/** 更新状态机：idle → checking → latest | available → downloading → ready，失败转 error */
+const updater = {
+  version: "",
+  release: null,
+  phase: "idle",
+  progress: 0,
+  installerPath: "",
+  error: "",
+  unlisten: null,
+};
+
+const updateDate = (iso) => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString(getLanguage() === "en" ? "en-US" : "zh-CN", {
+    year: "numeric", month: "short", day: "numeric",
+  });
+};
+
+/** 版本号 / 状态说明 / 动作按钮 / 进度条统一在这里刷新 */
+function renderUpdateUI() {
+  const card = $("#updateCard");
+  const action = $("#updateAction");
+  if (!card) return;
+  const target = updater.release?.version || "";
+  const percent = Math.round(updater.progress * 100);
+  card.dataset.state = updater.phase;
+  $("#updateBadge").hidden = !(updater.phase === "available" || updater.phase === "ready");
+  $("#updateProgress").hidden = updater.phase !== "downloading";
+  $("#updateProgress span").style.transform = `scaleX(${clamp(updater.progress, 0, 1)})`;
+  $("#updateLink").hidden = !(updater.release && updater.phase !== "downloading");
+  $("#updateTitle").textContent = updater.phase === "available" || updater.phase === "ready"
+    ? t("settings.updateAvailable", { version: target })
+    : t("settings.updateCurrent", { version: updater.version || "—" });
+
+  const note = $("#updateNote");
+  action.disabled = false;
+  if (updater.phase === "checking") {
+    note.textContent = t("settings.updateChecking");
+    action.textContent = t("settings.updateChecking");
+    action.disabled = true;
+  } else if (updater.phase === "latest") {
+    note.textContent = t("settings.updateLatest", { version: target || updater.version });
+    action.textContent = t("settings.checkUpdate");
+  } else if (updater.phase === "available") {
+    note.textContent = isWindows && updater.release?.assetUrl
+      ? t("settings.updateAvailableNote", { date: updateDate(updater.release?.publishedAt) })
+      : t("settings.updateUnsupported");
+    action.textContent = isWindows && updater.release?.assetUrl
+      ? t("settings.updateDownload")
+      : t("settings.updateManual");
+  } else if (updater.phase === "downloading") {
+    note.textContent = t("settings.updateDownloading", { percent });
+    action.textContent = t("settings.updateDownloading", { percent });
+    action.disabled = true;
+  } else if (updater.phase === "ready") {
+    note.textContent = t("settings.updateReady");
+    action.textContent = t("settings.updateInstall");
+  } else if (updater.phase === "error") {
+    note.textContent = t("settings.updateFailed", { error: updater.error });
+    action.textContent = t("settings.updateRetry");
+  } else {
+    note.textContent = t("settings.updateIdle");
+    action.textContent = t("settings.checkUpdate");
+  }
+}
+
+/** silent = 启动时的自动检查：失败不弹提示，有更新才给一条 toast */
+async function checkForUpdate({ silent = false } = {}) {
+  if (!isTauri || updater.phase === "checking" || updater.phase === "downloading") return;
+  updater.phase = "checking";
+  updater.error = "";
+  renderUpdateUI();
+  try {
+    const release = await fetchLatestRelease();
+    updater.release = release;
+    if (compareVersion(release.version, updater.version) > 0) {
+      updater.phase = "available";
+      // 自动检查：Windows 直接后台下载，完成后再提示；其它平台只提示去发布页
+      if (silent && isWindows && release.assetUrl) {
+        downloadUpdate();
+        return;
+      }
+      if (silent) toast(t("toast.updateFound", { version: release.version }));
+    } else {
+      updater.phase = "latest";
+    }
+  } catch (error) {
+    updater.phase = silent ? "idle" : "error";
+    updater.error = String(error?.message || error);
+  }
+  renderUpdateUI();
+}
+
+async function downloadUpdate() {
+  const release = updater.release;
+  if (!release) return;
+  if (!isWindows || !release.assetUrl) {
+    openReleasePage(release.pageUrl).catch(() => {});
+    return;
+  }
+  updater.phase = "downloading";
+  updater.progress = 0;
+  renderUpdateUI();
+  updater.unlisten = onDownloadProgress(({ received, total }) => {
+    if (!total) return;
+    updater.progress = clamp(received / total, 0, 1);
+    renderUpdateUI();
+  });
+  try {
+    updater.installerPath = await downloadInstaller(release.assetUrl, release.assetSize);
+    updater.progress = 1;
+    updater.phase = "ready";
+    toast(t("settings.updateReady"));
+  } catch (error) {
+    updater.phase = "error";
+    updater.error = String(error?.message || error);
+  } finally {
+    updater.unlisten?.();
+    updater.unlisten = null;
+  }
+  renderUpdateUI();
+}
+
+async function installUpdate() {
+  if (!updater.installerPath) return;
+  try {
+    // 安装器启动成功后应用会立即退出，这里不需要再更新状态
+    await runInstaller(updater.installerPath);
+  } catch (error) {
+    updater.phase = "error";
+    updater.error = String(error?.message || error);
+    renderUpdateUI();
+  }
+}
+
+function handleUpdateAction() {
+  if (updater.phase === "available") return downloadUpdate();
+  if (updater.phase === "ready") return installUpdate();
+  return checkForUpdate();
+}
+
+/** 启动时读取版本号，按设置决定是否静默检查一次 */
+async function initUpdate() {
+  if (!isTauri) return;
+  updater.version = await getCurrentVersion();
+  renderUpdateUI();
+  if (state.settings.autoCheckUpdate === false) return;
+  setTimeout(() => checkForUpdate({ silent: true }), 3000);
 }
 
 /* ---------------- 语言切换 ---------------- */
@@ -1682,6 +1848,7 @@ function switchLanguage(language) {
   updateDocSub();
   updatePaneHeads();
   updateStatus();
+  renderUpdateUI();
   $("#docTitle").textContent = state.current?.title || t("reader.untitled");
   $("#tbTitle").textContent = state.view === "reading"
     ? ($("#docTitle").textContent || t("nav.reading"))
@@ -1975,6 +2142,15 @@ function bind() {
     toast(state.settings.showCtx ? t("settings.showCtxOn") : t("settings.showCtxOff"));
   });
   $("#switchZen").addEventListener("click", toggleZen);
+  $("#switchAutoUpdate").addEventListener("click", () => {
+    state.settings.autoCheckUpdate = !state.settings.autoCheckUpdate;
+    syncSettingsUI();
+    persistSettings();
+  });
+  $("#updateAction").addEventListener("click", handleUpdateAction);
+  $("#updateLink").addEventListener("click", () => {
+    openReleasePage(updater.release?.pageUrl).catch(() => {});
+  });
   $("#resetBtn").addEventListener("click", () => {
     if (splitMode) setSplit(false);  // 默认设置是单栏，先合并再重置
     // 恢复默认不应把界面语言改回中文，保留当前语言
@@ -2144,6 +2320,7 @@ async function boot() {
     renderLibrary();
     bind();
     setView("library");
+    renderUpdateUI();
     toast(t("toast.desktopOnly"));
     return;
   }
@@ -2167,6 +2344,7 @@ async function boot() {
   bind();
   renderLibrary();
   setView("library");
+  initUpdate();
 }
 
 /** 分栏是临时操作，启动时一律单栏；联动开关按上次选择恢复（不自动打开文档） */

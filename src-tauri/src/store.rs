@@ -57,6 +57,8 @@ pub struct Settings {
     pub link_sync: bool,
     /// 界面语言：zh | en
     pub language: String,
+    /// 启动时自动检查更新
+    pub auto_check_update: bool,
 }
 
 impl Default for Settings {
@@ -71,6 +73,7 @@ impl Default for Settings {
             split: false,
             link_sync: true,
             language: "zh".into(),
+            auto_check_update: true,
         }
     }
 }

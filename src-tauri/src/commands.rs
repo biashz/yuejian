@@ -4,7 +4,8 @@ use serde::Serialize;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use tauri::State;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, State};
 
 const MAX_TEXT_SIZE: u64 = 16 * 1024 * 1024;
 /// asset 协议失效时兜底读取的上限，超过后直接报错而不是把内存吃光
@@ -278,4 +279,136 @@ pub fn read_pdf_range(path: String, begin: u64, end: u64) -> Result<tauri::ipc::
     file.read_exact(&mut buffer)
         .map_err(|err| format!("读取 PDF 失败：{err}"))?;
     Ok(tauri::ipc::Response::new(buffer))
+}
+
+/* ---------------- 应用更新 ---------------- */
+
+/// 更新包只允许从 GitHub 官方域名下载，避免被替换成任意地址
+const UPDATE_HOSTS: [&str; 4] = [
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "api.github.com",
+];
+
+#[derive(Clone, Serialize)]
+struct UpdateProgress {
+    received: u64,
+    total: u64,
+}
+
+/// 当前应用版本（编译期写入 Cargo.toml 的版本号）
+#[tauri::command]
+pub fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+fn update_host_allowed(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = host.split('@').next_back().unwrap_or(host);
+    let host = host.split(':').next().unwrap_or(host);
+    UPDATE_HOSTS
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+}
+
+/// 下载更新包到临时目录，期间通过 `update-progress` 事件汇报进度。
+///
+/// 交给系统自带的 curl（Windows 10+ / macOS / 主流 Linux 均有），
+/// 不额外引入 HTTP 依赖；下载中轮询文件大小即可算出百分比。
+#[tauri::command]
+pub async fn download_update(
+    app: AppHandle,
+    url: String,
+    file_name: String,
+    size: u64,
+) -> Result<String, String> {
+    if !update_host_allowed(&url) {
+        return Err("更新地址不在允许范围内".into());
+    }
+    // 只接受安装包文件名，防止被当成任意路径写入
+    let name = Path::new(&file_name)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| name.to_ascii_lowercase().ends_with(".exe"))
+        .ok_or_else(|| "更新包文件名无效".to_string())?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::env::temp_dir().join("yuejian-update");
+        fs::create_dir_all(&dir).map_err(|err| format!("无法创建更新目录：{err}"))?;
+        let path = dir.join(&name);
+        let _ = fs::remove_file(&path);
+
+        let mut child = std::process::Command::new("curl")
+            .args(["-L", "--fail", "--silent", "--show-error", "--retry", "2"])
+            .arg("--user-agent")
+            .arg(concat!("YueJianReader/", env!("CARGO_PKG_VERSION")))
+            .arg("-o")
+            .arg(&path)
+            .arg(&url)
+            .spawn()
+            .map_err(|err| format!("无法启动下载：{err}"))?;
+
+        loop {
+            let received = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+            let _ = app.emit("update-progress", UpdateProgress { received, total: size });
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        let _ = fs::remove_file(&path);
+                        return Err("下载更新包失败，请稍后重试".to_string());
+                    }
+                    let received = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+                    let _ = app.emit("update-progress", UpdateProgress { received, total: received.max(size) });
+                    return Ok(path.to_string_lossy().to_string());
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(200)),
+                Err(err) => {
+                    let _ = child.kill();
+                    let _ = fs::remove_file(&path);
+                    return Err(format!("下载更新包失败：{err}"));
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// 启动更新包并退出应用：安装器会先卸载旧版本（保留用户数据）再安装新版本
+#[tauri::command]
+pub fn install_update(app: AppHandle, path: String) -> Result<(), String> {
+    let installer = PathBuf::from(&path);
+    let is_exe = installer
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("exe"))
+        .unwrap_or(false);
+    if !is_exe || !installer.is_file() {
+        return Err("更新包不存在，请重新下载".into());
+    }
+    // 必须以独立进程启动：安装器要替换正在运行的程序文件，应用需要先退出
+    std::process::Command::new(&installer)
+        .spawn()
+        .map_err(|err| format!("无法启动更新包：{err}"))?;
+    app.exit(0);
+    Ok(())
+}
+
+/// 用系统默认浏览器打开外部链接（仅允许 https）
+#[tauri::command]
+pub fn open_external(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("只能打开 https 链接".into());
+    }
+    #[cfg(target_os = "windows")]
+    let spawned = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(&url).spawn();
+    spawned.map(|_| ()).map_err(|err| format!("无法打开链接：{err}"))
 }

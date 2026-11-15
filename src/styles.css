@@ -266,6 +266,16 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 }
 .rail-spacer { flex: 1; }
 
+/* 发现新版本时在「设置」按钮右上角点一颗朱砂痣，不打断阅读 */
+.rail-badge {
+  position: absolute; top: 8px; right: 8px;
+  width: 7px; height: 7px;
+  font-size: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--paper);
+}
+
 /* ---------- 6. Library panel ---------- */
 .library-panel {
   display: flex;
@@ -1260,6 +1270,80 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 }
 .switch.is-on { background: var(--accent); }
 .switch.is-on span { transform: translateX(16px); }
+
+/* ---------- 更新卡片：纸面通知单 ---------- */
+.update-card {
+  margin-top: 4px;
+  padding: 13px 14px 11px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--surface-2) 42%, transparent);
+  transition: border-color 200ms var(--ease), background 200ms var(--ease);
+}
+/* 有新版本 / 下载完成后改成实线朱红边，让状态一眼可辨 */
+.update-card[data-state="available"],
+.update-card[data-state="ready"] {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent-weak) 34%, transparent);
+}
+.update-card[data-state="error"] {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--line));
+}
+.update-head { display: flex; align-items: flex-start; gap: 11px; }
+.update-mark {
+  flex: none;
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  color: var(--ink-3);
+  background: var(--surface);
+}
+.update-card[data-state="available"] .update-mark,
+.update-card[data-state="ready"] .update-mark { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.update-card[data-state="checking"] .update-mark .ic,
+.update-card[data-state="downloading"] .update-mark .ic { animation: update-spin 1.6s linear infinite; }
+@keyframes update-spin { to { transform: rotate(360deg); } }
+.update-facts { flex: 1; min-width: 0; }
+.update-title {
+  font-family: var(--font-mono);
+  font-size: 12px; letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.update-note {
+  margin-top: 5px;
+  font-size: 11.5px; line-height: 1.7;
+  color: var(--ink-2);
+  word-break: break-word;
+}
+.update-link {
+  margin-top: 6px; padding: 0;
+  background: none; border: 0;
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.update-link:hover { color: var(--accent-ink); }
+.update-action { flex: none; align-self: center; white-space: nowrap; }
+.update-action:disabled { opacity: 0.55; cursor: default; }
+.update-progress {
+  margin-top: 11px;
+  height: 3px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  overflow: hidden;
+}
+.update-progress span {
+  display: block; height: 100%; width: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 200ms linear;
+}
 
 .sheet-foot {
   display: flex; align-items: center; justify-content: space-between;

@@ -46,6 +46,10 @@ pub fn run() {
             commands::remove_book,
             commands::read_pdf_bytes,
             commands::read_pdf_range,
+            commands::app_version,
+            commands::download_update,
+            commands::install_update,
+            commands::open_external,
         ])
         .run(tauri::generate_context!())
         .expect("启动阅笺失败");
