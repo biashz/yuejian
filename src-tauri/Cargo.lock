@@ -4888,7 +4888,7 @@ dependencies = [
 
 [[package]]
 name = "yuejian"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "comrak",
  "rfd",
