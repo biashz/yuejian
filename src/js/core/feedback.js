@@ -29,13 +29,15 @@ let confirmSettle = null;
 
 /**
  * 纸感「注销单」确认框，替代系统弹框。
- * 返回 Promise<boolean>：点「移出」为 true，取消 / ESC / 点遮罩为 false。
+ * 返回 Promise<boolean>：点确认为 true，取消 / ESC / 点遮罩为 false。
+ * `eyebrow` 为单据顶部的小标签，调用方按场景区分（移出书架 / 删除分类）。
  */
-function askConfirm({ title, book, note, okText }) {
+function askConfirm({ title, book, note, okText, eyebrow }) {
   const overlay = $("#confirmOverlay");
   const card = $("#confirmCard");
   const lastFocus = document.activeElement;
   $("#confirmTitle").textContent = title;
+  if (eyebrow) $("#confirmEyebrow").textContent = eyebrow;
   // 书名放进内层 span，由 CSS 单独做两行截断（外层 padding 不参与裁切）
   $("#confirmBook").innerHTML = "<span></span>";
   $("#confirmBook span").textContent = book;

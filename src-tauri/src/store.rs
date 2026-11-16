@@ -21,6 +21,20 @@ impl Default for Progress {
     }
 }
 
+/// 用户自定义分类
+///
+/// 单份文档只属于一个分类（`Book::category_id`），不提供多标签；
+/// 按创建时间升序展示，刻意不设 `order` 字段，避免出现「声明了但从不写入」的字段。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Category {
+    pub id: String,
+    pub name: String,
+    /// 色板键：clay | indigo | olive | amber | plum | slate
+    pub color: String,
+    pub created_at: u64,
+}
+
 /// 书架条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +51,10 @@ pub struct Book {
     pub added_at: u64,
     pub last_opened_at: u64,
     pub favorite: bool,
+    /// 所属分类 id；空串表示「未分类」。
+    /// 字段级 default 让旧版 state.json（无该字段）可直接读取，无需迁移代码。
+    #[serde(default)]
+    pub category_id: String,
     pub progress: Progress,
 }
 
@@ -83,12 +101,14 @@ impl Default for Settings {
 pub struct AppState {
     pub version: u32,
     pub books: Vec<Book>,
+    /// 用户自定义分类。旧版 state.json 没有该字段时由容器级 default 补齐为空数组。
+    pub categories: Vec<Category>,
     pub settings: Settings,
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        Self { version: 1, books: Vec::new(), settings: Settings::default() }
+        Self { version: 1, books: Vec::new(), categories: Vec::new(), settings: Settings::default() }
     }
 }
 

@@ -9,7 +9,7 @@ import { toast } from "../core/feedback.js";
 import { scrollToHeading } from "../reader-md.js";
 import { panes, activatePane } from "../reader/panes.js";
 import { setView } from "../view.js";
-import { visibleBooks, renderBookList, renderGrid } from "../shelf.js";
+import { renderLibrary, syncSelection } from "../shelf.js";
 import { openBook } from "../reader/open.js";
 import { importDocuments, removeBook, toggleFavorite } from "../actions.js";
 import { openPalette } from "../palette.js";
@@ -53,7 +53,22 @@ export function bindShelfEvents() {
       }
     }
     const bookEl = event.target.closest("[data-book]");
-    if (bookEl) openBook(bookEl.dataset.book);
+    if (bookEl) {
+      // Ctrl/Cmd + 点击是「多选待归类」，不打开文档；其余情况维持原行为
+      if ((event.ctrlKey || event.metaKey) && bookEl.matches(".book-row, .book-card")) {
+        event.preventDefault();
+        const id = bookEl.dataset.book;
+        if (state.selected.has(id)) state.selected.delete(id);
+        else state.selected.add(id);
+        syncSelection();
+        return;
+      }
+      if (state.selected.size) {
+        state.selected.clear();
+        syncSelection();
+      }
+      openBook(bookEl.dataset.book);
+    }
   });
 
   // 导航
@@ -81,16 +96,14 @@ export function bindShelfEvents() {
   // 书架搜索与过滤
   $("#libSearch").addEventListener("input", (event) => {
     state.query = event.target.value.trim();
-    renderBookList(visibleBooks());
-    renderGrid(visibleBooks());
+    renderLibrary();
   });
   $("#filterRow").addEventListener("click", (event) => {
     const chip = event.target.closest(".chip");
     if (!chip) return;
     state.filter = chip.dataset.filter;
     $$("#filterRow .chip").forEach((item) => item.classList.toggle("is-on", item === chip));
-    renderBookList(visibleBooks());
-    renderGrid(visibleBooks());
+    renderLibrary();
   });
 
   // 导入

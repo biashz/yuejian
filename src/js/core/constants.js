@@ -10,6 +10,11 @@ const KIND_CLASS = { pdf: "pdf", markdown: "md" };
 const themeLabel = (theme) => t(`status.theme.${theme}`);
 const kindLabel = (kind) => KIND_LABEL[kind] || t("library.document");
 const TINTS = ["clay", "indigo", "olive", "sand", "plum"];
+/* 分类色板：取值同时用作 CSS 类名后缀（.c-clay）与 state.json 里的 color 字段 */
+const CATEGORY_COLORS = ["clay", "indigo", "olive", "amber", "plum", "slate"];
+/* 上限与 Rust 侧 MAX_CATEGORIES / MAX_CATEGORY_NAME 保持一致，前端只做提前禁用 */
+const MAX_CATEGORIES = 40;
+const MAX_CATEGORY_NAME = 20;
 const SIZE_STEPS = [15, 17, 19, 21];
 /* 缩放档位：按钮、Ctrl+滚轮与快捷键都按档位步进，与常见阅读器一致 */
 const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
@@ -21,4 +26,4 @@ const DEFAULT_SETTINGS = {
   autoCheckUpdate: true,
 };
 
-export { THEME_ORDER, KIND_LABEL, KIND_CLASS, themeLabel, kindLabel, TINTS, SIZE_STEPS, ZOOM_STEPS, ZOOM_PRESETS, DEFAULT_SETTINGS };
+export { THEME_ORDER, KIND_LABEL, KIND_CLASS, themeLabel, kindLabel, TINTS, SIZE_STEPS, ZOOM_STEPS, ZOOM_PRESETS, DEFAULT_SETTINGS, CATEGORY_COLORS, MAX_CATEGORIES, MAX_CATEGORY_NAME };

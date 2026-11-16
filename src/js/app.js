@@ -36,9 +36,12 @@ async function boot() {
   }
 
   try {
-    const [settings, books] = await Promise.all([invoke("get_settings"), invoke("get_library")]);
+    const [settings, books, categories] = await Promise.all([
+      invoke("get_settings"), invoke("get_library"), invoke("get_categories"),
+    ]);
     state.settings = { ...DEFAULT_SETTINGS, ...(settings || {}) };
     state.books = books || [];
+    state.categories = categories || [];
   } catch (error) {
     toast(t("toast.loadFailed", { error }));
   }

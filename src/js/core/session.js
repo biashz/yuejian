@@ -6,9 +6,15 @@ import { DEFAULT_SETTINGS } from "./constants.js";
 
 const state = {
   books: [],
+  categories: [],
   settings: { ...DEFAULT_SETTINGS },
   view: "library",
   filter: "all",
+  /* 分类轴筛选：null = 全部分类，"" = 未分类，其它为分类 id */
+  categoryId: null,
+  catCollapsed: false,
+  /* 批量归类的选中集合；不落盘，切视图时清空 */
+  selected: new Set(),
   query: "",
   ctxTab: "toc",
   ctxOpen: true,

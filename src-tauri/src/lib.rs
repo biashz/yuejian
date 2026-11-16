@@ -36,6 +36,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_library,
+            commands::get_categories,
             commands::get_settings,
             commands::save_settings,
             commands::pick_files,
@@ -44,6 +45,10 @@ pub fn run() {
             commands::save_progress,
             commands::toggle_favorite,
             commands::remove_book,
+            commands::create_category,
+            commands::update_category,
+            commands::delete_category,
+            commands::assign_category,
             commands::read_pdf_bytes,
             commands::read_pdf_range,
             commands::app_version,

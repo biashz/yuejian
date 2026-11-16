@@ -1,5 +1,5 @@
 use crate::markdown;
-use crate::store::{self, Book, Progress, Settings, StoreState};
+use crate::store::{self, Book, Category, Progress, Settings, StoreState};
 use serde::Serialize;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
@@ -61,6 +61,7 @@ fn build_book(path: &Path) -> Result<Book, String> {
         added_at: store::now_ms(),
         last_opened_at: store::now_ms(),
         favorite: false,
+        category_id: String::new(),
         progress: Progress::default(),
     })
 }
@@ -222,6 +223,139 @@ pub fn toggle_favorite(state: State<'_, StoreState>, id: String) -> Result<Book,
 pub fn remove_book(state: State<'_, StoreState>, id: String) -> Result<Vec<Book>, String> {
     let mut data = lock(&state)?;
     data.books.retain(|b| b.id != id);
+    store::persist(&data, &state.dir)?;
+    Ok(data.books.clone())
+}
+
+/* ---------------- 分类 ---------------- */
+
+/// 分类色板：与前端 `src/js/core/constants.js` 的 CATEGORY_COLORS 保持一致
+const CATEGORY_COLORS: [&str; 6] = ["clay", "indigo", "olive", "amber", "plum", "slate"];
+const MAX_CATEGORIES: usize = 40;
+const MAX_CATEGORY_NAME: usize = 20;
+
+/// 归一化并校验分类输入。
+/// 名称错误必须拦下（用户可修），颜色错误静默回落到 clay（只是显示属性，报错无法指导用户操作）。
+fn normalize_category_input(
+    categories: &[Category],
+    skip_id: Option<&str>,
+    name: &str,
+    color: &str,
+) -> Result<(String, String), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("名称不能为空".into());
+    }
+    if name.chars().count() > MAX_CATEGORY_NAME {
+        return Err(format!("名称最多 {MAX_CATEGORY_NAME} 个字符"));
+    }
+    // 忽略大小写与首尾空白后比较，避免出现「论文」与「论文 」两个视觉上相同的分类
+    let lowered = name.to_lowercase();
+    if categories
+        .iter()
+        .any(|c| Some(c.id.as_str()) != skip_id && c.name.trim().to_lowercase() == lowered)
+    {
+        return Err("已存在同名分类".into());
+    }
+    let color = if CATEGORY_COLORS.contains(&color) { color } else { CATEGORY_COLORS[0] };
+    Ok((name.to_string(), color.to_string()))
+}
+
+/// 生成不与现有分类冲突的 id：毫秒时间戳十六进制，撞上了就顺延
+fn next_category_id(categories: &[Category]) -> String {
+    let base = store::now_ms();
+    let mut offset = 0u64;
+    loop {
+        let candidate = format!("c{:x}", base + offset);
+        if !categories.iter().any(|c| c.id == candidate) {
+            return candidate;
+        }
+        offset += 1;
+    }
+}
+
+#[tauri::command]
+pub fn get_categories(state: State<'_, StoreState>) -> Result<Vec<Category>, String> {
+    Ok(lock(&state)?.categories.clone())
+}
+
+#[tauri::command]
+pub fn create_category(
+    state: State<'_, StoreState>,
+    name: String,
+    color: String,
+) -> Result<Category, String> {
+    let mut data = lock(&state)?;
+    if data.categories.len() >= MAX_CATEGORIES {
+        return Err(format!("分类数量已达上限（{MAX_CATEGORIES}）"));
+    }
+    let (name, color) = normalize_category_input(&data.categories, None, &name, &color)?;
+    let category = Category {
+        id: next_category_id(&data.categories),
+        name,
+        color,
+        created_at: store::now_ms(),
+    };
+    data.categories.push(category.clone());
+    store::persist(&data, &state.dir)?;
+    Ok(category)
+}
+
+#[tauri::command]
+pub fn update_category(
+    state: State<'_, StoreState>,
+    id: String,
+    name: String,
+    color: String,
+) -> Result<Category, String> {
+    let mut data = lock(&state)?;
+    let (name, color) = normalize_category_input(&data.categories, Some(&id), &name, &color)?;
+    let Some(category) = data.categories.iter_mut().find(|c| c.id == id) else {
+        return Err("分类不存在，可能已被删除".into());
+    };
+    category.name = name;
+    category.color = color;
+    let updated = category.clone();
+    store::persist(&data, &state.dir)?;
+    Ok(updated)
+}
+
+/// 删除分类，同时把它下面的书重置为「未分类」。
+/// 必须和删除在同一把锁里完成，否则会留下指向已删分类的悬挂引用。
+#[tauri::command]
+pub fn delete_category(state: State<'_, StoreState>, id: String) -> Result<Vec<Book>, String> {
+    let mut data = lock(&state)?;
+    if !data.categories.iter().any(|c| c.id == id) {
+        return Err("分类不存在，可能已被删除".into());
+    }
+    data.categories.retain(|c| c.id != id);
+    for book in data.books.iter_mut() {
+        if book.category_id == id {
+            book.category_id.clear();
+        }
+    }
+    store::persist(&data, &state.dir)?;
+    Ok(data.books.clone())
+}
+
+/// 批量归类。前端一次提交全部 id，避免逐条调用写入多次磁盘、中途失败留下半归类状态。
+/// `category_id` 为空串表示移出分类（回到未分类）。
+#[tauri::command]
+pub fn assign_category(
+    state: State<'_, StoreState>,
+    ids: Vec<String>,
+    category_id: String,
+) -> Result<Vec<Book>, String> {
+    let mut data = lock(&state)?;
+    if !category_id.is_empty() && !data.categories.iter().any(|c| c.id == category_id) {
+        return Err("分类不存在，可能已被删除".into());
+    }
+    for book in data.books.iter_mut() {
+        // 找不到的 id 直接跳过：批量操作应当幂等，不因为其中一条已删除而整体失败
+        if ids.iter().any(|id| *id == book.id) {
+            book.category_id = category_id.clone();
+        }
+    }
     store::persist(&data, &state.dir)?;
     Ok(data.books.clone())
 }

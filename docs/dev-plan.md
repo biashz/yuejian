@@ -9,13 +9,15 @@
 ├ app.js            入口：读取数据、应用设置、绑定事件
 ├ core/             dom 工具 / session 共享状态 / constants / format / feedback
 ├ reader/           panes 双栏 / open 打开文档 / toolbar / ctx 侧栏 / present 演示 / progress
-├ shelf.js          书架：列表、网格、继续阅读、统计
+├ shelf.js          书架：列表、网格、继续阅读、统计、分类/类型/关键词三重筛选
+├ categories.js     分类纯计算：排序、计数、下一个配色、筛选判定（不碰 DOM）
+├ category-ui.js    分类区与批量条渲染 + 分类编辑弹层状态机
 ├ view.js           视图切换、状态栏、窗口标题、语言切换
-├ actions.js        导入 / 移出 / 收藏
+├ actions.js        导入 / 移出 / 收藏 / 分类增删改 / 批量归类
 ├ palette.js        命令面板
 ├ preferences.js    主题与排版、设置面板、设置持久化
 ├ update-ui.js      更新状态机与设置页更新卡片
-├ bind/             事件绑定：index 聚合 + shelf / reader / panels / keys
+├ bind/             事件绑定：index 聚合 + shelf / reader / panels / keys / category
 ├ reader-pdf.js     pdf.js 封装：渲染、缩放、搜索
 ├ reader-md.js      Markdown HTML 注入、目录高亮
 ├ api.js            Tauri invoke 封装（唯一后端出入口）
@@ -23,9 +25,9 @@
                     │ invoke / asset 协议 / 原生拖拽事件
 src-tauri/（Rust）
 ├ main.rs / lib.rs  窗口与命令注册
-├ store.rs          书架 + 设置持久化（程序目录内 data/state.json）
+├ store.rs          书架 + 分类 + 设置持久化（程序目录内 data/state.json）
 ├ markdown.rs       comrak 解析 → HTML + 标题目录
-└ commands.rs       导入、打开、收藏、进度、设置、更新、PDF 字节兜底读取
+└ commands.rs       导入、打开、收藏、进度、分类、设置、更新、PDF 字节兜底读取
 ```
 
 依赖（全部开源）：
@@ -45,12 +47,14 @@ yuejian/
 │  │  ├─ core/           dom / session / constants / format / feedback
 │  │  ├─ reader/         panes / open / toolbar / ctx / present / progress
 │  │  ├─ shelf.js        书架渲染
+│  │  ├─ categories.js   分类纯计算
+│  │  ├─ category-ui.js  分类区 / 批量条 / 编辑弹层
 │  │  ├─ view.js         视图切换、状态栏、语言切换
-│  │  ├─ actions.js      导入 / 移出 / 收藏
+│  │  ├─ actions.js      导入 / 移出 / 收藏 / 分类
 │  │  ├─ palette.js      命令面板
 │  │  ├─ preferences.js  主题与排版、设置面板
 │  │  ├─ update-ui.js    更新状态机与更新卡片
-│  │  ├─ bind/           事件绑定（index 聚合 + 四个事件域）
+│  │  ├─ bind/           事件绑定（index 聚合 + 五个事件域）
 │  │  ├─ api.js / i18n.js / update.js
 │  │  └─ reader-pdf.js / reader-md.js
 │  └─ vendor/{pdfjs,highlight}/   离线第三方资源
@@ -79,6 +83,7 @@ yuejian/
 | T9 | 命令面板与快捷键、状态栏、Toast、窗口按钮 | T5 | Ctrl+K 可用，↑↓/Enter 生效 |
 | T10 | 构建验证：`cargo check`、`npm run build`（--no-bundle） | T5-T9 | 生成可执行文件并冒烟启动 |
 | T11 | 前端模块拆分：把单体 app.js 按职责拆为 core / reader / 领域模块 | T5-T10 | 业务代码零改动；模块图可链接且 `boot()` 无异常 |
+| T12 | 文档分类：Rust `Category` 模型与 5 个命令、分类区 UI、拖拽 / 批量归类、配色 | T4,T5,T11 | 创建→归类→筛选→批量→改名改色→删除全链路可走通；旧 `state.json` 免迁移；见 [feature-categories.md](feature-categories.md) |
 
 ## 4. 关键实现决策
 
@@ -89,6 +94,9 @@ yuejian/
 5. **无打包器**：前端保持原生 ES Module，`vendor/` 放 pdf.js 与 highlight.js，保证离线可运行、启动快。
 6. **窗口**：`decorations: false` + `data-tauri-drag-region`，用 Tauri window API 实现最小化/最大化/关闭。
 7. **前端模块边界**：`core/` 只放不依赖业务的工具与共享状态；双栏可变状态（`splitMode` / `linkSync` / `activePaneIndex`）只允许 `reader/panes.js` 写入，其余模块以 ESM live binding 只读引用，避免跨模块赋值。跨模块调用一律走 import，不使用全局对象或事件总线。
+8. **分类的三层分工**：`categories.js` 只做纯计算（排序/计数/筛选判定），`category-ui.js` 只把 state 画成 DOM 并收集输入，`actions.js` 是唯一写入口（调用命令 + 刷新书架）。弹层只返回 `{action, name, color}`，不自己发请求，避免 UI 模块直接持有后端调用。
+9. **选中态不重绘**：`Ctrl+点击` 只切 class 并刷新批量条，不重建列表。整表 `innerHTML` 重建会把滚动位置打回顶部，长书架下体验很差。
+10. **分类删改的引用完整性**：`delete_category` 在**同一把锁**内删除分类并把其下文档 `categoryId` 清空，否则会留下指向已删分类的悬挂引用；前端额外用 `pruneSelection()` 丢弃指向已移除文档的选中项。
 
 ## 5. 风险与对策
 

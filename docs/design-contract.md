@@ -37,6 +37,20 @@
 --line:#D3C6AC  --accent:#A0622D
 ```
 
+### 分类色板（用户自定义分类的色点）
+
+6 色，跟随主题切换，命名与取值的完整依据见 `docs/ui-categories.md` §5。分类颜色是**用户数据**，
+与主题主色 `--accent` 分开命名，避免切主题时改变用户已选的颜色。
+
+```
+/* 纸白 */  --cat-clay:#B23A2B  --cat-indigo:#4A5C7A  --cat-olive:#5F7350
+            --cat-amber:#A8792C --cat-plum:#7A4A63    --cat-slate:#55606B
+/* 夜读 */  --cat-clay:#E0705C  --cat-indigo:#8FA3C4  --cat-olive:#96AC84
+            --cat-amber:#D6AA5A --cat-plum:#C087A6    --cat-slate:#9AA6B2
+/* 护眼 */  --cat-clay:#9C4A33  --cat-indigo:#4C5A72  --cat-olive:#5C6B46
+            --cat-amber:#8F6524 --cat-plum:#6F4459    --cat-slate:#515A62
+```
+
 - `font.display`: `'KaiTi', 'STKaiti', 'Kaiti SC', 'Songti SC', serif`（标题、书名）
 - `font.ui`: `'Segoe UI Variable Text', 'Microsoft YaHei UI', 'PingFang SC', sans-serif`
 - `font.read`: `'Songti SC', 'Source Han Serif SC', 'Noto Serif CJK SC', 'SimSun', Georgia, serif`
@@ -63,6 +77,10 @@
 | 标签 | 高 20、radius 4、11px、`--surface-2` 底 | — | — | — |
 | 弹层 | `--surface` + `shadow.lg` + 1px `--line` + 顶边朱砂 2px | — | — | — |
 | 空状态 | 居中等宽提示 + 虚线上传区 | 虚线变朱砂 | — | — |
+| 分类行 | 高 28、radius 6、透明底、色点 7px | `--surface-2` | 左 2px 朱砂竖条 + `--surface-2` | — |
+| 分类落点 | 同分类行 | 同分类行 | `--accent-weak` 底 + `inset 0 0 0 1px --accent` | — |
+| 分类色点 | 7px 圆、`--cat-*` | — | — | 未分类用 `--ink-3` + 50% 不透明 |
+| 批量条 | 高 28、radius 8、`--surface` 底、1px `--line-strong`、`shadow.sm` | — | — | — |
 
 ## 4. App Shell 与固定导航（强制）
 
@@ -103,4 +121,8 @@ Book = { id, title, author, kind: 'pdf'|'md', pages?, words?, progress: 0..1,
          favorite: bool, lastOpened: '2 小时前', tint: 'clay'|'indigo'|'olive'|'sand',
          coverTitle, coverSub }
 TocItem = { level: 1|2|3, id, text }
+Category = { id, name, color: 'clay'|'indigo'|'olive'|'amber'|'plum'|'slate' }
 ```
+
+Mock 里的 `Book.tint` 是**封面**取色（由书 id 哈希决定，不可由用户修改）；
+`Category.color` 是**分类色点**取色（用户选择）。两者共用色相族但互不影响。

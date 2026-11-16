@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>分类功能原型 · 阅笺</title>
+<style>
+/* =========================================================
+   分类功能原型 — 只为验证交互，不是最终实现
+   设计契约：docs/design-contract.md（token 与正式应用保持一致）
+   ========================================================= */
+:root {
+  --paper:#f3ede1; --surface:#fbf7ee; --surface-2:#ede4d3;
+  --ink:#241f1a; --ink-2:#5e5548; --ink-3:#8c8272;
+  --line:#dfd4c0; --line-strong:#c9bba2;
+  --accent:#b23a2b; --accent-ink:#8e2c20; --accent-weak:#ebd9d3; --ok:#4f7355;
+  --font-display:"KaiTi","STKaiti","Kaiti SC","Songti SC",serif;
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  --font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  --r-sm:4px; --r-md:8px; --r-lg:14px; --r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(40,32,20,.06);
+  --shadow-md:0 8px 24px -12px rgba(40,32,20,.24);
+  --shadow-lg:0 24px 60px -20px rgba(40,32,20,.38);
+  --ease:cubic-bezier(.22,.8,.24,1);
+  --rail-w:56px; --lib-w:304px;
+
+  /* 分类色板：纸白主题 */
+  --cat-clay:#b23a2b; --cat-indigo:#4a5c7a; --cat-olive:#5f7350;
+  --cat-amber:#a8792c; --cat-plum:#7a4a63; --cat-slate:#55606b;
+}
+html[data-theme="night"] {
+  --paper:#12100e; --surface:#1a1715; --surface-2:#221e1a;
+  --ink:#ede5d8; --ink-2:#b7ab98; --ink-3:#7e7466;
+  --line:#2e2924; --line-strong:#3d362f;
+  --accent:#e0705c; --accent-ink:#c95c49; --accent-weak:#3a2620; --ok:#7fa585;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:0 10px 28px -14px rgba(0,0,0,.7);
+  --shadow-lg:0 28px 64px -24px rgba(0,0,0,.8);
+
+  --cat-clay:#e0705c; --cat-indigo:#8fa3c4; --cat-olive:#96ac84;
+  --cat-amber:#d6aa5a; --cat-plum:#c087a6; --cat-slate:#9aa6b2;
+}
+* { box-sizing:border-box; }
+html,body { height:100%; }
+body {
+  margin:0; font-family:var(--font-ui); font-size:13px; color:var(--ink);
+  background:var(--paper); overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+button { font:inherit; color:inherit; background:none; border:0; cursor:pointer; }
+input { font:inherit; color:inherit; }
+h1,h2,h3,p { margin:0; }
+.ic { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.6;
+  stroke-linecap:round; stroke-linejoin:round; flex:none; }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:var(--r-sm); }
+
+/* ---------- shell ---------- */
+.app { height:100vh; display:flex; flex-direction:column; }
+.titlebar {
+  height:36px; flex:none; display:flex; align-items:center; gap:12px;
+  padding:0 14px; border-bottom:1px solid var(--line); background:var(--paper);
+}
+.brand-mark { font-family:var(--font-display); font-size:15px; letter-spacing:.06em; }
+.brand-sub { font-family:var(--font-mono); font-size:9px; letter-spacing:.22em; color:var(--ink-3); }
+.tb-spacer { flex:1; }
+.tb-note { font-size:11px; color:var(--ink-3); }
+.icon-btn {
+  width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center;
+  border-radius:var(--r-md); color:var(--ink-2); transition:background .18s var(--ease),color .18s var(--ease);
+}
+.icon-btn:hover { background:var(--surface-2); color:var(--ink); }
+.workspace { flex:1; display:flex; min-height:0; }
+.rail {
+  width:var(--rail-w); flex:none; border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:6px; padding:10px 0;
+}
+.rail-btn {
+  width:40px; padding:8px 0 6px; display:flex; flex-direction:column; align-items:center; gap:3px;
+  border-radius:var(--r-md); color:var(--ink-3); font-size:10px;
+}
+.rail-btn.is-active { color:var(--accent); background:var(--accent-weak); }
+.rail-btn .ic { width:17px; height:17px; }
+
+/* ---------- library panel ---------- */
+.library-panel {
+  width:var(--lib-w); flex:none; border-right:1px solid var(--line);
+  display:flex; flex-direction:column; min-height:0; background:var(--paper);
+}
+.panel-head { height:42px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 12px; }
+.panel-title { font-family:var(--font-display); font-size:14px; letter-spacing:.04em; }
+.count { font-family:var(--font-mono); font-size:10px; color:var(--ink-3); }
+.search-box {
+  margin:0 12px 10px; height:30px; flex:none; display:flex; align-items:center; gap:7px;
+  padding:0 9px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface);
+}
+.search-box .ic { width:14px; height:14px; color:var(--ink-3); }
+.search-box input { flex:1; min-width:0; border:0; outline:0; background:none; font-size:12px; }
+.search-box input::placeholder { color:var(--ink-3); }
+.filter-row { display:flex; gap:4px; padding:0 12px 10px; flex:none; }
+.chip {
+  height:22px; padding:0 9px; border-radius:var(--r-pill); font-size:10.5px; letter-spacing:.04em;
+  color:var(--ink-3); background:transparent; border:1px solid transparent;
+  transition:background .18s var(--ease),color .18s var(--ease);
+}
+.chip:hover { color:var(--ink); background:var(--surface-2); }
+.chip.is-on { color:var(--accent); background:var(--accent-weak); border-color:transparent; }
+
+/* ---------- 分类区（本次原型核心） ---------- */
+.cat-block { flex:none; border-top:1px solid var(--line); padding-bottom:6px; }
+.cat-head { height:28px; display:flex; align-items:center; gap:6px; padding:0 12px 0 8px; }
+.cat-toggle {
+  flex:1; display:flex; align-items:center; gap:6px; height:24px; padding:0 4px;
+  border-radius:var(--r-sm); color:var(--ink-3); font-size:10.5px; letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.cat-toggle:hover { color:var(--ink-2); }
+.cat-caret { width:12px; height:12px; transition:transform .18s var(--ease); transform:rotate(90deg); }
+.cat-block.is-collapsed .cat-caret { transform:rotate(0deg); }
+.cat-add { width:22px; height:22px; border-radius:var(--r-sm); display:inline-flex;
+  align-items:center; justify-content:center; color:var(--ink-3); }
+.cat-add:hover { background:var(--surface-2); color:var(--accent); }
+.cat-add[disabled] { opacity:.35; cursor:not-allowed; }
+.cat-add .ic { width:13px; height:13px; }
+.cat-list { max-height:168px; overflow-y:auto; padding:0 8px; }
+.cat-block.is-collapsed .cat-list { display:none; }
+.cat-row {
+  position:relative; height:28px; display:flex; align-items:center; gap:8px;
+  padding:0 8px 0 10px; border-radius:6px; cursor:pointer;
+  transition:background .16s var(--ease);
+}
+.cat-row:hover { background:var(--surface-2); }
+.cat-row.is-active { background:var(--surface-2); }
+.cat-row.is-active::before {
+  content:""; position:absolute; left:0; top:6px; bottom:6px; width:2px;
+  border-radius:2px; background:var(--accent);
+}
+.cat-dot { width:7px; height:7px; border-radius:50%; background:var(--c,var(--ink-3)); flex:none; }
+.cat-name { flex:1; min-width:0; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cat-row.is-all .cat-name, .cat-row.is-none .cat-name { color:var(--ink-2); }
+.cat-num { font-family:var(--font-mono); font-size:10px; color:var(--ink-3); }
+.cat-more {
+  width:18px; height:18px; border-radius:var(--r-sm); display:none; align-items:center;
+  justify-content:center; color:var(--ink-3); flex:none;
+}
+.cat-row:hover .cat-more { display:inline-flex; }
+.cat-more:hover { background:var(--paper); color:var(--ink); }
+.cat-more .ic { width:12px; height:12px; }
+/* 拖拽落点 */
+.cat-row.is-drop {
+  background:var(--accent-weak);
+  box-shadow:inset 0 0 0 1px var(--accent);
+}
+.cat-row.is-drop .cat-name { color:var(--accent); }
+.cat-empty { padding:6px 10px 8px; font-size:11px; color:var(--ink-3); }
+
+/* ---------- 批量条 ---------- */
+.batch-bar {
+  flex:none; margin:0 12px 8px; padding:6px 8px; display:flex; align-items:center; gap:8px;
+  border:1px solid var(--line-strong); border-radius:var(--r-md); background:var(--surface);
+  box-shadow:var(--shadow-sm);
+}
+.batch-bar[hidden] { display:none; }
+.batch-count { font-family:var(--font-mono); font-size:10.5px; color:var(--accent); }
+.batch-bar select {
+  flex:1; min-width:0; height:24px; font:inherit; font-size:11px; color:var(--ink);
+  background:var(--paper); border:1px solid var(--line); border-radius:var(--r-sm); padding:0 4px;
+}
+.batch-cancel { font-size:11px; color:var(--ink-3); }
+.batch-cancel:hover { color:var(--ink); }
+
+/* ---------- 书列表 ---------- */
+.book-list { flex:1; min-height:0; overflow-y:auto; padding:0 8px 8px; }
+.book-row {
+  position:relative; display:flex; align-items:center; gap:9px; padding:7px 8px;
+  border-radius:var(--r-md); cursor:grab; transition:background .16s var(--ease);
+}
+.book-row:hover { background:var(--surface-2); }
+.book-row.is-selected { background:var(--accent-weak); }
+.book-row.is-selected::after {
+  content:""; position:absolute; right:6px; top:6px; width:5px; height:5px;
+  border-radius:50%; background:var(--accent);
+}
+.book-row.is-dragging { opacity:.4; }
+.mini-cover {
+  width:26px; height:34px; flex:none; border-radius:2px 3px 3px 2px; position:relative;
+  display:flex; align-items:center; justify-content:center; font-family:var(--font-display);
+  font-size:13px; color:rgba(255,255,255,.92); background:var(--tint,#8c8272);
+  box-shadow:inset 2px 0 0 rgba(0,0,0,.16);
+}
+.book-row-main { flex:1; min-width:0; }
+.book-row-title {
+  font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:2px;
+}
+.book-row-meta { display:flex; align-items:center; gap:4px; font-size:10px; color:var(--ink-3); }
+.type-dot { width:5px; height:5px; border-radius:50%; background:var(--ink-3); }
+.type-dot.pdf { background:var(--accent); }
+.progress-line { height:2px; margin-top:4px; border-radius:2px; background:var(--line); overflow:hidden; }
+.progress-line i { display:block; height:100%; background:var(--accent); }
+.remove-btn { width:20px; height:20px; border-radius:var(--r-sm); color:var(--ink-3); opacity:0;
+  display:inline-flex; align-items:center; justify-content:center; }
+.book-row:hover .remove-btn { opacity:1; }
+.remove-btn:hover { background:var(--paper); color:var(--accent); }
+.remove-btn .ic { width:11px; height:11px; }
+
+.panel-foot { flex:none; padding:10px 12px 12px; border-top:1px solid var(--line); }
+.import-cta {
+  width:100%; height:32px; display:flex; align-items:center; justify-content:center; gap:7px;
+  border:1px dashed var(--line-strong); border-radius:var(--r-md); color:var(--ink-2); font-size:12px;
+}
+.import-cta:hover { border-color:var(--accent); color:var(--accent); }
+.import-cta .ic { width:14px; height:14px; }
+
+/* ---------- stage ---------- */
+.stage { flex:1; min-width:0; overflow-y:auto; padding:28px 32px 40px; }
+.eyebrow { font-family:var(--font-mono); font-size:9.5px; letter-spacing:.22em; color:var(--ink-3); }
+.lib-hero { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; }
+.lib-hero h1 { font-family:var(--font-display); font-size:26px; font-weight:400; letter-spacing:.04em; margin-top:6px; }
+.hero-sub { font-size:12px; color:var(--ink-2); margin-top:6px; }
+.hero-stats { display:flex; gap:22px; }
+.hero-stats div { text-align:right; }
+.hero-stats b { display:block; font-family:var(--font-display); font-size:20px; font-weight:400; }
+.hero-stats span { font-size:10px; color:var(--ink-3); }
+
+.resume-card {
+  margin-top:20px; display:flex; gap:16px; padding:14px; border:1px solid var(--line);
+  border-radius:var(--r-lg); background:var(--surface); box-shadow:var(--shadow-sm);
+}
+.resume-cover {
+  width:56px; height:74px; flex:none; border-radius:3px 4px 4px 3px;
+  background:var(--tint,#8c8272); display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-display); font-size:22px; color:rgba(255,255,255,.94);
+  box-shadow:inset 3px 0 0 rgba(0,0,0,.16);
+}
+.resume-info { flex:1; min-width:0; }
+.resume-info h3 { font-family:var(--font-display); font-size:15px; font-weight:400;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.resume-info p { font-size:11px; color:var(--ink-3); margin-top:3px; }
+.resume-meta { display:flex; gap:14px; margin-top:8px; font-size:10.5px; color:var(--ink-3); }
+.resume-meta b { font-family:var(--font-mono); font-size:10.5px; color:var(--ink-2); font-weight:400; }
+.resume-progress { width:150px; flex:none; align-self:center; }
+.resume-progress .bar { height:3px; border-radius:3px; background:var(--line); overflow:hidden; }
+.resume-progress .bar i { display:block; height:100%; background:var(--accent); }
+.resume-progress .label { display:flex; justify-content:space-between; margin-top:6px;
+  font-size:10px; color:var(--ink-3); }
+
+.section-head { display:flex; align-items:baseline; gap:10px; margin:26px 0 12px; }
+.section-head h2 { font-family:var(--font-display); font-size:16px; font-weight:400; letter-spacing:.04em; }
+.section-sub { font-size:11px; color:var(--ink-3); }
+.head-clear {
+  margin-left:auto; font-size:10.5px; color:var(--ink-3); padding:2px 8px;
+  border:1px solid var(--line); border-radius:var(--r-pill);
+}
+.head-clear:hover { color:var(--accent); border-color:var(--accent); }
+.head-clear[hidden] { display:none; }
+
+.book-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:16px; }
+.book-card { cursor:grab; }
+.book-card.is-selected .cover { box-shadow:0 0 0 2px var(--accent); }
+.book-card.is-dragging { opacity:.4; }
+.cover {
+  position:relative; aspect-ratio:3/4.2; border-radius:3px 5px 5px 3px; background:var(--tint,#8c8272);
+  box-shadow:inset 3px 0 0 rgba(0,0,0,.16), var(--shadow-sm); overflow:hidden;
+  transition:transform .26s var(--ease), box-shadow .26s var(--ease);
+}
+.book-card:hover .cover { transform:translateY(-2px); box-shadow:inset 3px 0 0 rgba(0,0,0,.16), var(--shadow-md); }
+.cover-inner { height:100%; display:flex; flex-direction:column; gap:5px; padding:12px 11px; color:rgba(255,255,255,.94); }
+.cover-kind { font-family:var(--font-mono); font-size:8px; letter-spacing:.16em; opacity:.75; }
+.cover-title { font-family:var(--font-display); font-size:13px; line-height:1.35;
+  display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.cover-rule { height:1px; background:rgba(255,255,255,.35); margin-top:auto; }
+.cover-author { font-size:8.5px; opacity:.8; }
+.cover-cat {
+  position:absolute; right:6px; top:6px; display:flex; align-items:center; gap:3px;
+  padding:1px 5px 1px 4px; border-radius:var(--r-pill); background:rgba(0,0,0,.28);
+  font-size:8.5px; color:#fff; backdrop-filter:blur(2px);
+}
+.cover-cat[hidden] { display:none; }
+.cover-cat i { width:5px; height:5px; border-radius:50%; background:var(--c); }
+.card-meta { padding:7px 2px 0; }
+.card-title { font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.card-sub { font-size:10px; color:var(--ink-3); margin-top:2px; }
+
+.empty-hint-block { padding:34px 0; text-align:center; color:var(--ink-3); font-size:12px; }
+.empty-hint-block b { display:block; font-family:var(--font-display); font-size:15px;
+  font-weight:400; color:var(--ink-2); margin-bottom:6px; }
+
+/* ---------- 弹层 ---------- */
+.overlay {
+  position:fixed; inset:0; z-index:80; display:flex; align-items:center; justify-content:center;
+  background:rgba(28,22,16,.32); backdrop-filter:blur(1.5px);
+}
+.overlay[hidden] { display:none; }
+.dialog {
+  width:300px; background:var(--surface); border:1px solid var(--line); border-radius:var(--r-lg);
+  box-shadow:var(--shadow-lg); overflow:hidden; position:relative;
+}
+.dialog::before { content:""; position:absolute; inset:0 0 auto; height:2px; background:var(--accent); }
+.dialog-body { padding:18px 18px 14px; }
+.dialog-title { font-family:var(--font-display); font-size:14px; letter-spacing:.04em; }
+.dialog-sub { font-size:11px; color:var(--ink-3); margin-top:5px; line-height:1.55; }
+.field { margin-top:14px; }
+.field-label { font-size:10px; letter-spacing:.1em; color:var(--ink-3); text-transform:uppercase; }
+.field input[type="text"] {
+  width:100%; height:32px; margin-top:6px; padding:0 10px; font-size:12.5px;
+  border:1px solid var(--line); border-radius:var(--r-md); background:var(--paper); outline:0;
+}
+.field input[type="text"]:focus { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-weak); }
+.swatches { display:flex; gap:8px; margin-top:8px; }
+.swatch {
+  width:22px; height:22px; border-radius:50%; background:var(--c); border:2px solid transparent;
+  box-shadow:0 0 0 1px var(--line); transition:transform .16s var(--ease);
+}
+.swatch:hover { transform:scale(1.1); }
+.swatch.is-on { border-color:var(--surface); box-shadow:0 0 0 2px var(--c); }
+.dialog-err { margin-top:8px; font-size:10.5px; color:var(--accent); min-height:14px; }
+.dialog-foot {
+  display:flex; align-items:center; gap:8px; padding:12px 18px; border-top:1px solid var(--line);
+  background:var(--paper);
+}
+.btn-text { font-size:11.5px; color:var(--ink-3); padding:4px 2px; }
+.btn-text:hover { color:var(--ink); }
+.btn-text.is-danger { color:var(--accent); }
+.btn-text[hidden] { display:none; }
+.grow { flex:1; }
+.btn-ghost {
+  height:28px; padding:0 12px; border-radius:var(--r-pill); border:1px solid var(--line);
+  font-size:11.5px; color:var(--ink-2);
+}
+.btn-ghost:hover { background:var(--surface-2); }
+.btn-primary {
+  height:28px; padding:0 16px; border-radius:var(--r-pill); background:var(--accent);
+  color:var(--surface); font-size:11.5px;
+}
+.btn-primary:hover { background:var(--accent-ink); }
+.btn-primary[disabled] { opacity:.4; cursor:not-allowed; }
+
+.toast-wrap { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:120; }
+.toast {
+  display:flex; align-items:center; gap:7px; padding:7px 14px; border-radius:var(--r-pill);
+  background:var(--ink); color:var(--paper); font-size:11.5px; box-shadow:var(--shadow-md);
+  animation:toastIn .22s var(--ease);
+}
+.toast .ic { width:12px; height:12px; }
+@keyframes toastIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+.hint-line { padding:0 12px 6px; font-size:10px; color:var(--ink-3); line-height:1.5; }
+::-webkit-scrollbar { width:7px; }
+::-webkit-scrollbar-thumb { background:var(--line-strong); border-radius:4px; }
+::-webkit-scrollbar-track { background:transparent; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="titlebar">
+    <span class="brand-mark">阅笺</span>
+    <span class="brand-sub">YUEJIAN READER</span>
+    <div class="tb-spacer"></div>
+    <span class="tb-note">分类功能原型 · 交互验证用</span>
+    <button class="icon-btn" id="themeBtn" title="切换主题">
+      <svg class="ic"><use href="#i-moon"/></svg>
+    </button>
+  </header>
+
+  <div class="workspace">
+    <nav class="rail">
+      <button class="rail-btn is-active"><svg class="ic"><use href="#i-library"/></svg><span>书架</span></button>
+      <button class="rail-btn"><svg class="ic"><use href="#i-book"/></svg><span>阅读</span></button>
+      <button class="rail-btn"><svg class="ic"><use href="#i-search"/></svg><span>搜索</span></button>
+      <button class="rail-btn"><svg class="ic"><use href="#i-cog"/></svg><span>设置</span></button>
+    </nav>
+
+    <aside class="library-panel">
+      <div class="panel-head">
+        <div class="panel-title">文档库 <span class="count" id="libCount">0</span></div>
+        <button class="icon-btn" title="导入文档"><svg class="ic"><use href="#i-plus"/></svg></button>
+      </div>
+
+      <div class="search-box">
+        <svg class="ic"><use href="#i-search"/></svg>
+        <input id="libSearch" type="text" placeholder="搜索书名、作者" />
+      </div>
+
+      <div class="filter-row" id="filterRow">
+        <button class="chip is-on" data-filter="all">全部</button>
+        <button class="chip" data-filter="pdf">PDF</button>
+        <button class="chip" data-filter="markdown">MARKDOWN</button>
+        <button class="chip" data-filter="star">收藏</button>
+      </div>
+
+      <!-- ======== 分类区 ======== -->
+      <section class="cat-block" id="catBlock">
+        <div class="cat-head">
+          <button class="cat-toggle" id="catToggle">
+            <svg class="ic cat-caret"><use href="#i-chevron"/></svg>
+            分类 <span class="count" id="catCount">0</span>
+          </button>
+          <button class="cat-add" id="catAdd" title="新建分类">
+            <svg class="ic"><use href="#i-plus"/></svg>
+          </button>
+        </div>
+        <div class="cat-list" id="catList"></div>
+      </section>
+
+      <div class="batch-bar" id="batchBar" hidden>
+        <span class="batch-count" id="batchCount">已选 0 项</span>
+        <select id="batchSelect">
+          <option value="">归类到…</option>
+        </select>
+        <button class="batch-cancel" id="batchCancel">取消</button>
+      </div>
+
+      <div class="book-list" id="bookList"></div>
+
+      <div class="panel-foot">
+        <button class="import-cta">
+          <svg class="ic"><use href="#i-folder"/></svg><span>导入本地文档</span>
+        </button>
+      </div>
+      <p class="hint-line">提示：拖动书到分类行即可归类；Ctrl+点击可多选</p>
+    </aside>
+
+    <main class="stage">
+      <div class="lib-hero">
+        <div>
+          <p class="eyebrow">— CONTINUE READING</p>
+          <h1>继续阅读</h1>
+          <p class="hero-sub">每一份文档都记得你停下的位置。</p>
+        </div>
+        <div class="hero-stats">
+          <div><b id="statBooks">0</b><span>份文档</span></div>
+          <div><b id="statReading">0</b><span>在读</span></div>
+          <div><b id="statPages">0</b><span>总页数</span></div>
+        </div>
+      </div>
+
+      <div class="resume-card" id="resumeCard"></div>
+
+      <div class="section-head">
+        <h2 id="headTitle">全部文档</h2>
+        <span class="section-sub" id="headSub">按最近打开排序</span>
+        <button class="head-clear" id="headClear" hidden>清除筛选</button>
+      </div>
+      <div class="book-grid" id="bookGrid"></div>
+    </main>
+  </div>
+</div>
+
+<!-- 分类编辑弹层 -->
+<div class="overlay" id="catOverlay" hidden>
+  <div class="dialog" role="dialog" aria-modal="true">
+    <div class="dialog-body">
+      <div class="dialog-title" id="dlgTitle">新建分类</div>
+      <div class="dialog-sub" id="dlgSub">给这一类文档起个名字，选一个颜色方便辨认。</div>
+      <div class="field">
+        <div class="field-label">名称</div>
+        <input type="text" id="dlgName" maxlength="20" placeholder="例如：论文 / 技术手册 / 待读" />
+      </div>
+      <div class="field">
+        <div class="field-label">配色</div>
+        <div class="swatches" id="dlgSwatches"></div>
+      </div>
+      <div class="dialog-err" id="dlgErr"></div>
+    </div>
+    <div class="dialog-foot">
+      <button class="btn-text is-danger" id="dlgDelete" hidden>删除分类</button>
+      <div class="grow"></div>
+      <button class="btn-ghost" id="dlgCancel">取消</button>
+      <button class="btn-primary" id="dlgOk">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 确认弹层 -->
+<div class="overlay" id="confirmOverlay" hidden>
+  <div class="dialog" role="dialog" aria-modal="true">
+    <div class="dialog-body">
+      <div class="dialog-title" id="cfTitle">删除分类</div>
+      <div class="dialog-sub" id="cfNote"></div>
+    </div>
+    <div class="dialog-foot">
+      <div class="grow"></div>
+      <button class="btn-ghost" id="cfCancel">取消</button>
+      <button class="btn-primary" id="cfOk">删除</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-library" viewBox="0 0 24 24"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+</defs></svg>
+
+<script>
+/* =========================================================
+   原型数据与状态（全部在内存：验证交互，不落盘）
+   ========================================================= */
+const PALETTE = ["clay", "indigo", "olive", "amber", "plum", "slate"];
+const TINTS = ["#8c8272", "#6d5b4a", "#7a6a55", "#5f6b5a", "#7d5f52", "#5b6472"];
+
+const MAX_CATEGORIES = 40;
+
+let categories = [
+  { id: "c1", name: "论文", color: "clay" },
+  { id: "c2", name: "技术手册", color: "olive" },
+  { id: "c3", name: "待读清单", color: "indigo" },
+];
+
+let books = [
+  { id: "b1", title: "数据库系统概念", kind: "pdf", pages: 1376, ratio: 0.42, favorite: true, cat: "c1", hoursAgo: 1 },
+  { id: "b2", title: "Attention Is All You Need", kind: "pdf", pages: 15, ratio: 0, favorite: false, cat: "c1", hoursAgo: 6 },
+  { id: "b3", title: "Rust 程序设计语言", kind: "pdf", pages: 562, ratio: 0.78, favorite: true, cat: "c2", hoursAgo: 26 },
+  { id: "b4", title: "阅读笔记 · 十一周", kind: "markdown", words: 4200, ratio: 0.31, favorite: false, cat: "", hoursAgo: 40 },
+  { id: "b5", title: "论文阅读清单", kind: "markdown", words: 880, ratio: 0.05, favorite: true, cat: "c3", hoursAgo: 60 },
+  { id: "b6", title: "Tauri 官方指南", kind: "markdown", words: 6100, ratio: 0.66, favorite: false, cat: "c2", hoursAgo: 90 },
+  { id: "b7", title: "排版与网格系统", kind: "pdf", pages: 244, ratio: 0.12, favorite: false, cat: "c2", hoursAgo: 120 },
+  { id: "b8", title: "分布式系统设计", kind: "pdf", pages: 812, ratio: 0.0, favorite: false, cat: "", hoursAgo: 180 },
+  { id: "b9", title: "设计中的设计", kind: "pdf", pages: 288, ratio: 0.95, favorite: true, cat: "", hoursAgo: 240 },
+  { id: "b10", title: "AGENTS 工程实践", kind: "markdown", words: 3200, ratio: 0.5, favorite: false, cat: "c1", hoursAgo: 300 },
+];
+
+const ui = {
+  filter: "all",
+  categoryId: null,   // null = 全部分类，"" = 未分类，其它 = 分类 id
+  query: "",
+  selected: new Set(),
+  collapsed: false,
+};
+
+/* ---------------- 纯计算 ---------------- */
+const catById = (id) => categories.find((c) => c.id === id) || null;
+
+function countOf(catId) {
+  return books.filter((b) => b.cat === catId).length;
+}
+
+function visibleBooks() {
+  const q = ui.query.toLowerCase();
+  return books
+    .filter((b) => {
+      if (ui.filter === "star" && !b.favorite) return false;
+      if ((ui.filter === "pdf" || ui.filter === "markdown") && b.kind !== ui.filter) return false;
+      if (ui.categoryId !== null && b.cat !== ui.categoryId) return false;
+      if (q && !b.title.toLowerCase().includes(q)) return false;
+      return true;
+    })
+    .sort((a, b) => a.hoursAgo - b.hoursAgo);
+}
+
+function nextColor() {
+  const used = new Set(categories.map((c) => c.color));
+  return PALETTE.find((c) => !used.has(c)) || PALETTE[categories.length % PALETTE.length];
+}
+
+function filterLabel() {
+  const parts = [];
+  if (ui.categoryId === "") parts.push("未分类");
+  else if (ui.categoryId) parts.push(catById(ui.categoryId)?.name || "未知分类");
+  if (ui.filter === "pdf") parts.push("PDF");
+  if (ui.filter === "markdown") parts.push("MARKDOWN");
+  if (ui.filter === "star") parts.push("收藏");
+  if (ui.query) parts.push(`“${ui.query}”`);
+  return parts;
+}
+
+/* ---------------- 渲染：分类区 ---------------- */
+function renderCategories() {
+  const list = document.getElementById("catList");
+  const rows = [];
+
+  rows.push(`
+    <div class="cat-row is-all ${ui.categoryId === null ? "is-active" : ""}" data-cat="__all">
+      <span class="cat-name">全部分类</span>
+      <span class="cat-num">${books.length}</span>
+    </div>`);
+
+  categories.forEach((cat) => {
+    rows.push(`
+      <div class="cat-row ${ui.categoryId === cat.id ? "is-active" : ""}" data-cat="${cat.id}">
+        <span class="cat-dot" style="--c:var(--cat-${cat.color})"></span>
+        <span class="cat-name">${escapeHtml(cat.name)}</span>
+        <span class="cat-num">${countOf(cat.id)}</span>
+        <button class="cat-more" data-edit="${cat.id}" title="编辑分类">
+          <svg class="ic"><use href="#i-more"/></svg>
+        </button>
+      </div>`);
+  });
+
+  const none = books.filter((b) => !b.cat).length;
+  rows.push(`
+    <div class="cat-row is-none ${ui.categoryId === "" ? "is-active" : ""}" data-cat="__none">
+      <span class="cat-dot" style="--c:var(--ink-3);opacity:.5"></span>
+      <span class="cat-name">未分类</span>
+      <span class="cat-num">${none}</span>
+    </div>`);
+
+  if (!categories.length) {
+    rows.splice(1, 0, `<div class="cat-empty">还没有分类，点右上角 ＋ 新建一个</div>`);
+  }
+  list.innerHTML = rows.join("");
+
+  document.getElementById("catCount").textContent = categories.length;
+  document.getElementById("catAdd").disabled = categories.length >= MAX_CATEGORIES;
+  document.getElementById("catAdd").title = categories.length >= MAX_CATEGORIES
+    ? `分类数量已达上限（${MAX_CATEGORIES}）` : "新建分类";
+  document.getElementById("catBlock").classList.toggle("is-collapsed", ui.collapsed);
+
+  const select = document.getElementById("batchSelect");
+  select.innerHTML = ['<option value="">归类到…</option>']
+    .concat(categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`))
+    .concat(['<option value="__none">未分类</option>'])
+    .join("");
+}
+
+/* ---------------- 渲染：书列表与网格 ---------------- */
+function renderBookList(shown) {
+  const list = document.getElementById("bookList");
+  document.getElementById("libCount").textContent = books.length;
+  if (!shown.length) {
+    list.innerHTML = `<div class="cat-empty" style="padding:14px 10px">${
+      ui.categoryId !== null && !ui.query ? "这个分类下还没有文档，把书拖进来试试" : "没有匹配的文档"
+    }</div>`;
+    return;
+  }
+  list.innerHTML = shown.map((b) => {
+    const cat = catById(b.cat);
+    return `
+    <div class="book-row ${ui.selected.has(b.id) ? "is-selected" : ""}" data-book="${b.id}" draggable="true">
+      <div class="mini-cover" style="--tint:${TINTS[b.id.charCodeAt(1) % TINTS.length]}">${escapeHtml(b.title.slice(0, 1))}</div>
+      <div class="book-row-main">
+        <div class="book-row-title">${escapeHtml(b.title)}</div>
+        <div class="book-row-meta">
+          <i class="type-dot ${b.kind === "pdf" ? "pdf" : ""}"></i>
+          ${b.kind === "pdf" ? "PDF" : "MD"} · ${b.hoursAgo < 24 ? b.hoursAgo + " 小时前" : Math.round(b.hoursAgo / 24) + " 天前"}
+          ${cat ? `<span class="cat-dot" style="--c:var(--cat-${cat.color});width:5px;height:5px;margin-left:2px"></span>` : ""}
+        </div>
+        <div class="progress-line"><i style="width:${Math.round(b.ratio * 100)}%"></i></div>
+      </div>
+      <button class="remove-btn" data-remove="${b.id}" title="从书架移除">
+        <svg class="ic"><use href="#i-trash"/></svg>
+      </button>
+    </div>`;
+  }).join("");
+}
+
+function renderGrid(shown) {
+  const grid = document.getElementById("bookGrid");
+  if (!shown.length) {
+    const isCatEmpty = ui.categoryId !== null && !ui.query && ui.filter === "all";
+    grid.innerHTML = `<div class="empty-hint-block" style="grid-column:1/-1">
+      <b>${isCatEmpty ? "这个分类下还没有文档" : "没有匹配的文档"}</b>
+      ${isCatEmpty ? "把左侧的文档拖到分类行，或使用 Ctrl+点击 多选后批量归类" : "换个关键词，或清除筛选条件"}
+    </div>`;
+    return;
+  }
+  grid.innerHTML = shown.map((b) => {
+    const cat = catById(b.cat);
+    return `
+    <div class="book-card ${ui.selected.has(b.id) ? "is-selected" : ""}" data-book="${b.id}" draggable="true">
+      <div class="cover" style="--tint:${TINTS[b.id.charCodeAt(1) % TINTS.length]}">
+        <div class="cover-inner">
+          <span class="cover-kind">${b.kind === "pdf" ? "PDF" : "MARKDOWN"}</span>
+          <span class="cover-title">${escapeHtml(b.title)}</span>
+          <span class="cover-rule"></span>
+          <span class="cover-author">${b.kind === "pdf" ? b.pages + " 页" : b.words + " 字"}</span>
+        </div>
+        <span class="cover-cat" ${cat ? "" : "hidden"} style="--c:var(--cat-${cat ? cat.color : "slate"})">
+          <i></i>${cat ? escapeHtml(cat.name) : ""}
+        </span>
+      </div>
+      <div class="card-meta">
+        <div class="card-title">${escapeHtml(b.title)}</div>
+        <div class="card-sub">${b.kind === "pdf" ? "PDF" : "MD"} · ${Math.round(b.ratio * 100)}%</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderResume() {
+  const card = document.getElementById("resumeCard");
+  const pool = books.filter((b) => b.ratio > 0.001 && b.ratio < 0.999)
+    .sort((a, b) => a.hoursAgo - b.hoursAgo);
+  const candidate = pool[0] || books.slice().sort((a, b) => a.hoursAgo - b.hoursAgo)[0];
+  if (!candidate) { card.hidden = true; card.innerHTML = ""; return; }
+  card.hidden = false;
+  const percent = Math.round(candidate.ratio * 100);
+  card.innerHTML = `
+    <div class="resume-cover" style="--tint:${TINTS[candidate.id.charCodeAt(1) % TINTS.length]}">
+      ${escapeHtml(candidate.title.slice(0, 1))}
+    </div>
+    <div class="resume-info">
+      <h3>${escapeHtml(candidate.title)}</h3>
+      <p>${candidate.kind === "pdf" ? "PDF · " + candidate.pages + " 页" : "MARKDOWN · " + candidate.words + " 字"}</p>
+      <div class="resume-meta">
+        <span>${candidate.kind === "pdf" ? "第 <b>" + Math.max(1, Math.round(candidate.ratio * candidate.pages)) + "</b> 页" : "上次位置"}</span>
+        <span>${candidate.hoursAgo < 24 ? candidate.hoursAgo + " 小时前" : Math.round(candidate.hoursAgo / 24) + " 天前"}打开</span>
+      </div>
+    </div>
+    <div class="resume-progress">
+      <div class="bar"><i style="width:${percent}%"></i></div>
+      <div class="label"><span>阅读进度</span><span>${percent}%</span></div>
+    </div>`;
+}
+
+function renderHead() {
+  const parts = filterLabel();
+  const active = parts.length > 0;
+  document.getElementById("headTitle").textContent = active ? parts.join(" · ") : "全部文档";
+  document.getElementById("headSub").textContent = active ? "筛选结果" : "按最近打开排序";
+  document.getElementById("headClear").hidden = !active;
+}
+
+function renderBatch() {
+  const bar = document.getElementById("batchBar");
+  bar.hidden = ui.selected.size === 0;
+  document.getElementById("batchCount").textContent = `已选 ${ui.selected.size} 项`;
+}
+
+/** 选中态只切 class，不重绘整张列表：避免长列表下滚动位置被重置 */
+function syncSelection() {
+  document.querySelectorAll("[data-book]").forEach((el) => {
+    el.classList.toggle("is-selected", ui.selected.has(el.dataset.book));
+  });
+  renderBatch();
+}
+
+function renderAll() {
+  const shown = visibleBooks();
+  renderCategories();
+  renderBookList(shown);
+  renderGrid(shown);
+  renderResume();
+  renderHead();
+  renderBatch();
+  document.getElementById("statBooks").textContent = books.length;
+  document.getElementById("statReading").textContent =
+    books.filter((b) => b.ratio > 0.001 && b.ratio < 0.999).length;
+  document.getElementById("statPages").textContent =
+    books.reduce((sum, b) => sum + (b.pages || 0), 0);
+}
+
+/* ---------------- 弹层 ---------------- */
+let dialogMode = null;
+let dialogTarget = null;
+let dialogColor = PALETTE[0];
+
+function openDialog(mode, catId) {
+  dialogMode = mode;
+  dialogTarget = catId || null;
+  const cat = catId ? catById(catId) : null;
+  dialogColor = cat ? cat.color : nextColor();
+
+  document.getElementById("dlgTitle").textContent = mode === "edit" ? "编辑分类" : "新建分类";
+  document.getElementById("dlgSub").textContent = mode === "edit"
+    ? "改名或换配色，不会影响其中的文档。"
+    : "给这一类文档起个名字，选一个颜色方便辨认。";
+  document.getElementById("dlgName").value = cat ? cat.name : "";
+  document.getElementById("dlgDelete").hidden = mode !== "edit";
+  document.getElementById("dlgErr").textContent = "";
+  renderSwatches();
+
+  document.getElementById("catOverlay").hidden = false;
+  const input = document.getElementById("dlgName");
+  input.focus();
+  input.select();
+  validateDialog();
+}
+
+function renderSwatches() {
+  document.getElementById("dlgSwatches").innerHTML = PALETTE.map((c) => `
+    <button class="swatch ${c === dialogColor ? "is-on" : ""}" data-color="${c}"
+      style="--c:var(--cat-${c})" title="${c}"></button>`).join("");
+}
+
+function validateDialog() {
+  const name = document.getElementById("dlgName").value.trim();
+  const err = document.getElementById("dlgErr");
+  const ok = document.getElementById("dlgOk");
+  let message = "";
+  if (!name) message = "名称不能为空";
+  else if (name.length > 20) message = "名称最多 20 个字符";
+  else if (categories.some((c) => c.id !== dialogTarget && c.name.toLowerCase() === name.toLowerCase())) {
+    message = "已存在同名分类";
+  }
+  err.textContent = message;
+  ok.disabled = !!message;
+  return !message;
+}
+
+function closeDialog() {
+  document.getElementById("catOverlay").hidden = true;
+  dialogMode = null;
+  dialogTarget = null;
+}
+
+function submitDialog() {
+  if (!validateDialog()) return;
+  const name = document.getElementById("dlgName").value.trim();
+  if (dialogMode === "edit") {
+    const cat = catById(dialogTarget);
+    if (!cat) return closeDialog();
+    cat.name = name;
+    cat.color = dialogColor;
+    toast(`已更新「${name}」`);
+  } else {
+    categories.push({ id: "c" + Date.now().toString(36), name, color: dialogColor });
+    toast(`已创建「${name}」`);
+  }
+  closeDialog();
+  renderAll();
+}
+
+/* ---------------- 确认弹层 ---------------- */
+let confirmSettle = null;
+function askConfirm({ title, note, okText }) {
+  document.getElementById("cfTitle").textContent = title;
+  document.getElementById("cfNote").textContent = note;
+  document.getElementById("cfOk").textContent = okText;
+  document.getElementById("confirmOverlay").hidden = false;
+  return new Promise((resolve) => {
+    const settle = (result) => {
+      if (!confirmSettle) return;
+      confirmSettle = null;
+      document.getElementById("confirmOverlay").hidden = true;
+      document.getElementById("cfOk").removeEventListener("click", onOk);
+      document.getElementById("cfCancel").removeEventListener("click", onCancel);
+      document.removeEventListener("keydown", onKey, true);
+      resolve(result);
+    };
+    const onOk = () => settle(true);
+    const onCancel = () => settle(false);
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); settle(false); }
+    };
+    confirmSettle = settle;
+    document.getElementById("cfOk").addEventListener("click", onOk);
+    document.getElementById("cfCancel").addEventListener("click", onCancel);
+    document.addEventListener("keydown", onKey, true);
+  });
+}
+
+/* ---------------- 提示 ---------------- */
+let toastTimer = null;
+function toast(message) {
+  const wrap = document.getElementById("toastWrap");
+  let el = wrap.firstElementChild;
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "toast";
+    el.innerHTML = '<svg class="ic"><use href="#i-check"/></svg><span></span>';
+    wrap.appendChild(el);
+  }
+  el.querySelector("span").textContent = message;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.remove(), 2200);
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+}
+
+/* ---------------- 归类动作 ---------------- */
+function assign(ids, catId) {
+  const target = catId === "__none" || catId === "__all" ? "" : catId;
+  let changed = 0;
+  ids.forEach((id) => {
+    const book = books.find((b) => b.id === id);
+    if (book && book.cat !== target) { book.cat = target; changed += 1; }
+  });
+  ui.selected.clear();
+  renderAll();
+  if (changed) {
+    const cat = target ? catById(target) : null;
+    const label = cat ? `「${cat.name}」` : "「未分类」";
+    toast(changed === 1 ? `已归到${label}` : `${changed} 份文档已归到${label}`);
+  }
+}
+
+/* =========================================================
+   事件绑定
+   ========================================================= */
+document.addEventListener("click", (event) => {
+  // 分类编辑按钮
+  const edit = event.target.closest("[data-edit]");
+  if (edit) { event.stopPropagation(); openDialog("edit", edit.dataset.edit); return; }
+
+  // 分类行点击 → 筛选
+  const row = event.target.closest(".cat-row");
+  if (row) {
+    const value = row.dataset.cat;
+    ui.categoryId = value === "__all" ? null : value === "__none" ? "" : value;
+    renderAll();
+    return;
+  }
+
+  // 移除文档
+  const remove = event.target.closest("[data-remove]");
+  if (remove) {
+    event.stopPropagation();
+    const id = remove.dataset.remove;
+    const book = books.find((b) => b.id === id);
+    askConfirm({
+      title: "从书架移除",
+      note: `「${book.title}」将从书架移除，本地文件不受影响。`,
+      okText: "移出",
+    }).then((ok) => {
+      if (!ok) return;
+      books = books.filter((b) => b.id !== id);
+      ui.selected.delete(id);
+      renderAll();
+      toast("已从书架移除");
+    });
+    return;
+  }
+
+  // 文档点击 → 多选 或 打开
+  const bookEl = event.target.closest("[data-book]");
+  if (bookEl) {
+    const id = bookEl.dataset.book;
+    if (event.ctrlKey || event.metaKey) {
+      if (ui.selected.has(id)) ui.selected.delete(id); else ui.selected.add(id);
+      syncSelection();
+    } else {
+      if (ui.selected.size) { ui.selected.clear(); syncSelection(); }
+      toast(`（原型）打开《${books.find((b) => b.id === id).title}》`);
+    }
+  }
+});
+
+// 筛选 chips
+document.getElementById("filterRow").addEventListener("click", (event) => {
+  const chip = event.target.closest(".chip");
+  if (!chip) return;
+  ui.filter = chip.dataset.filter;
+  document.querySelectorAll("#filterRow .chip").forEach((el) => el.classList.toggle("is-on", el === chip));
+  renderAll();
+});
+
+// 搜索
+document.getElementById("libSearch").addEventListener("input", (event) => {
+  ui.query = event.target.value.trim();
+  renderAll();
+});
+
+// 分类区折叠 / 新建
+document.getElementById("catToggle").addEventListener("click", () => {
+  ui.collapsed = !ui.collapsed;
+  document.getElementById("catBlock").classList.toggle("is-collapsed", ui.collapsed);
+});
+document.getElementById("catAdd").addEventListener("click", () => openDialog("create"));
+
+// 批量归类
+document.getElementById("batchSelect").addEventListener("change", (event) => {
+  const value = event.target.value;
+  if (!value) return;
+  assign([...ui.selected], value);
+  event.target.value = "";
+});
+document.getElementById("batchCancel").addEventListener("click", () => {
+  ui.selected.clear();
+  syncSelection();
+});
+
+// 清除筛选
+document.getElementById("headClear").addEventListener("click", () => {
+  ui.categoryId = null;
+  ui.filter = "all";
+  ui.query = "";
+  document.getElementById("libSearch").value = "";
+  document.querySelectorAll("#filterRow .chip").forEach((el) => el.classList.toggle("is-on", el.dataset.filter === "all"));
+  renderAll();
+});
+
+// 弹层内交互
+document.getElementById("dlgSwatches").addEventListener("click", (event) => {
+  const swatch = event.target.closest(".swatch");
+  if (!swatch) return;
+  dialogColor = swatch.dataset.color;
+  renderSwatches();
+});
+document.getElementById("dlgName").addEventListener("input", validateDialog);
+document.getElementById("dlgName").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !document.getElementById("dlgOk").disabled) submitDialog();
+});
+document.getElementById("dlgOk").addEventListener("click", submitDialog);
+document.getElementById("dlgCancel").addEventListener("click", closeDialog);
+document.getElementById("catOverlay").addEventListener("click", (event) => {
+  if (event.target.id === "catOverlay") closeDialog();
+});
+document.getElementById("dlgDelete").addEventListener("click", () => {
+  const cat = catById(dialogTarget);
+  if (!cat) return;
+  const n = countOf(cat.id);
+  closeDialog();
+  if (!n) {
+    categories = categories.filter((c) => c.id !== cat.id);
+    if (ui.categoryId === cat.id) ui.categoryId = null;
+    renderAll();
+    toast(`已删除「${cat.name}」`);
+    return;
+  }
+  askConfirm({
+    title: "删除分类",
+    note: `删除「${cat.name}」后，其中的 ${n} 份文档会变成「未分类」，文档本身不会被移除。`,
+    okText: "删除分类",
+  }).then((ok) => {
+    if (!ok) return;
+    categories = categories.filter((c) => c.id !== cat.id);
+    books.forEach((b) => { if (b.cat === cat.id) b.cat = ""; });
+    if (ui.categoryId === cat.id) ui.categoryId = null;
+    renderAll();
+    toast(`已删除「${cat.name}」，${n} 份文档转为未分类`);
+  });
+});
+
+// Esc 清空选中
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (ui.selected.size) { ui.selected.clear(); syncSelection(); }
+});
+
+/* ---------------- 拖拽 ---------------- */
+let draggingId = null;
+
+document.addEventListener("dragstart", (event) => {
+  const el = event.target.closest("[data-book]");
+  if (!el) return;
+  draggingId = el.dataset.book;
+  el.classList.add("is-dragging");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    try { event.dataTransfer.setData("application/x-yuejian-book", draggingId); } catch (_) {}
+    event.dataTransfer.setData("text/plain", draggingId);
+  }
+});
+
+document.addEventListener("dragend", (event) => {
+  const el = event.target.closest("[data-book]");
+  if (el) el.classList.remove("is-dragging");
+  draggingId = null;
+  document.querySelectorAll(".cat-row.is-drop").forEach((row) => row.classList.remove("is-drop"));
+});
+
+document.addEventListener("dragover", (event) => {
+  const row = event.target.closest(".cat-row");
+  if (!row || !draggingId) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  document.querySelectorAll(".cat-row.is-drop").forEach((el) => { if (el !== row) el.classList.remove("is-drop"); });
+  row.classList.add("is-drop");
+});
+
+document.addEventListener("dragleave", (event) => {
+  const row = event.target.closest(".cat-row");
+  if (row && !row.contains(event.relatedTarget)) row.classList.remove("is-drop");
+});
+
+document.addEventListener("drop", (event) => {
+  const row = event.target.closest(".cat-row");
+  if (!row) return;
+  const id = event.dataTransfer?.getData("application/x-yuejian-book")
+    || event.dataTransfer?.getData("text/plain")
+    || draggingId;
+  event.preventDefault();
+  row.classList.remove("is-drop");
+  if (!id) return;
+  const value = row.dataset.cat;
+  assign([id], value === "__all" ? "" : value);
+  draggingId = null;
+});
+
+// 主题切换
+document.getElementById("themeBtn").addEventListener("click", () => {
+  const root = document.documentElement;
+  const next = root.dataset.theme === "night" ? "paper" : "night";
+  root.dataset.theme = next;
+  document.querySelector("#themeBtn use").setAttribute("href", next === "night" ? "#i-sun" : "#i-moon");
+});
+
+/* ---------------- 启动 ---------------- */
+renderAll();
+</script>
+</body>
+</html>
