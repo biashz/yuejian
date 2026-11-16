@@ -18,6 +18,23 @@ fn lock<'a>(state: &'a State<'_, StoreState>) -> Result<std::sync::MutexGuard<'a
     state.data.lock().map_err(|_| "书架状态已损坏".to_string())
 }
 
+/// 启动控制台程序时不要弹出黑框。
+///
+/// 应用本身是 GUI 子系统（`windows_subsystem = "windows"`），没有控制台；此时再启动
+/// `curl.exe` / `reg.exe` / `cmd.exe` 这类控制台程序，Windows 会为它新建一个控制台窗口。
+/// curl 一跑就是几十秒，那个黑框会一直挂在桌面上。`CREATE_NO_WINDOW` 让子进程不分配控制台，
+/// 输出仍可通过管道读取。非 Windows 上是空操作。
+fn quiet(command: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        return command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(target_os = "windows"))]
+    command
+}
+
 fn detect_kind(path: &Path) -> Option<&'static str> {
     match path.extension()?.to_string_lossy().to_lowercase().as_str() {
         "pdf" => Some("pdf"),
@@ -481,6 +498,8 @@ pub async fn download_update(
         let _ = fs::remove_file(&path);
 
         let mut command = std::process::Command::new("curl");
+        // 下载动辄几十秒，绝不能让 curl 自带的控制台窗口挂在桌面上
+        quiet(&mut command);
         command.args([
             "-L",
             "--fail",
@@ -575,13 +594,12 @@ fn curl_proxy() -> Option<String> {
 /// 为它拉一棵依赖树（还要跟着升级）不划算；`reg.exe` 在 System32 恒定存在。
 #[cfg(target_os = "windows")]
 fn windows_system_proxy() -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
-    let output = std::process::Command::new("reg")
+    let mut command = std::process::Command::new("reg");
+    quiet(&mut command);
+    let output = command
         .args(["query", KEY])
-        .creation_flags(CREATE_NO_WINDOW)
         .stderr(std::process::Stdio::null())
         .output()
         .ok()?;
@@ -702,7 +720,12 @@ pub fn open_external(url: String) -> Result<(), String> {
         return Err("只能打开 https 链接".into());
     }
     #[cfg(target_os = "windows")]
-    let spawned = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+    let spawned = {
+        // `cmd /C start` 是控制台程序，不加这个会闪一下黑框
+        let mut command = std::process::Command::new("cmd");
+        quiet(&mut command);
+        command.args(["/C", "start", "", &url]).spawn()
+    };
     #[cfg(target_os = "macos")]
     let spawned = std::process::Command::new("open").arg(&url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
