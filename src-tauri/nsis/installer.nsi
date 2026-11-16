@@ -318,6 +318,11 @@ LangString YueJianLangDllInfo ${LANG_ENGLISH} "Please select a language."
 ; 安装前自动卸载旧版本时的进度提示
 LangString YueJianUninstallingOld ${LANG_SIMPCHINESE} "正在卸载已安装的旧版本…"
 LangString YueJianUninstallingOld ${LANG_ENGLISH} "Uninstalling the previous version…"
+LangString YueJianUninstalledOld ${LANG_SIMPCHINESE} "旧版本已卸载，正在安装新版本…"
+LangString YueJianUninstalledOld ${LANG_ENGLISH} "Previous version removed, installing the new version…"
+; 旧版本卸不掉时的提示：模板自带的 $(unableToUninstall) 只有「无法卸载！」四个字，无法指导用户
+LangString YueJianUninstallFailed ${LANG_SIMPCHINESE} "未能卸载已安装的旧版本，安装已取消。$\n$\n请先手动结束「阅笺」进程，或从「设置 → 应用」里卸载旧版本后重新运行安装程序。"
+LangString YueJianUninstallFailed ${LANG_ENGLISH} "The previous version could not be uninstalled, so the installation was cancelled.$\n$\nPlease close ${PRODUCTNAME} or uninstall the previous version from Settings > Apps, then run this installer again."
 !define MUI_LANGDLL_WINDOWTITLE "$(YueJianLangDllTitle)"
 !define MUI_LANGDLL_INFO "$(YueJianLangDllInfo)"
 ; 每次安装都显示语言选择（含重装与升级）：MUI 默认在注册表已有语言时直接跳过对话框，
@@ -353,19 +358,20 @@ Function .onInit
     !insertmacro MUI_LANGDLL_DISPLAY
 
     ; MUI 在静默模式下会跳过语言对话框，也不会调用 MUI_LANGDLL_SAVELANGUAGE
-    ; （该宏在安装页离开时执行）。这里为静默安装主动询问一次语言并写入注册表，
-    ; 使 /S 安装同样可以选择语言，后续卸载也不会再重复询问。
+    ; （该宏在安装页离开时执行）。这里为静默安装补一次：只在注册表里还没有
+    ; 语言记录时才询问，否则 /S 安装会被一个对话框卡住，无法脚本化。
     ${If} ${Silent}
       ReadRegStr $R9 ${MUI_LANGDLL_REGISTRY_ROOT} "${MUI_LANGDLL_REGISTRY_KEY}" "${MUI_LANGDLL_REGISTRY_VALUENAME}"
-      ${If} $R9 != ""
+      ${If} $R9 == ""
+        LangDLL::LangDialog "${MUI_LANGDLL_WINDOWTITLE}" "${MUI_LANGDLL_INFO}" AC ${MUI_LANGDLL_LANGUAGES_CP} ""
+        Pop $LANGUAGE
+        ${If} $LANGUAGE == "cancel"
+          Abort
+        ${EndIf}
+        WriteRegStr ${MUI_LANGDLL_REGISTRY_ROOT} "${MUI_LANGDLL_REGISTRY_KEY}" "${MUI_LANGDLL_REGISTRY_VALUENAME}" "$LANGUAGE"
+      ${Else}
         StrCpy $LANGUAGE $R9
       ${EndIf}
-      LangDLL::LangDialog "${MUI_LANGDLL_WINDOWTITLE}" "${MUI_LANGDLL_INFO}" AC ${MUI_LANGDLL_LANGUAGES_CP} ""
-      Pop $LANGUAGE
-      ${If} $LANGUAGE == "cancel"
-        Abort
-      ${EndIf}
-      WriteRegStr ${MUI_LANGDLL_REGISTRY_ROOT} "${MUI_LANGDLL_REGISTRY_KEY}" "${MUI_LANGDLL_REGISTRY_VALUENAME}" "$LANGUAGE"
     ${EndIf}
   !endif
 
@@ -532,6 +538,12 @@ SectionEnd
 
 ; 安装前先卸载已安装的旧版本：避免新旧文件混装、卸载列表出现重复项。
 ; 用户数据（$INSTDIR\data 下的书架与设置）不在此处删除，静默卸载不会勾选「删除应用数据」。
+;
+; 这条链路有三处易错点，缺一处就会让「升级」变成「装不上」：
+;   1. 旧版本进程必须先退出，否则卸载程序删不掉被占用的 yuejian.exe；
+;   2. 旧卸载程序必须静默执行，升级途中再弹一个「是否卸载」向导等于给了取消的机会；
+;   3. 卸完后要补删 uninstall.exe 与安装目录（原地卸载删不掉自己），但目录非空时
+;      RMDir 会失败，正好把 data 留下。
 Function YueJianUninstallPrevious
   StrCpy $R7 ""
   StrCpy $R8 ""
@@ -586,44 +598,52 @@ Function YueJianUninstallPrevious
     Return
   ${EndIf}
 
+  ; 旧版本进程必须先退出：卸载程序删不掉被占用的 yuejian.exe，
+  ; 那样会演变成「卸载没卸干净 + 安装被下面的检查中断」，用户看到的就是升级失败。
+  ; 该宏走 Restart Manager，静默 / 被动安装会直接强制关闭，交互安装会询问用户。
+  !insertmacro CheckIfAppIsRunning "$R7\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+
   DetailPrint "$(YueJianUninstallingOld)"
   HideWindow
   ClearErrors
   ${If} $R9 = 1
     ExecWait '$R8' $0
   ${Else}
-    ; 默认带界面运行旧卸载程序：用户既能看到卸载进度，也能在它的「删除应用数据」选项里
-    ; 决定是否保留书架与设置（该复选框默认不勾选，即保留）；静默 / 被动安装没有交互，
-    ; 分别用 /S、/P 走无确认流程（数据同样默认保留）
-    StrCpy $R1 '"$R7\uninstall.exe" _?=$R7'
-    ${If} ${Silent}
-      StrCpy $R1 '"$R7\uninstall.exe" /S _?=$R7'
-    ${ElseIf} $PassiveMode = 1
-      StrCpy $R1 '"$R7\uninstall.exe" /P _?=$R7'
-    ${EndIf}
-    ; _?= 让卸载程序在原目录内联执行，ExecWait 才能等到它真正退出
-    ExecWait $R1 $0
+    ; 一律静默卸载：升级过程中再弹一个「是否卸载旧版本」的向导，用户一取消
+    ; （退出码 1）整个升级就作废，这正是之前升级链路失效的直接原因。
+    ; 静默卸载不会勾选「删除应用数据」，$INSTDIR\data 因此原样保留。
+    ; _?= 让卸载程序在原目录内联执行，ExecWait 才能等到它真正退出。
+    ExecWait '"$R7\uninstall.exe" /S _?=$R7' $0
   ${EndIf}
   ${If} ${Errors}
     StrCpy $0 2 ; ExecWait 失败，按出错处理
   ${EndIf}
   BringToFront
 
-  ${If} $0 <> 0
-  ${OrIf} ${FileExists} "$R7\${MAINBINARYNAME}.exe"
-    MessageBox MB_ICONEXCLAMATION "$(unableToUninstall)"
+  ; 原地卸载（_?=）不会删除自己与安装目录，这里补删；
+  ; 卸载程序偶尔会留下仍被占用的主程序，稍等后再补删一次（目录非空时 RMDir 会失败，正好保留 data）
+  ${If} $R9 = 0
+    Delete "$R7\uninstall.exe"
+    ${If} ${FileExists} "$R7\${MAINBINARYNAME}.exe"
+      Sleep 500
+      Delete "$R7\${MAINBINARYNAME}.exe"
+    ${EndIf}
+    RMDir "$R7"
+  ${EndIf}
+
+  ; 主程序还在说明旧版本没卸掉，继续安装会变成新旧文件混装，宁可中止并给出可操作的提示
+  ${If} ${FileExists} "$R7\${MAINBINARYNAME}.exe"
+    MessageBox MB_ICONEXCLAMATION "$(YueJianUninstallFailed)"
     Abort
   ${EndIf}
 
-  ; 原地卸载（_?=）不会删除自己与安装目录，这里补删（目录非空时 RMDir 会失败，正好保留 data）
-  ${If} $R9 = 0
-    Delete "$R7\uninstall.exe"
-    RMDir "$R7"
-  ${EndIf}
+  DetailPrint "$(YueJianUninstalledOld)"
 FunctionEnd
 
 Section Install
-  ; 安装前先卸载已安装的旧版本
+  ; 先确保旧版本进程已退出，再自动卸载已安装的旧版本（静默、保留用户数据），
+  ; 最后才把新版本文件写进去。
+  !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
   Call YueJianUninstallPrevious
 
   SetOutPath $INSTDIR
@@ -631,8 +651,6 @@ Section Install
   !ifmacrodef NSIS_HOOK_PREINSTALL
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
-
-  !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"

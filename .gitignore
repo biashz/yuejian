@@ -12,6 +12,10 @@ dist/
 .screenshots/
 .trae-html-share-packages/
 
+# 临时验证目录与安装前备份
+.nsitest/
+.backup-install-*/
+
 # 系统与编辑器
 .DS_Store
 Thumbs.db
