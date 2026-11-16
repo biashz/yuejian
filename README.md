@@ -106,6 +106,8 @@ yuejian/
 ├── site/                    # 官网静态站（Vercel 部署源）
 ├── scripts/
 │   ├── dev.mjs              # dev / build / bundle 统一入口
+│   ├── check-undefined.mjs  # 静态检查：调用了但未声明/未导入的函数
+│   ├── smoke-reader.mjs     # 真浏览器冒烟：打开/翻页/缩放/快捷键全流程
 │   └── vendor-assets.mjs    # 从 node_modules 提取 pdf.js 等资源
 ├── docs/                    # 产品、设计、开发与使用文档
 ├── .github/workflows/build.yml   # 三端构建 + Release 上传
@@ -132,6 +134,8 @@ npm run dev      # 增量编译 debug 版并启动应用
 | `npm run build` | 编译 release 二进制但不生成安装包（`tauri build --no-bundle`） |
 | `npm run bundle` | 构建当前平台的安装包 |
 | `npm run vendor` | 同步前端离线资源到 `src/vendor`：pdf.js 取自 `node_modules`，highlight.js 下载官方浏览器构建 |
+| `npm run check` | 静态检查全部前端模块，报出「调用了但没声明/没导入」的函数；有问题时退出码为 1 |
+| `npm run smoke` | 用本机 Chrome 无头跑真浏览器冒烟（打开 Markdown/PDF、翻页、缩放、Ctrl+B），无未捕获异常才通过；未装 Chrome 时跳过 |
 | `npm run version:bump` | 手动递增版本号（默认 patch，可加 `--minor` / `--major` / `--set 1.2.3`） |
 | `npm run tauri -- <args>` | 透传任意 Tauri CLI 参数 |
 

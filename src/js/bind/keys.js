@@ -7,7 +7,7 @@ import { state } from "../core/session.js";
 import { activeReader, splitMode, setSplit } from "../reader/panes.js";
 import { setView } from "../view.js";
 import { closeSettings, toggleZen } from "../preferences.js";
-import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep } from "../reader/toolbar.js";
+import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, renderToolbar } from "../reader/toolbar.js";
 import { setCtxOpen } from "../reader/ctx.js";
 import { presenting, enterPresent, exitPresent, presentStep } from "../reader/present.js";
 import { importDocuments } from "../actions.js";

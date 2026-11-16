@@ -97,6 +97,7 @@ yuejian/
 8. **分类的三层分工**：`categories.js` 只做纯计算（排序/计数/筛选判定），`category-ui.js` 只把 state 画成 DOM 并收集输入，`actions.js` 是唯一写入口（调用命令 + 刷新书架）。弹层只返回 `{action, name, color}`，不自己发请求，避免 UI 模块直接持有后端调用。
 9. **选中态不重绘**：`Ctrl+点击` 只切 class 并刷新批量条，不重建列表。整表 `innerHTML` 重建会把滚动位置打回顶部，长书架下体验很差。
 10. **分类删改的引用完整性**：`delete_category` 在**同一把锁**内删除分类并把其下文档 `categoryId` 清空，否则会留下指向已删分类的悬挂引用；前端额外用 `pruneSelection()` 丢弃指向已移除文档的选中项。
+11. **「漏 import」用脚本兜住**：模块拆分后函数被调用却没 import，链接期不报错（标识符当全局查），只有执行到那一行才抛 `XXX is not defined`。项目无打包器也无 linter，因此用 `npm run check`（`scripts/check-undefined.mjs`）兜底：挖空注释与字符串后，比对「调用式标识符」与「本文件已声明的名字」，未声明即报错并以退出码 1 拦截。该脚本上线后一次性扫出 3 处真实遗漏（`updateToolbarPage` / `scrollPaneToRatio` / `renderToolbar`），均已修复。静态检查管不到的运行时问题由 `npm run smoke`（`scripts/smoke-reader.mjs`）负责：真 Chrome + 注入 `__TAURI__` 桩跑完整阅读流程，PDF 现场生成、任何未捕获异常即失败。
 
 ## 5. 风险与对策
 

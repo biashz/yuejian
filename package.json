@@ -10,6 +10,8 @@
     "bundle": "node scripts/dev.mjs bundle",
     "tauri": "node scripts/dev.mjs",
     "vendor": "node scripts/vendor-assets.mjs",
+    "check": "node scripts/check-undefined.mjs",
+    "smoke": "node scripts/smoke-reader.mjs",
     "version:bump": "node scripts/bump-version.mjs"
   },
   "devDependencies": {
