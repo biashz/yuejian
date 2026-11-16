@@ -448,6 +448,19 @@
   </div>
 </div>
 
+<!-- 更新包下载完成后的安装提示：非模态、不抢焦点、不拦键盘，读完当前这段再点「立即安装」即可 -->
+<aside class="install-prompt" id="installPrompt" role="dialog" aria-labelledby="installPromptTitle" aria-describedby="installPromptNote" hidden>
+  <span class="install-prompt-mark" aria-hidden="true"><svg class="ic"><use href="#i-download"/></svg></span>
+  <div class="install-prompt-body">
+    <p class="install-prompt-title" id="installPromptTitle">新版本已下载</p>
+    <p class="install-prompt-note" id="installPromptNote" data-i18n="settings.updatePromptNote">点「立即安装」会关闭阅笺并开始安装，书架、设置与阅读进度都会保留。</p>
+    <div class="install-prompt-foot">
+      <button class="ghost-btn" id="installPromptLater" data-i18n="settings.updatePromptLater">稍后再说</button>
+      <button class="primary-btn" id="installPromptInstall" data-i18n="settings.updatePromptInstall">立即安装</button>
+    </div>
+  </div>
+</aside>
+
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script src="./vendor/highlight/highlight.min.js" defer></script>

@@ -309,6 +309,65 @@ async function main() {
     check("翻页成功", Number(pageNext) > Number(pageStart), `${pageStart} → ${pageNext}`);
     check("翻页与缩放无未捕获异常", errs.length === 0, errs.join(" | "));
     check("缩放比例已刷新", /%$/.test(zoomLabel), `比例 "${zoomLabel}"`);
+
+    /* --- 更新安装提示：非模态卡片，可稍后，点立即安装才走安装命令 --- */
+    await evaluate(ws, `(async () => {
+      const mod = await import("/js/update-ui.js");
+      mod.updater.release = { version: "9.9.9", assetUrl: "https://example.com/x.exe", assetSize: 1,
+        pageUrl: "https://example.com", publishedAt: new Date().toISOString() };
+      mod.updater.installerPath = "C:/tmp/yuejian-setup.exe";
+      mod.updater.phase = "ready";
+      mod.showInstallPrompt();
+    })()`);
+    const prompt = await evaluate(ws, `(() => {
+      const el = document.getElementById("installPrompt");
+      return { hidden: el.hidden, title: document.getElementById("installPromptTitle").textContent,
+        modal: el.getAttribute("aria-modal") };
+    })()`);
+    check("下载完成后弹出安装提示", prompt.hidden === false && prompt.title.includes("9.9.9"), `标题 "${prompt.title}"`);
+    // 非模态：没有 aria-modal、没有遮罩层、不抢焦点，阅读可以继续
+    const nonModal = await evaluate(ws, `(() => {
+      const el = document.getElementById("installPrompt");
+      return {
+        nonModal: el.getAttribute("aria-modal") === null,
+        noOverlay: document.getElementById("confirmOverlay").hidden === true,
+        noFocus: document.activeElement.id !== "installPromptInstall",
+      };
+    })()`);
+    check("安装提示不打断当前使用（非模态、不抢焦点、无遮罩）",
+      nonModal.nonModal && nonModal.noOverlay && nonModal.noFocus,
+      `非模态=${nonModal.nonModal} 无遮罩=${nonModal.noOverlay} 未抢焦点=${nonModal.noFocus}`);
+
+    // 卡片确实被样式表接管了（不是靠 display:none 蒙过去的空壳），且贴在右下角
+    const look = await evaluate(ws, `(() => {
+      const el = document.getElementById("installPrompt");
+      const css = getComputedStyle(el);
+      return { position: css.position, display: css.display, width: Math.round(parseFloat(css.width)),
+        right: css.right, bottom: css.bottom, bg: css.backgroundColor };
+    })()`);
+    check("安装提示已按右下角卡片样式渲染",
+      look.position === "fixed" && look.display === "flex" && look.width > 240 && look.right === "20px",
+      `${look.position}/${look.display} ${look.width}px right=${look.right} bottom=${look.bottom}`);
+
+    await evaluate(ws, `document.getElementById("installPromptLater").click()`);
+    const afterLater = await evaluate(ws, `document.getElementById("installPrompt").hidden`);
+    check("点「稍后再说」收起提示", afterLater === true);
+
+    await evaluate(ws, `(async () => {
+      (await import("/js/update-ui.js")).showInstallPrompt();
+    })()`);
+    await evaluate(ws, `(async () => {
+      document.getElementById("installPromptInstall").click();
+    })()`);
+    const afterInstall = await evaluate(ws, `(() => ({
+      hidden: document.getElementById("installPrompt").hidden,
+      called: window.__calls.includes("install_update"),
+    }))()`);
+    check("点「立即安装」收起提示并调用安装命令", afterInstall.hidden === true && afterInstall.called === true,
+      `hidden=${afterInstall.hidden} install_update=${afterInstall.called}`);
+
+    errs = await errors();
+    check("更新提示交互无未捕获异常", errs.length === 0, errs.join(" | "));
     check("全程无 CDP 级未捕获异常", exceptions.length === 0, exceptions.join(" | "));
 
     ws.close();

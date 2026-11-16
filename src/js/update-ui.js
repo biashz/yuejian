@@ -104,6 +104,29 @@ function renderUpdateUI() {
   }
 }
 
+/**
+ * 下载完成后的安装提示。
+ *
+ * 刻意做成非模态卡片：不铺遮罩、不抢焦点、不拦键盘（ESC 仍然只关阅读模式），
+ * 所以弹出时用户还能继续翻页。点「立即安装」才真正退出应用交给安装程序。
+ * 关掉之后不会丢状态：侧栏「设置」图标上的红点与设置面板里的按钮都还在。
+ */
+function showInstallPrompt() {
+  const prompt = $("#installPrompt");
+  if (!prompt || updater.phase !== "ready" || !updater.installerPath) return;
+  $("#installPromptTitle").textContent = t("settings.updatePromptTitle", { version: updater.release?.version || updater.version });
+  prompt.hidden = false;
+  // 连着重下一遍入场动画：第二次下载完成时也要有可见的反馈
+  prompt.style.animation = "none";
+  void prompt.offsetWidth;
+  prompt.style.animation = "";
+}
+
+function hideInstallPrompt() {
+  const prompt = $("#installPrompt");
+  if (prompt) prompt.hidden = true;
+}
+
 /** silent = 启动时的自动检查：失败不弹提示，有更新才给一条 toast */
 async function checkForUpdate({ silent = false } = {}) {
   if (!isTauri || updater.phase === "checking" || updater.phase === "downloading") return;
@@ -143,6 +166,7 @@ async function downloadUpdate() {
   updater.progress = 0;
   updater.received = 0;
   updater.stuck = "";
+  hideInstallPrompt();
   renderUpdateUI();
 
   // 后端有 40 秒的传输超时，但那是「判定链路死了」；在此之前用户看到的是一动不动的百分比，
@@ -181,7 +205,8 @@ async function downloadUpdate() {
     updater.installerPath = await downloadInstaller(release.assetUrl, release.assetSize);
     updater.progress = 1;
     updater.phase = "ready";
-    toast(t("settings.updateReady"));
+    // 不直接装：先给一个可延后的提示，别打断用户正在读的内容
+    showInstallPrompt();
   } catch (error) {
     updater.phase = "error";
     updater.errorKind = "download";
@@ -198,6 +223,7 @@ async function downloadUpdate() {
 
 async function installUpdate() {
   if (!updater.installerPath) return;
+  hideInstallPrompt();
   try {
     // 安装器启动成功后应用会立即退出，这里不需要再更新状态
     await runInstaller(updater.installerPath);
@@ -223,4 +249,4 @@ async function initUpdate() {
   setTimeout(() => checkForUpdate({ silent: true }), 3000);
 }
 
-export { updater, renderUpdateUI, checkForUpdate, downloadUpdate, installUpdate, handleUpdateAction, initUpdate };
+export { updater, renderUpdateUI, checkForUpdate, downloadUpdate, installUpdate, handleUpdateAction, initUpdate, showInstallPrompt, hideInstallPrompt };

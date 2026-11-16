@@ -15,7 +15,7 @@ import { setCtxOpen } from "../reader/ctx.js";
 import { applySettings, syncSettingsUI, persistSettings, setTheme, cycleTheme, toggleZen, closeSettings } from "../preferences.js";
 import { importDocuments } from "../actions.js";
 import { openPalette, closePalette, renderPalette, paletteItems, runPalette } from "../palette.js";
-import { updater, handleUpdateAction } from "../update-ui.js";
+import { updater, handleUpdateAction, installUpdate, hideInstallPrompt } from "../update-ui.js";
 
 export function bindPanelEvents() {
   // 命令面板
@@ -99,6 +99,9 @@ export function bindPanelEvents() {
     persistSettings();
   });
   $("#updateAction").addEventListener("click", handleUpdateAction);
+  // 安装提示：点「立即安装」才退出应用，「稍后再说」只收起卡片（设置里的红点与按钮仍在）
+  $("#installPromptInstall").addEventListener("click", () => installUpdate());
+  $("#installPromptLater").addEventListener("click", hideInstallPrompt);
   $("#updateLink").addEventListener("click", () => {
     openReleasePage(updater.release?.pageUrl).catch(() => {});
   });

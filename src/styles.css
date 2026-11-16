@@ -1693,6 +1693,49 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 .toast.is-out { animation: toastOut 200ms var(--ease) both; }
 html[data-theme="night"] .toast { background: var(--surface-2); color: var(--ink); }
 
+/* ---------- 11.5 更新安装提示（非模态） ---------- */
+/* 右下角常驻卡片：不盖遮罩、不抢焦点、不拦键盘，用户读完当前这段再点即可 */
+.install-prompt {
+  position: fixed; right: 20px; bottom: 76px;
+  z-index: 38;
+  display: flex; align-items: flex-start; gap: 12px;
+  width: min(352px, calc(100vw - 40px));
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  /* 入场只做一次：卡片常驻，不做动画循环，避免阅读时被闪到 */
+  animation: rise 260ms var(--ease) both;
+}
+.install-prompt[hidden] { display: none; }
+.install-prompt-mark {
+  flex: none;
+  display: grid; place-items: center;
+  width: 30px; height: 30px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-radius: var(--r-md);
+  color: var(--accent);
+}
+.install-prompt-mark .ic { width: 15px; height: 15px; }
+.install-prompt-body { flex: 1; min-width: 0; }
+.install-prompt-title {
+  margin: 0 0 4px;
+  font-size: 12.5px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.install-prompt-note {
+  margin: 0;
+  font-size: 11.5px; line-height: 1.6;
+  color: var(--ink-2);
+}
+.install-prompt-foot {
+  display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+  margin-top: 12px;
+}
+.install-prompt-foot .ghost-btn { height: 28px; padding: 0 11px; font-size: 11.5px; }
+.install-prompt-foot .primary-btn { height: 28px; padding: 0 14px; font-size: 11.5px; }
+
 /* ---------- 12. Motion ---------- */
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }
