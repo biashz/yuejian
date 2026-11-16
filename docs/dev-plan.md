@@ -5,20 +5,27 @@
 ## 1. 架构
 
 ```
-┌──────────────────────────── 前端（src/，原生 ES Module） ────────────────────────────┐
-│  index.html / styles.css                                                             │
-│  js/app.js        视图切换、书架、命令面板、设置                                        │
-│  js/reader-pdf.js pdf.js 渲染、连续滚动、缩放、目录、搜索                                │
-│  js/reader-md.js  Markdown HTML 注入、目录高亮、代码高亮                                 │
-│  js/api.js        Tauri invoke 封装（唯一后端出入口）                                   │
-└───────────────────────────────────┬──────────────────────────────────────────────────┘
-                                    │ invoke / asset 协议 / 原生拖拽事件
-┌───────────────────────────────────▼──────────── src-tauri/（Rust） ───────────────────┐
-│  main.rs / lib.rs  窗口与命令注册                                                      │
-│  store.rs          书架 + 设置持久化（%APPDATA%/com.yuejian.reader/state.json）          │
-│  markdown.rs       comrak 解析 → HTML + 标题目录                                        │
-│  commands.rs       导入、打开、收藏、进度、设置、PDF 字节兜底读取                          │
-└──────────────────────────────────────────────────────────────────────────────────────┘
+前端 src/（原生 ES Module，零构建，按职责分模块）
+├ app.js            入口：读取数据、应用设置、绑定事件
+├ core/             dom 工具 / session 共享状态 / constants / format / feedback
+├ reader/           panes 双栏 / open 打开文档 / toolbar / ctx 侧栏 / present 演示 / progress
+├ shelf.js          书架：列表、网格、继续阅读、统计
+├ view.js           视图切换、状态栏、窗口标题、语言切换
+├ actions.js        导入 / 移出 / 收藏
+├ palette.js        命令面板
+├ preferences.js    主题与排版、设置面板、设置持久化
+├ update-ui.js      更新状态机与设置页更新卡片
+├ bind/             事件绑定：index 聚合 + shelf / reader / panels / keys
+├ reader-pdf.js     pdf.js 封装：渲染、缩放、搜索
+├ reader-md.js      Markdown HTML 注入、目录高亮
+├ api.js            Tauri invoke 封装（唯一后端出入口）
+└ i18n.js           中英文案与语言切换
+                    │ invoke / asset 协议 / 原生拖拽事件
+src-tauri/（Rust）
+├ main.rs / lib.rs  窗口与命令注册
+├ store.rs          书架 + 设置持久化（程序目录内 data/state.json）
+├ markdown.rs       comrak 解析 → HTML + 标题目录
+└ commands.rs       导入、打开、收藏、进度、设置、更新、PDF 字节兜底读取
 ```
 
 依赖（全部开源）：
@@ -34,7 +41,18 @@ yuejian/
 ├─ src/                  前端（Tauri frontendDist）
 │  ├─ index.html
 │  ├─ styles.css
-│  ├─ js/{app,api,reader-pdf,reader-md}.js
+│  ├─ js/                前端脚本（按职责分模块，入口是 app.js）
+│  │  ├─ core/           dom / session / constants / format / feedback
+│  │  ├─ reader/         panes / open / toolbar / ctx / present / progress
+│  │  ├─ shelf.js        书架渲染
+│  │  ├─ view.js         视图切换、状态栏、语言切换
+│  │  ├─ actions.js      导入 / 移出 / 收藏
+│  │  ├─ palette.js      命令面板
+│  │  ├─ preferences.js  主题与排版、设置面板
+│  │  ├─ update-ui.js    更新状态机与更新卡片
+│  │  ├─ bind/           事件绑定（index 聚合 + 四个事件域）
+│  │  ├─ api.js / i18n.js / update.js
+│  │  └─ reader-pdf.js / reader-md.js
 │  └─ vendor/{pdfjs,highlight}/   离线第三方资源
 ├─ src-tauri/
 │  ├─ Cargo.toml
@@ -60,6 +78,7 @@ yuejian/
 | T8 | 阅读设置：主题、字号、行高、版心、专注模式、持久化 | T5 | 重启后保持；三主题全部可读 |
 | T9 | 命令面板与快捷键、状态栏、Toast、窗口按钮 | T5 | Ctrl+K 可用，↑↓/Enter 生效 |
 | T10 | 构建验证：`cargo check`、`npm run build`（--no-bundle） | T5-T9 | 生成可执行文件并冒烟启动 |
+| T11 | 前端模块拆分：把单体 app.js 按职责拆为 core / reader / 领域模块 | T5-T10 | 业务代码零改动；模块图可链接且 `boot()` 无异常 |
 
 ## 4. 关键实现决策
 
@@ -69,6 +88,7 @@ yuejian/
 4. **进度保存**：滚动节流 300ms，写回 Rust（整库 JSON 写入，条目级更新）。
 5. **无打包器**：前端保持原生 ES Module，`vendor/` 放 pdf.js 与 highlight.js，保证离线可运行、启动快。
 6. **窗口**：`decorations: false` + `data-tauri-drag-region`，用 Tauri window API 实现最小化/最大化/关闭。
+7. **前端模块边界**：`core/` 只放不依赖业务的工具与共享状态；双栏可变状态（`splitMode` / `linkSync` / `activePaneIndex`）只允许 `reader/panes.js` 写入，其余模块以 ESM live binding 只读引用，避免跨模块赋值。跨模块调用一律走 import，不使用全局对象或事件总线。
 
 ## 5. 风险与对策
 

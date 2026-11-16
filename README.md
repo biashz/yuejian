@@ -67,12 +67,26 @@ yuejian/
 │   ├── index.html
 │   ├── styles.css
 │   ├── js/
-│   │   ├── app.js           # 应用装配、书架、命令面板、设置
+│   │   ├── app.js           # 入口：读取数据、应用设置、绑定事件
 │   │   ├── api.js           # 前端调用 Rust 命令的唯一出口
 │   │   ├── i18n.js          # 中英文案字典与语言切换
-│   │   ├── update.js        # 更新检查、下载进度与安装引导
+│   │   ├── update.js        # 更新桥接：查询 Release、下载、启动安装器
 │   │   ├── reader-pdf.js    # pdf.js 封装：渲染、翻页、缩放、搜索
-│   │   └── reader-md.js     # Markdown 渲染与目录滚动同步
+│   │   ├── reader-md.js     # Markdown 渲染与目录滚动同步
+│   │   ├── shelf.js         # 书架：列表 / 网格 / 继续阅读 / 统计
+│   │   ├── view.js          # 视图切换、状态栏、窗口标题、语言切换
+│   │   ├── actions.js       # 导入 / 移出 / 收藏
+│   │   ├── palette.js       # 命令面板
+│   │   ├── preferences.js   # 主题与排版、设置面板、设置持久化
+│   │   ├── update-ui.js     # 更新状态机与设置页的更新卡片
+│   │   ├── bind/            # 事件绑定按事件域拆分
+│   │   │   ├── index.js     # 聚合入口，按固定顺序调用四个域
+│   │   │   ├── shelf.js     # 委托点击、导航、书架搜索与导入
+│   │   │   ├── reader.js    # 文档栏、目录、工具栏、演示
+│   │   │   ├── panels.js    # 命令面板、设置、窗口按钮、拖拽、右键
+│   │   │   └── keys.js      # 键盘快捷键与退出落盘
+│   │   ├── core/            # dom / session / constants / format / feedback
+│   │   └── reader/          # panes / open / toolbar / ctx / present / progress
 │   └── vendor/              # 由 npm run vendor 生成的离线资源
 ├── src-tauri/
 │   ├── src/
@@ -161,8 +175,8 @@ data/
       "size": 2483102,
       "pages": 6,
       "words": 0,
-      "addedAt": 1762300000,
-      "lastOpenedAt": 1762390000,
+      "addedAt": 1762300000000,        // 毫秒时间戳
+      "lastOpenedAt": 1762390000000,
       "favorite": false,
       "progress": { "ratio": 0.42, "page": 3, "zoom": 1.0 }
     }
@@ -197,6 +211,8 @@ data/
 ## 参与贡献
 
 欢迎提交 Issue 与 Pull Request。改动前端时保持零构建步骤；新增 Rust 命令需在 `commands.rs` 中注册，并通过 `js/api.js` 暴露给前端。
+
+前端按职责分模块，跨模块只通过 import 的函数调用通信：共享的界面状态集中在 `core/session.js`，双栏相关的可变状态（`splitMode` / `linkSync` / `activePaneIndex`）只由 `reader/panes.js` 写入，其余模块以只读方式引用其 live binding。新增交互优先放进已有模块，不要重新堆回 `app.js`。
 
 ## 许可证
 
