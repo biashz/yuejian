@@ -1,0 +1,76 @@
+/**
+ * 全局提示与纸感确认框：两者都与具体业务无关，只依赖 DOM。
+ */
+import { $ } from "./dom.js";
+
+/* ---------------- Toast ---------------- */
+let toastTimer = null;
+// 复用同一个提示元素：连续触发时只重置计时，避免旧提示丢失计时器而永久停留
+function toast(message) {
+  const wrap = $("#toastWrap");
+  let el = wrap.firstElementChild;
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "toast";
+    el.innerHTML = '<svg class="ic"><use href="#i-check"/></svg><span></span>';
+    wrap.appendChild(el);
+  }
+  el.querySelector("span").textContent = message;
+  el.classList.remove("is-out");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.classList.add("is-out");
+    toastTimer = setTimeout(() => el.remove(), 220);
+  }, 2200);
+}
+
+/* ---------------- 确认弹框 ---------------- */
+let confirmSettle = null;
+
+/**
+ * 纸感「注销单」确认框，替代系统弹框。
+ * 返回 Promise<boolean>：点「移出」为 true，取消 / ESC / 点遮罩为 false。
+ */
+function askConfirm({ title, book, note, okText }) {
+  const overlay = $("#confirmOverlay");
+  const card = $("#confirmCard");
+  const lastFocus = document.activeElement;
+  $("#confirmTitle").textContent = title;
+  // 书名放进内层 span，由 CSS 单独做两行截断（外层 padding 不参与裁切）
+  $("#confirmBook").innerHTML = "<span></span>";
+  $("#confirmBook span").textContent = book;
+  $("#confirmNote").textContent = note;
+  $("#confirmOk").textContent = okText;
+  overlay.hidden = false;
+  // 焦点落在单据本体而非按钮上：避免默认聚焦「取消」造成的强调边框，Tab 再进入按钮
+  card.focus();
+
+  return new Promise((resolve) => {
+    // 结算只做一次：双击按钮、ESC 与遮罩点击不会重复触发
+    const settle = (result) => {
+      if (!confirmSettle) return;
+      confirmSettle = null;
+      overlay.hidden = true;
+      overlay.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown, true);
+      lastFocus?.focus?.();
+      resolve(result);
+    };
+    const onClick = (event) => {
+      if (event.target.closest("#confirmOk")) settle(true);
+      else if (event.target === overlay || event.target.closest("#confirmCancel")) settle(false);
+    };
+    // 捕获阶段截下 ESC：否则会继续冒泡触发全局「退出阅读」快捷键
+    const onKeydown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      settle(false);
+    };
+    confirmSettle = settle;
+    overlay.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown, true);
+  });
+}
+
+export { toast, askConfirm };
