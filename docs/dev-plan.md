@@ -98,6 +98,7 @@ yuejian/
 9. **选中态不重绘**：`Ctrl+点击` 只切 class 并刷新批量条，不重建列表。整表 `innerHTML` 重建会把滚动位置打回顶部，长书架下体验很差。
 10. **分类删改的引用完整性**：`delete_category` 在**同一把锁**内删除分类并把其下文档 `categoryId` 清空，否则会留下指向已删分类的悬挂引用；前端额外用 `pruneSelection()` 丢弃指向已移除文档的选中项。
 11. **「漏 import」用脚本兜住**：模块拆分后函数被调用却没 import，链接期不报错（标识符当全局查），只有执行到那一行才抛 `XXX is not defined`。项目无打包器也无 linter，因此用 `npm run check`（`scripts/check-undefined.mjs`）兜底：挖空注释与字符串后，比对「调用式标识符」与「本文件已声明的名字」，未声明即报错并以退出码 1 拦截。该脚本上线后一次性扫出 3 处真实遗漏（`updateToolbarPage` / `scrollPaneToRatio` / `renderToolbar`），均已修复。静态检查管不到的运行时问题由 `npm run smoke`（`scripts/smoke-reader.mjs`）负责：真 Chrome + 注入 `__TAURI__` 桩跑完整阅读流程，PDF 现场生成、任何未捕获异常即失败。
+12. **更新下载复用 curl，但代理必须自己补**：`download_update` 交给系统自带 `curl`，不引入 HTTP 依赖。坑在于 curl **只认 `HTTPS_PROXY` 类环境变量，不读 Windows 系统代理**，而 WebView2 里的 `fetch` 会读——于是「检查更新能查到、点下载一直 0 字节」，浏览器却打得开下载页。现在读一次注册表 `Internet Settings` 补上 `--proxy`（环境变量已设则不插手），并用 `--connect-timeout 20`、`--speed-limit 1024 --speed-time 40` 把无限等待变成明确失败；失败时把 curl 退出码与 stderr 翻译成可处置的提示。前端另有看门狗：12 秒无字节提示「正在连接」、45 秒无新字节提示「下载没有响应」并放出发布页入口。
 
 ## 5. 风险与对策
 
