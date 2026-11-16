@@ -2,11 +2,14 @@
 const navToggle = document.getElementById("navToggle");
 const siteNav = document.getElementById("siteNav");
 
+/* 语言切换后取当前语种的文案，未加载 i18n 时回退中文 */
+const t = (key, fallback) => window.siteI18n?.t(key) ?? fallback;
+
 if (navToggle && siteNav) {
   const setOpen = (open) => {
     siteNav.classList.toggle("is-open", open);
     navToggle.setAttribute("aria-expanded", String(open));
-    navToggle.setAttribute("aria-label", open ? "收起导航" : "展开导航");
+    navToggle.setAttribute("aria-label", open ? t("nav.collapse", "收起导航") : t("nav.expand", "展开导航"));
   };
 
   navToggle.addEventListener("click", () => {
@@ -20,6 +23,11 @@ if (navToggle && siteNav) {
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") setOpen(false);
+  });
+
+  // 切换语言时同步按钮的无障碍文案
+  document.addEventListener("site:langchange", () => {
+    setOpen(siteNav.classList.contains("is-open"));
   });
 }
 

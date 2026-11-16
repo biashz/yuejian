@@ -23,6 +23,7 @@
 - **阅读进度**：页码、缩放与滚动位置自动保存，下次打开回到原处。
 - **命令面板**：`Ctrl/Cmd + K` 搜书、跳章节、切换主题、打开设置、导入文件。
 - **双语界面**：简体中文 / English 可在设置中即时切换，选择会被记住。
+- **自动更新**：启动后静默检查 GitHub Releases，发现新版本就在后台下载；设置 → 更新里可手动检查、看进度，点「立即重启安装」即可。升级会先卸载旧版本，`data/` 保留。
 - **本地优先**：书架、设置与进度写在程序目录内的 `data/`，断网可用，复制目录即可迁移。
 
 其他界面见 [官网](https://yuejian-reader.vercel.app) 与 [用户手册](docs/usage.md)。
@@ -42,6 +43,7 @@
 - **数据位置**：发布版的所有数据写入可执行文件同级的 `data/`；Linux AppImage 写入 `.AppImage` 文件同级目录。卸载或迁移时连同该目录一起处理即可。
 - **macOS 首次打开**：安装包未做 Apple 公证，若提示“无法验证开发者”，请右键点击应用选择「打开」，或执行 `xattr -dr com.apple.quarantine "/Applications/YueJian Reader.app"`。
 - **Linux AppImage**：下载后需要 `chmod +x` 再运行。
+- **升级**：装过一次后不必再手动找安装包。Windows 版启动时会静默检查并下载新版本，设置 → 更新里确认进度后点「立即重启安装」；macOS / Linux 会提示前往 Releases 下载对应的 dmg / deb / AppImage。
 
 ## 技术栈
 
@@ -53,6 +55,7 @@
 | Markdown | comrak | Rust 侧 GFM 解析，输出净化后的 HTML |
 | 代码高亮 | highlight.js | 官方浏览器构建，随包离线分发 |
 | 持久化 | serde_json | 单文件 `state.json`，先写临时文件再重命名 |
+| 应用更新 | GitHub Releases API + 系统 curl | 静默检查最新发布，后台下载 NSIS 安装包，退出应用后由安装器替换 |
 | 图标 | Lucide（内联 SVG） | 零外部依赖 |
 | 官网 | 静态 HTML + CSS | 通过 Vercel 托管，配置见 `vercel.json` |
 
@@ -67,6 +70,7 @@ yuejian/
 │   │   ├── app.js           # 应用装配、书架、命令面板、设置
 │   │   ├── api.js           # 前端调用 Rust 命令的唯一出口
 │   │   ├── i18n.js          # 中英文案字典与语言切换
+│   │   ├── update.js        # 更新检查、下载进度与安装引导
 │   │   ├── reader-pdf.js    # pdf.js 封装：渲染、翻页、缩放、搜索
 │   │   └── reader-md.js     # Markdown 渲染与目录滚动同步
 │   └── vendor/              # 由 npm run vendor 生成的离线资源

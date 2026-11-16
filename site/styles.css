@@ -55,6 +55,12 @@
   }
 }
 
+/* 英文界面改用西文衬线，避免楷体渲染拉丁字母 */
+html[lang="en"] {
+  --font-display: "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
+  --font-read: "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
+}
+
 *,
 *::before,
 *::after { box-sizing: border-box; }
@@ -221,6 +227,26 @@ code {
 .site-nav a:hover::after { right: 0; }
 
 .header-cta { flex: none; }
+
+.lang-toggle {
+  flex: none;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background-color 0.18s var(--ease), color 0.18s, border-color 0.18s;
+}
+.lang-toggle:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
 
 .nav-toggle {
   display: none;
@@ -546,7 +572,7 @@ figcaption {
   padding: 5px 0;
   align-items: baseline;
 }
-.os-meta span {
+.os-meta .os-k {
   flex: none;
   width: 44px;
   color: var(--ink-3);
@@ -566,6 +592,8 @@ figcaption {
   background: var(--surface-2);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
+/* 更新说明占满一行，作为下载区收尾 */
+.note-block-wide { grid-column: 1 / -1; }
 .note-block h3 {
   margin: 0 0 8px;
   font-family: var(--font-display);
@@ -764,7 +792,8 @@ figcaption {
   .site-nav a { width: 100%; padding: 12px 0; font-size: 15px; }
   .site-nav a::after { display: none; }
   .header-cta { display: none; }
-  .nav-toggle { display: block; }
+  .lang-toggle { margin-left: auto; }
+  .nav-toggle { display: block; margin-left: 8px; }
 
   .hero { padding: 56px 0 48px; }
   .hero-shot { margin-top: 40px; }
