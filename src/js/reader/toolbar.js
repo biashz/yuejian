@@ -88,30 +88,36 @@ function renderToolbar() {
     const pane = activePane();
     const view = pane?.textView || { mode: "code", gutter: true, wrap: false };
     const doc = pane?.doc || {};
-    const tableMode = doc.mode === "table";
+    // 大文件（窗口渲染）锁死等宽：软换行会改变行高，滚动位置就算不出来了
+    const windowed = Boolean(doc.windowed);
+    const tableMode = doc.mode === "table" && !windowed;
     const table = pane?.table;
-    const stat = view.mode === "table"
-      ? t("reader.textStatTable", { rows: table?.rows || 0, cols: table?.cols || 0 })
-      : view.mode === "code"
-        ? t("reader.textStatLines", { lines: doc.lines || 0 })
-        : t("reader.textStatChars", { chars: doc.chars || 0 });
+    const stat = windowed
+      ? t("reader.textStatLines", { lines: doc.lines || 0 })
+      : view.mode === "table"
+        ? t("reader.textStatTable", { rows: table?.rows || 0, cols: table?.cols || 0 })
+        : view.mode === "code"
+          ? t("reader.textStatLines", { lines: doc.lines || 0 })
+          : t("reader.textStatChars", { chars: doc.chars || 0 });
     // 行号与软换行只对等宽视图有意义：表格自带行号列，正文不需要行号
-    const codeView = view.mode === "code";
-    const gutterOff = codeView && view.wrap;
+    const codeView = windowed || view.mode === "code";
+    const gutterOff = codeView && view.wrap && !windowed;
+    const lockTip = t("reader.textWindowedTip");
     bar.innerHTML = `
       <div class="tool-group">
-        <button class="tool-btn ${view.mode === "plain" ? "is-on" : ""}" data-act="text-plain" title="${t("reader.textPlainTip")}">${t("reader.textPlain")}</button>
+        <button class="tool-btn ${!windowed && view.mode === "plain" ? "is-on" : ""}" data-act="text-plain"
+          ${windowed ? "disabled" : ""} title="${windowed ? lockTip : t("reader.textPlainTip")}">${t("reader.textPlain")}</button>
         <button class="tool-btn ${codeView ? "is-on" : ""}" data-act="text-code" title="${t("reader.textCodeTip")}">${t("reader.textCode")}</button>
         ${tableMode ? `<button class="tool-btn ${view.mode === "table" ? "is-on" : ""}" data-act="text-table" title="${t("reader.textTableTip")}">${t("reader.textTable")}</button>` : ""}
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">
         <button class="tool-btn ${view.gutter && codeView ? "is-on" : ""}" data-act="text-gutter"
-          ${codeView && !gutterOff ? "" : "disabled"}
-          title="${gutterOff ? t("reader.textGutterOffTip") : t("reader.textGutterTip")}">${t("reader.textGutter")}</button>
-        <button class="tool-btn ${view.wrap && codeView ? "is-on" : ""}" data-act="text-wrap"
-          ${codeView ? "" : "disabled"}
-          title="${codeView ? t("reader.textWrapTip") : t("reader.textWrapPlainTip")}">${t("reader.textWrap")}</button>
+          ${codeView && !gutterOff && !windowed ? "" : "disabled"}
+          title="${windowed ? lockTip : gutterOff ? t("reader.textGutterOffTip") : t("reader.textGutterTip")}">${t("reader.textGutter")}</button>
+        <button class="tool-btn ${view.wrap && codeView && !windowed ? "is-on" : ""}" data-act="text-wrap"
+          ${codeView && !windowed ? "" : "disabled"}
+          title="${windowed ? lockTip : codeView ? t("reader.textWrapTip") : t("reader.textWrapPlainTip")}">${t("reader.textWrap")}</button>
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">

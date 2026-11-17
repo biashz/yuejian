@@ -2,6 +2,7 @@
  * 侧栏视图：文档大纲、页面缩略图、文本信息、全文搜索。全部针对「当前活动栏」渲染。
  */
 import { $, $$, escapeHtml } from "../core/dom.js";
+import { invoke } from "../api.js";
 import { t } from "../i18n.js";
 import { state } from "../core/session.js";
 import { kindLabel } from "../core/constants.js";
@@ -87,13 +88,16 @@ function renderInfo() {
     [t("reader.infoKind"), kindLabel("text", pane.book)],
     [t("reader.infoEncoding"), doc.encoding],
     [t("reader.infoLines"), String(doc.lines)],
-    [t("reader.infoChars"), String(doc.chars)],
+  ];
+  // 大文件不整篇解码，字符数根本统计不出来——这一行宁可不显示，也不写 0 骗人
+  if (!doc.windowed) rows.push([t("reader.infoChars"), String(doc.chars)]);
+  rows.push(
     [t("reader.infoEol"), doc.eol],
     [t("reader.infoSize"), formatBytes(pane.book?.size || 0)],
     [t("reader.infoLang"), highlightLabel(doc)],
-  ];
+  );
   // 分隔符只在表格类文档上有意义：它决定了列是怎么拆的，拆错了要能看出来
-  if (doc.mode === "table") {
+  if (doc.mode === "table" && !doc.windowed) {
     const delimiter = pane.table?.delimiter || ",";
     rows.push([t("reader.infoDelimiter"), t(`reader.infoDelimiter.${delimiterLabel(delimiter)}`)]);
   }
@@ -101,6 +105,8 @@ function renderInfo() {
     <dl class="info-list">
       ${rows.map(([key, value]) => `<div class="info-row"><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
     </dl>
+    ${doc.windowed ? `<p class="info-note">${t("reader.infoWindowed")}</p>` : ""}
+    ${doc.clipped ? `<p class="info-note">${t("reader.infoClipped")}</p>` : ""}
     ${doc.truncated ? `<p class="info-note">${t("reader.infoTruncated")}</p>` : ""}
     ${pane.table?.clipped ? `<p class="info-note">${t("reader.infoTableClipped")}</p>` : ""}`;
 }
@@ -267,6 +273,29 @@ async function runFind() {
         <span class="hit-page">${t("reader.pageN", { page: hit.page })}</span>${mark(hit.text)}
       </button>`).join("");
     pane.hits = [];
+    return;
+  }
+
+  // 大文件只在 DOM 里放了一两千行，遍历 DOM 等于只搜了当前屏——搜索必须下沉到
+  // Rust，按行窗口扫全篇，返回行号，点一下跳到那一行
+  if (pane?.doc?.windowed) {
+    let hits = [];
+    try {
+      hits = await invoke("search_text", { path: pane.book?.path || "", query, limit: 60 });
+    } catch (error) {
+      if (token !== findToken || activePane() !== pane) return;
+      summary.textContent = String(error);
+      return;
+    }
+    if (token !== findToken || activePane() !== pane) return;
+    pane.hits = hits;
+    summary.textContent = hits.length
+      ? `${t("reader.findMatches", { count: hits.length })}${hits.length >= 60 ? t("reader.findMatchesTrunc") : ""}`
+      : t("reader.findNone");
+    hitsWrap.innerHTML = hits.map((hit, index) => `
+      <button class="find-hit" data-hit="${index}" data-kind="line">
+        <span class="hit-page">${t("reader.findLine", { line: hit.line })}</span>${mark(hit.text)}
+      </button>`).join("");
     return;
   }
 

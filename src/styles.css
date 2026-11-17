@@ -1093,6 +1093,37 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
    挡住以后误引入官方主题样式表时给正文加的底色。 */
 .tx-lines.hljs { background: none; }
 
+/* 大文件：窗口渲染。画布只负责撑出滚动条，窗口绝对定位在「已加载的那一段」上。
+   行高必须写成像素值，并与 reader-bigtext.js 的 LINE_HEIGHT 一致——画布高度、
+   窗口位置、滚动换算全由它推导，用倍数（比如 1.62）会累积成整行错位。
+   这里也不再走上场动画：几十万像素高的画布做 translateY 既看不出效果，
+   还会让第一次滚动量到偏移。 */
+.md-doc.text-code.is-windowed { padding: 0; animation: none; }
+/* 纵向 clip：窗口（绝对定位）的盒子会比「行数 × 行高」多出几十像素的尾部空白，
+   那点空白会把滚动高度撑大，滚到底时反而差一截看不到最后一行。裁掉纵向溢出，
+   滚动高度就精确等于行数 × 行高；横向必须保持 visible，否则长行的横向滚动会被切断。 */
+.md-doc.text-code.is-windowed .tx-canvas { position: relative; overflow-x: visible; overflow-y: clip; }
+.md-doc.text-code.is-windowed .tx-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-start;
+  width: max-content;
+  min-width: 100%;
+}
+.md-doc.text-code.is-windowed .tx-gutter {
+  padding: 0 10px 0 22px;
+  line-height: 20px;
+}
+.md-doc.text-code.is-windowed .tx-lines {
+  padding: 0 26px 0 14px;
+  line-height: 20px;
+  white-space: pre;
+}
+/* 取窗口失败时把错误写在正文位置，而不是留一片空白 */
+.tx-lines.tx-error { padding: 18px 26px; font-family: var(--font-ui); color: var(--ink-2); }
+
 /* 表格视图（CSV / TSV）：表头与行号列都粘住，横向纵向滚动时都还知道自己在哪 */
 .md-doc.text-table { max-width: none; padding: 0 0 60px; }
 .tx-table-wrap { overflow: visible; }

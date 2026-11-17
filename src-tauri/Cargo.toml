@@ -23,6 +23,9 @@ rfd = "0.17.2"
 # chardetng 负责在没有 BOM 时猜编码，encoding_rs 负责真正解码（GB18030 / Big5 / Shift_JIS 全覆盖）。
 encoding_rs = "0.8"
 chardetng = "0.1"
+# 大文件建行索引要扫一遍全文找换行。std 的逐字节循环只有 ~90MB/s，100MB 要一秒多；
+# memchr 是 SIMD 实现（本来就在依赖树里），同样的活快一个数量级。
+memchr = "2"
 
 [profile.release]
 opt-level = "s"

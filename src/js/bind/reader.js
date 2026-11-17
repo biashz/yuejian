@@ -11,6 +11,7 @@ import { setView, updateStatus } from "../view.js";
 import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, fitPdfPage, fitPdfWidth, renderToolbar } from "../reader/toolbar.js";
 import { setCtxOpen, switchCtxTab } from "../reader/ctx.js";
 import { refreshTextView } from "../reader/open.js";
+import { scrollToLine } from "../reader-bigtext.js";
 import { presenting, presentEntering, enterPresent, exitPresent, presentStep, handlePresentWheel, schedulePresentPaint } from "../reader/present.js";
 import { applySettings, syncSettingsUI, persistSettings, toggleZen } from "../preferences.js";
 import { toggleFavorite } from "../actions.js";
@@ -60,7 +61,12 @@ export function bindReaderEvents() {
     const hit = event.target.closest("[data-hit]");
     if (hit) {
       if (hit.dataset.kind === "pdf") goPage(Number(hit.dataset.page));
-      else {
+      else if (hit.dataset.kind === "line") {
+        // 大文件的命中只有行号，没有 DOM 节点可量，直接按行高算位置
+        const pane = activePane();
+        const item = pane?.hits[Number(hit.dataset.hit)];
+        if (item && pane) scrollToLine(pane, item.line);
+      } else {
         const pane = activePane();
         const node = pane?.hits[Number(hit.dataset.hit)];
         if (node && pane) {

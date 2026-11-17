@@ -6,6 +6,7 @@ import { invoke } from "../api.js";
 import { PdfReader } from "../reader-pdf.js";
 import { renderMarkdown, setupScrollSpy } from "../reader-md.js";
 import { renderText, defaultTextView, applyTextView, scheduleHighlight } from "../reader-text.js";
+import { isWindowed, mountWindowed } from "../reader-bigtext.js";
 import { $, clamp, escapeHtml } from "../core/dom.js";
 import { t } from "../i18n.js";
 import { state } from "../core/session.js";
@@ -103,11 +104,14 @@ function updateDocSub() {
   }
   if (book.kind === "text") {
     const doc = activePane()?.doc;
-    sub.textContent = t("reader.docSubText", {
-      lines: doc?.lines ?? 0,
-      chars: doc?.chars ?? book.words ?? 0,
-      size: formatBytes(book.size),
-    });
+    // 大文件统计不了字符数（要整篇解码），只报行数
+    sub.textContent = doc?.windowed
+      ? t("reader.docSubTextBig", { lines: doc.lines ?? 0, size: formatBytes(book.size) })
+      : t("reader.docSubText", {
+        lines: doc?.lines ?? 0,
+        chars: doc?.chars ?? book.words ?? 0,
+        size: formatBytes(book.size),
+      });
     return;
   }
   sub.textContent = t("reader.docSubMd", { words: book.words || 0, size: formatBytes(book.size) });
@@ -158,10 +162,23 @@ function openText(doc, pane) {
     pane.textView = { ...defaultTextView(doc), bookId: pane.book?.id };
   }
   pane.headingEls = [];
-  // 表格视图的摘要（行列数、分隔符）留给工具栏与信息面板用
-  pane.table = renderText(doc, pane.mdDoc, pane.textView).table;
-  // 高亮异步补上：先把等宽纯文本给出去，别让打开动作等 hljs 算完
-  scheduleHighlight(pane, doc, pane.mdDoc);
+
+  if (isWindowed(doc)) {
+    // 大文件只有等宽一途：窗口渲染靠固定行高换算滚动位置，软换行会改变行高、
+    // 正文视图连行都不存在。行号常显——几十万行里没有行号就没法定位
+    pane.textView.mode = "code";
+    pane.textView.gutter = true;
+    pane.textView.wrap = false;
+    pane.table = null;
+    mountWindowed(pane, doc);
+    if (doc.clipped) toast(t("reader.textClipped"));
+  } else {
+    // 表格视图的摘要（行列数、分隔符）留给工具栏与信息面板用
+    pane.table = renderText(doc, pane.mdDoc, pane.textView).table;
+    // 高亮异步补上：先把等宽纯文本给出去，别让打开动作等 hljs 算完
+    scheduleHighlight(pane, doc, pane.mdDoc);
+  }
+
   if (doc.truncated) toast(t("reader.textTruncated"));
   if (pane.index === activePaneIndex) {
     renderToolbar();
@@ -180,6 +197,9 @@ function openText(doc, pane) {
  */
 function refreshTextView(pane = activePane(), { rerender = true } = {}) {
   if (!pane?.doc || pane.doc.kind !== "text" || !pane.textView) return;
+  // 大文件锁死在等宽：工具栏上的视图开关都已禁用，这里再兜一层，
+  // 免得别的路径（比如恢复进度）误触把窗口渲染换掉
+  if (isWindowed(pane.doc)) return;
   const area = pane.scrollArea;
   const span = area.scrollHeight - area.clientHeight;
   const ratio = span > 0 ? area.scrollTop / span : 0;

@@ -11,6 +11,7 @@ import { openBook, updateDocSub } from "./open.js";
 import { openPalette } from "../palette.js";
 import { flushPaneProgress, scheduleSave } from "./progress.js";
 import { renderToolbar, zoomByStep } from "./toolbar.js";
+import { unmountWindowed } from "../reader-bigtext.js";
 import { renderCtx, setCtxOpen, setCtxTabActive, markTocActive } from "./ctx.js";
 import { updateStatus } from "../view.js";
 import { persistSettings } from "../preferences.js";
@@ -78,6 +79,9 @@ function initPanes() {
       textView: null,
       // 表格视图的摘要（行列数、分隔符、是否截断行），每次渲染时重算
       table: null,
+      // 大文件的窗口渲染状态（已加载到第几行、窗口缓存、在途请求 token）。
+      // 只有 windowed 文档有值，见 reader-bigtext.js
+      win: null,
     };
 
     // 点击或滚轮即激活该栏，避免“看着右栏却在操作左栏”
@@ -208,6 +212,9 @@ function updatePaneHeads() {
 function closePaneDoc(pane) {
   pane.spyCleanup();
   pane.spyCleanup = () => {};
+  // 窗口渲染的滚动监听挂在 scrollArea 上，换文档前必须摘掉，
+  // 否则 Markdown / PDF 也会触发它去取窗口
+  unmountWindowed(pane);
   pane.reader?.destroy();
   pane.doc = null;
   pane.book = null;

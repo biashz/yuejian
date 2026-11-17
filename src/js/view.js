@@ -54,6 +54,10 @@ function statusRightText(book) {
   }
   if (book.kind === "text") {
     const doc = activePane()?.doc;
+    // 大文件统计不了字符数，改报「大文件」，让用户知道为什么没有字数
+    if (doc?.windowed) {
+      return t("status.textBig", { kind: kindLabel("text", book), lines: doc.lines ?? 0 });
+    }
     return t("status.text", {
       kind: kindLabel("text", book),
       lines: doc?.lines ?? 0,

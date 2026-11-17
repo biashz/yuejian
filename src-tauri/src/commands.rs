@@ -2,9 +2,11 @@ use crate::markdown;
 use crate::store::{self, Book, Category, Progress, Settings, StoreState};
 use crate::text;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
@@ -16,6 +18,27 @@ const MAX_PDF_BYTES: u64 = 128 * 1024 * 1024;
 /// 单次 range 读取的安全上限：正常页面对象远小于该值，
 /// 一旦超过说明 PDF 结构异常（例如 pdf.js 退化成整份读取），此时报错而不是让进程崩掉
 const MAX_RANGE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// 大文件的行索引缓存。
+///
+/// 索引只在打开时扫一次，之后每次窗口读取都要用它换算字节偏移，所以必须留在
+/// 进程内。最多留两份——正好对应两个阅读栏；再多说明用户在反复切换文档，
+/// 此时整体清空重扫（几百毫秒）比自己维护一套 LRU 更简单，也更难出错。
+#[derive(Default)]
+pub struct TextIndexCache(pub Mutex<HashMap<String, Arc<text::LineIndex>>>);
+
+fn cached_index(cache: &TextIndexCache, path: &str) -> Option<Arc<text::LineIndex>> {
+    cache.0.lock().ok()?.get(path).cloned()
+}
+
+fn remember_index(cache: &TextIndexCache, path: &str, index: Arc<text::LineIndex>) {
+    if let Ok(mut map) = cache.0.lock() {
+        if map.len() >= 2 && !map.contains_key(path) {
+            map.clear();
+        }
+        map.insert(path.to_string(), index);
+    }
+}
 
 fn lock<'a>(state: &'a State<'_, StoreState>) -> Result<std::sync::MutexGuard<'a, store::AppState>, String> {
     state.data.lock().map_err(|_| "书架状态已损坏".to_string())
@@ -197,7 +220,11 @@ pub enum OpenDoc {
 }
 
 #[tauri::command]
-pub async fn open_book(state: State<'_, StoreState>, id: String) -> Result<OpenDoc, String> {
+pub async fn open_book(
+    state: State<'_, StoreState>,
+    cache: State<'_, TextIndexCache>,
+    id: String,
+) -> Result<OpenDoc, String> {
     // 锁只在快照阶段持有，避免把阻塞 IO 放在同步命令里卡住界面线程
     let book = {
         let mut data = lock(&state)?;
@@ -233,28 +260,17 @@ pub async fn open_book(state: State<'_, StoreState>, id: String) -> Result<OpenD
             .unwrap_or_default();
         let (mode, lang) = text::classify(&ext, &file_name).unwrap_or(("plain", ""));
 
-        // 解码是 CPU 活，几十 MB 的文本足够卡住一次 UI 帧，放到阻塞线程池
-        let doc = tauri::async_runtime::spawn_blocking(move || {
-            let file = fs::File::open(&path).map_err(|err| format!("读取文本失败：{err}"))?;
-            let truncated = meta.len() > text::MAX_VIEW_BYTES;
-            let mut buf = Vec::with_capacity(meta.len().min(text::MAX_VIEW_BYTES) as usize);
-            file.take(text::MAX_VIEW_BYTES)
-                .read_to_end(&mut buf)
-                .map_err(|err| format!("读取文本失败：{err}"))?;
-
-            if text::looks_binary(&buf) {
-                return Err("这看起来不是文本文件（检测到二进制内容）".to_string());
-            }
-
-            // 截断点退到最后一个完整行，否则末尾会多出一个 U+FFFD
-            let bytes = if truncated { text::truncate_at_line(&buf) } else { &buf[..] };
-            let (source, encoding) = text::decode(bytes);
-            Ok::<_, String>(text::build(source, encoding.name(), lang, mode, truncated))
+        // 解码与建索引都是 CPU / IO 活，几十 MB 足够卡住一帧界面，放到阻塞线程池
+        let open = tauri::async_runtime::spawn_blocking(move || {
+            read_text_doc(&path, meta.len(), lang, mode)
         })
         .await
         .map_err(|err| err.to_string())??;
 
-        return Ok(OpenDoc::Text(doc));
+        if let Some(index) = open.index {
+            remember_index(&cache, &book.path, index);
+        }
+        return Ok(OpenDoc::Text(open.doc));
     }
 
     let path = PathBuf::from(&book.path);
@@ -281,6 +297,212 @@ pub async fn open_book(state: State<'_, StoreState>, id: String) -> Result<OpenD
     .map_err(|err| err.to_string())??;
 
     Ok(OpenDoc::Markdown { html, toc, dir, words })
+}
+
+/// `read_text_doc` 的结果：文档本身，外加「大文件才有」的行索引。
+struct TextOpen {
+    doc: text::TextDoc,
+    index: Option<Arc<text::LineIndex>>,
+}
+
+/// 读一份文本：小文件整篇解码，大文件建索引交给窗口模式。
+///
+/// 三条分支的取舍：
+/// 1. ≤ 8MB → 整篇解码。窗口模式的复杂度（行高、滚动换算、窗口缓存）换不来收益，
+///    而且整篇在手时软换行、正文视图、语法高亮都还能用；
+/// 2. 大文件且编码可按字节切行 → 建索引，只回元信息。正文由窗口读取按需取，
+///    内存占用与文件大小脱钩；
+/// 3. 其余（UTF-16、行数太少、行数超索引上限）→ 退回读前 8MB 截断。
+///    截断是**显式**的：`truncated` 会传到界面上弹提示。
+fn read_text_doc(path: &Path, size: u64, lang: &str, mode: &str) -> Result<TextOpen, String> {
+    let small = size <= text::MAX_VIEW_BYTES;
+    // 小文件直接读全文；大文件只读开头 8KB 用来判二进制与编码
+    let sniff = if small { size } else { text::SNIFF_BYTES as u64 };
+
+    let mut file = fs::File::open(path).map_err(|err| format!("读取文本失败：{err}"))?;
+    let mut head = Vec::with_capacity(sniff as usize);
+    file.by_ref()
+        .take(sniff)
+        .read_to_end(&mut head)
+        .map_err(|err| format!("读取文本失败：{err}"))?;
+
+    if text::looks_binary(&head) {
+        return Err("这看起来不是文本文件（检测到二进制内容）".to_string());
+    }
+    let (decoded, encoding) = text::decode(&head);
+    let encoding = encoding.name().to_string();
+
+    if small {
+        return Ok(TextOpen {
+            doc: text::build(decoded, &encoding, lang, mode, false),
+            index: None,
+        });
+    }
+
+    if text::line_safe(&encoding) {
+        // 索引建不出来（行数超限、文件超 4GB）不是错误，只是不能走窗口模式
+        if let Ok(index) = text::build_index(path, &encoding, size) {
+            if index.lines() >= text::MIN_VIRTUAL_LINES {
+                let doc = text::build_virtual(
+                    index.lines(),
+                    &encoding,
+                    &index.eol,
+                    lang,
+                    mode,
+                    index.clipped,
+                );
+                return Ok(TextOpen { doc, index: Some(Arc::new(index)) });
+            }
+        }
+    }
+
+    // 兜底截断：读前 8MB，退到最后一个完整行再解码
+    let mut buf = Vec::with_capacity(text::MAX_VIEW_BYTES as usize);
+    fs::File::open(path)
+        .and_then(|f| f.take(text::MAX_VIEW_BYTES).read_to_end(&mut buf))
+        .map_err(|err| format!("读取文本失败：{err}"))?;
+    let bytes = text::truncate_at_line(&buf);
+    Ok(TextOpen {
+        doc: text::build(text::decode_with(bytes, &encoding), &encoding, lang, mode, true),
+        index: None,
+    })
+}
+
+/// 取（必要时先建）某份文本的行索引。
+async fn ensure_index(
+    cache: &State<'_, TextIndexCache>,
+    path: &str,
+) -> Result<Arc<text::LineIndex>, String> {
+    if let Some(index) = cached_index(cache, path) {
+        return Ok(index);
+    }
+
+    let file_path = PathBuf::from(path);
+    let meta = fs::metadata(&file_path).map_err(|err| format!("读取文本失败：{err}"))?;
+    let size = meta.len();
+    let index = tauri::async_runtime::spawn_blocking(move || -> Result<text::LineIndex, String> {
+        let mut file = fs::File::open(&file_path).map_err(|err| format!("读取文本失败：{err}"))?;
+        let mut head = vec![0u8; text::SNIFF_BYTES];
+        let read = file.read(&mut head).map_err(|err| format!("读取文本失败：{err}"))?;
+        head.truncate(read);
+        let (_, encoding) = text::decode(&head);
+        text::build_index(&file_path, encoding.name(), size)
+            .map_err(|err| format!("读取文本失败：{err}"))
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+
+    let index = Arc::new(index);
+    remember_index(cache, path, index.clone());
+    Ok(index)
+}
+
+/// 读第 `start` 行起的 `count` 行原始字节，供大文件窗口渲染使用。
+///
+/// 返回原始字节而不是 JSON 字符串有两个好处：一是省掉一次 UTF-8 转义
+/// （JSON 里每个引号都要转义，日志正文里引号不少），二是前端能用
+/// `TextDecoder` 按原编码解码，不必让 Rust 决定「这段按什么解」。
+#[tauri::command]
+pub async fn read_text_window(
+    cache: State<'_, TextIndexCache>,
+    path: String,
+    start: u32,
+    count: u32,
+) -> Result<tauri::ipc::Response, String> {
+    let index = ensure_index(&cache, &path).await?;
+    let read_path = PathBuf::from(&path);
+    // 一次要几万行的请求没有意义：窗口是按可视区算出来的，几百到几千行
+    let count = count.clamp(1, 20_000);
+
+    let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let mut file = fs::File::open(&read_path).map_err(|err| format!("读取文本失败：{err}"))?;
+        let (bytes, _) = text::read_window(&mut file, &index, start, count)
+            .map_err(|err| format!("读取文本失败：{err}"))?;
+        Ok(bytes)
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// 全文搜索命中的一行
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextHit {
+    /// 行号，1 基，与界面上的行号一致
+    pub line: u32,
+    /// 该行内容（已截断到 160 个字符，够在侧栏里认出是哪一行）
+    pub text: String,
+}
+
+/// 在大文件里搜索。
+///
+/// 窗口模式下正文只有一两千行在 DOM 里，前端遍历 DOM 等于只搜了当前屏，
+/// 所以搜索必须下沉到这里：按行窗口逐段解码、逐行比对，命中即收集。
+/// 一边扫一边返回不现实（需要流式协议），因此给一个上限，扫够条数就停。
+#[tauri::command]
+pub async fn search_text(
+    cache: State<'_, TextIndexCache>,
+    path: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<TextHit>, String> {
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let index = ensure_index(&cache, &path).await?;
+    let limit = limit.unwrap_or(60).clamp(1, 500);
+    let read_path = PathBuf::from(&path);
+
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<TextHit>, String> {
+        const BATCH: u32 = 4000;
+        let mut file = fs::File::open(&read_path).map_err(|err| format!("读取文本失败：{err}"))?;
+        let needle = query.to_lowercase();
+        let total = index.lines();
+        let mut hits: Vec<TextHit> = Vec::new();
+        let mut line = 0u32;
+
+        while line < total && hits.len() < limit {
+            let (bytes, got) = text::read_window(&mut file, &index, line, BATCH)
+                .map_err(|err| format!("读取文本失败：{err}"))?;
+            if got == 0 {
+                break;
+            }
+            let chunk = text::decode_with(&bytes, &index.encoding);
+            for (offset, content) in chunk.lines().enumerate() {
+                if content.is_empty() {
+                    continue;
+                }
+                if content.to_lowercase().contains(&needle) {
+                    hits.push(TextHit {
+                        line: line + offset as u32 + 1,
+                        text: snippet(content),
+                    });
+                    if hits.len() >= limit {
+                        break;
+                    }
+                }
+            }
+            line += got;
+        }
+        Ok(hits)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// 命中行的摘要：日志的单行可能几千字符，整行塞进侧栏会把列表撑爆
+fn snippet(line: &str) -> String {
+    const MAX: usize = 160;
+    let trimmed = line.trim();
+    if trimmed.chars().count() <= MAX {
+        return trimmed.to_string();
+    }
+    let mut out: String = trimmed.chars().take(MAX).collect();
+    out.push('…');
+    out
 }
 
 #[tauri::command]

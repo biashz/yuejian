@@ -130,6 +130,12 @@ const RUST_CODE = [
 const BIG_CODE = RUST_CODE.repeat(Math.ceil((220 * 1024) / RUST_CODE.length));
 
 /**
+ * 大文件样本的行数：20 万行，按 20px 行高就是 400 万像素的画布。
+ * 正文不预置——由窗口命令按行号现生成，否则冒烟脚本自己就要先造 20MB 字符串。
+ */
+const HUGE_LINES = 200000;
+
+/**
  * CSV 样本：5 列。
  * 第 2 行第 5 列含半角逗号且在引号内——被拆成两列就是解析错了。
  * 最后一行只有 4 列——渲染时要补到 5 列，不能错位。
@@ -159,6 +165,9 @@ function stubSource() {
 
   const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
   const now = Date.now();
+  const HUGE_LINES = ${HUGE_LINES};
+  const hugeLine = (n) =>
+    "2026-11-17 12:00:00.000 INFO worker-3 tick " + n + " lorem ipsum dolor sit amet consectetur adipiscing elit sed do";
   const BOOKS = [
     { id: "b-md", path: "C:/fixtures/demo.md", title: "示例 Markdown", author: "本地", kind: "markdown",
       size: 12800, pages: 0, words: 3200, addedAt: now - 9000, lastOpenedAt: now - 5000, favorite: false,
@@ -180,6 +189,11 @@ function stubSource() {
       categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
     { id: "b-tsv", path: "C:/fixtures/reading-log.tsv", title: "reading-log.tsv", author: "本地", kind: "text",
       size: 90, pages: 0, words: 0, addedAt: now - 3000, lastOpenedAt: now - 800, favorite: false,
+      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+    // 大文件：正文由 read_text_window 按窗口现生成，不预置全文——
+    // 20 万行 × 约 100 字节 ≈ 20MB，正好越过 8MB 的整篇上限
+    { id: "b-huge", path: "C:/fixtures/huge.log", title: "huge.log", author: "本地", kind: "text",
+      size: 20500000, pages: 0, words: 0, addedAt: now - 2500, lastOpenedAt: now - 700, favorite: false,
       categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
   ];
   const SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true,
@@ -221,10 +235,33 @@ function stubSource() {
             lines: ${TSV_SAMPLE.split("\n").length}, chars: ${TSV_SAMPLE.replace(/\s/g, "").length},
             eol: "LF", lang: "", mode: "table", truncated: false,
           }));
+          if (args.id === "b-huge") return Promise.resolve(clone({
+            // 大文件：不带正文，只给元信息，正文由 read_text_window 按窗口取
+            kind: "text", text: "", encoding: "UTF-8", lines: HUGE_LINES, chars: 0,
+            eol: "LF", lang: "", mode: "code", truncated: false, windowed: true, clipped: false,
+          }));
           return Promise.resolve(clone({
             kind: "markdown", html: HTML, dir: "C:/fixtures", words: 3200,
             toc: [{ level: 1, text: "第一章", id: "h1" }, { level: 2, text: "第二节", id: "h2" }],
           }));
+        }
+        if (command === "read_text_window") {
+          // 记录起点而不是只记命令名：断言要能看出「取了几次、从哪取」
+          window.__calls.push("read_text_window:" + args.start);
+          let out = "";
+          const end = Math.min(args.start + args.count, HUGE_LINES);
+          for (let n = args.start; n < end; n += 1) out += hugeLine(n + 1) + "\\n";
+          // Tauri 的 ipc::Response 到前端就是 ArrayBuffer，这里照实返回
+          return Promise.resolve(new TextEncoder().encode(out).buffer);
+        }
+        if (command === "search_text") {
+          window.__calls.push("search_text");
+          if (args.query !== "zebra") return Promise.resolve([]);
+          // 命中行必须真的含关键词，否则侧栏里的 <mark> 标记根本出不来
+          return Promise.resolve(clone([
+            { line: 1201, text: hugeLine(1201).replace("lorem", "zebra") },
+            { line: 190000, text: hugeLine(190000).replace("lorem", "zebra") },
+          ]));
         }
         return Promise.resolve(null);
       },
@@ -716,6 +753,148 @@ async function main() {
     check("非表格类文档不出现表格按钮",
       !logToolbar.hasTableBtn && logToolbar.gutterOn === true,
       `表格按钮=${logToolbar.hasTableBtn} 行号=${logToolbar.gutterOn}`);
+
+    /* --- 大文件（>8MB）：行索引 + 窗口渲染，不能把整篇塞进 DOM --- */
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-huge"]').click()`);
+    await waitFor(ws, `!!document.querySelector('${pane} .tx-canvas')`, "大文件窗口渲染");
+    await waitFor(ws, `(document.querySelector('${pane} .tx-lines')?.textContent.length || 0) > 0`, "首个窗口到位");
+
+    const hugeInit = await evaluate(ws, `(() => {
+      const root = document.querySelector('${pane} .md-doc');
+      const canvas = root.querySelector('.tx-canvas');
+      const win = root.querySelector('.tx-window');
+      const body = root.querySelector('.tx-lines');
+      const gutter = root.querySelector('.tx-gutter');
+      const nums = gutter.textContent.split("\\n");
+      return {
+        cls: root.className,
+        canvasH: Math.round(canvas.getBoundingClientRect().height),
+        winTop: Math.round(win.getBoundingClientRect().top - canvas.getBoundingClientRect().top),
+        bodyLines: body.textContent.split("\\n").length,
+        gutterFirst: nums[0],
+        textChars: body.textContent.length,
+        stat: document.querySelector('.read-toolbar .page-total')?.textContent?.trim() || "",
+        status: document.querySelector('#statusRight')?.textContent?.trim() || "",
+        plainDisabled: document.querySelector('[data-act="text-plain"]')?.disabled,
+        wrapDisabled: document.querySelector('[data-act="text-wrap"]')?.disabled,
+        gutterDisabled: document.querySelector('[data-act="text-gutter"]')?.disabled,
+        hasTableBtn: !!document.querySelector('[data-act="text-table"]'),
+        rows: [...document.querySelectorAll('#ctxBody .info-row')].map((r) => r.textContent.trim()).join(" / "),
+        note: document.querySelector('#ctxBody .info-note')?.textContent?.trim() || "",
+        wmCalls: window.__calls.filter((c) => c.startsWith("read_text_window:")).length,
+      };
+    })()`);
+    errs = await errors();
+    check("大文件画布高度 = 行数 × 行高",
+      hugeInit.canvasH === HUGE_LINES * 20, `${hugeInit.canvasH}px（${HUGE_LINES} 行 × 20px）`);
+    check("首屏只渲染一个窗口，不铺全文",
+      hugeInit.bodyLines > 0 && hugeInit.bodyLines <= 1200 && hugeInit.textChars < 200000
+        && hugeInit.wmCalls === 1,
+      `${hugeInit.bodyLines} 行 / ${hugeInit.textChars} 字符，取窗口 ${hugeInit.wmCalls} 次`);
+    check("窗口贴在第 1 行，行号从 1 开始", hugeInit.winTop === 0 && hugeInit.gutterFirst === "1",
+      `窗口顶 ${hugeInit.winTop}px，首个行号 "${hugeInit.gutterFirst}"`);
+    check("大文件锁死等宽：正文/行号/软换行禁用，无表格按钮",
+      hugeInit.plainDisabled === true && hugeInit.wrapDisabled === true
+        && hugeInit.gutterDisabled === true && hugeInit.hasTableBtn === false,
+      `正文=${hugeInit.plainDisabled} 行号=${hugeInit.gutterDisabled} 软换行=${hugeInit.wrapDisabled}`);
+    check("工具栏报行数、状态栏标明是大文件",
+      hugeInit.stat.includes(String(HUGE_LINES)) && hugeInit.status.includes("大文件"),
+      `工具栏 "${hugeInit.stat}" / 状态栏 "${hugeInit.status}"`);
+    check("信息面板说明按窗口加载，且不谎报字符数",
+      hugeInit.note.includes("窗口") && !hugeInit.rows.includes("字符"), `${hugeInit.rows} | ${hugeInit.note}`);
+    check("大文件阅读无未捕获异常", errs.length === 0, errs.join(" | "));
+    await shot(ws, "text-huge-top");
+
+    /* 拖到底部：末行必须真的出来，窗口下沿贴着画布底 */
+    const hugeEnd = await evaluate(ws, `(async () => {
+      const area = document.querySelector('${pane} .scroll-area');
+      area.style.scrollBehavior = "auto";
+      area.scrollTop = area.scrollHeight;
+      await new Promise((r) => setTimeout(r, 600));
+      const root = document.querySelector('${pane} .md-doc');
+      const canvas = root.querySelector('.tx-canvas').getBoundingClientRect();
+      const win = root.querySelector('.tx-window').getBoundingClientRect();
+      const nums = root.querySelector('.tx-gutter').textContent.split("\\n").map(Number);
+      return {
+        scrollTop: Math.round(area.scrollTop),
+        maxScroll: Math.round(area.scrollHeight - area.clientHeight),
+        first: nums[0],
+        last: nums[nums.length - 1],
+        count: nums.length,
+        gap: Math.round(canvas.bottom - win.bottom),
+        calls: window.__calls.filter((c) => c.startsWith("read_text_window:")),
+      };
+    })()`);
+    check("拖到底部能看到最后一行",
+      hugeEnd.scrollTop === hugeEnd.maxScroll && hugeEnd.last === HUGE_LINES,
+      `滚到 ${hugeEnd.scrollTop}/${hugeEnd.maxScroll}px，行号 ${hugeEnd.first}–${hugeEnd.last}（${hugeEnd.count} 行）`);
+    // 窗口盒子的尾部有几十像素空白，只要它盖到画布底（gap <= 0）就不会露白
+    check("末窗盖到画布底，底部不露白",
+      hugeEnd.gap <= 0 && hugeEnd.gap > -40, `窗口比画布底多出 ${-hugeEnd.gap}px`);
+    check("末窗按行对齐取到文件尾",
+      hugeEnd.count > 0 && hugeEnd.count <= 1200 && hugeEnd.calls.length === 2,
+      `取窗口 ${hugeEnd.calls.join(" → ")}`);
+    await shot(ws, "text-huge-bottom");
+
+    /* 滚回开头：窗口仍在缓存里就不该再发请求 */
+    const hugeBack = await evaluate(ws, `(async () => {
+      const area = document.querySelector('${pane} .scroll-area');
+      area.scrollTop = 0;
+      await new Promise((r) => setTimeout(r, 400));
+      const root = document.querySelector('${pane} .md-doc');
+      const nums = root.querySelector('.tx-gutter').textContent.split("\\n").map(Number);
+      return {
+        first: nums[0],
+        calls: window.__calls.filter((c) => c.startsWith("read_text_window:")).length,
+      };
+    })()`);
+    check("滚回开头命中缓存，不重复取窗口",
+      hugeBack.first === 1 && hugeBack.calls === 2, `首个行号 ${hugeBack.first}，累计取窗口 ${hugeBack.calls} 次`);
+
+    /* 搜索：窗口模式下 DOM 里只有一两千行，必须下沉到后端 */
+    await evaluate(ws, `document.querySelector('.ctx-tab[data-ctx="find"]').click()`);
+    await waitFor(ws, `!!document.querySelector('#findInput')`, "搜索面板打开");
+    await evaluate(ws, `(() => {
+      const input = document.querySelector('#findInput');
+      input.value = "zebra";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    await waitFor(ws, `document.querySelectorAll('#findHits .find-hit').length > 0`, "大文件搜索命中");
+    const hugeFind = await evaluate(ws, `(() => {
+      const hits = [...document.querySelectorAll('#findHits .find-hit')];
+      return {
+        count: hits.length,
+        labels: hits.map((h) => h.querySelector('.hit-page')?.textContent?.trim() || ""),
+        searched: window.__calls.filter((c) => c === "search_text").length,
+        summary: document.querySelector('#findSummary')?.textContent?.trim() || "",
+        marked: document.querySelectorAll('#findHits .find-hit mark').length,
+      };
+    })()`);
+    check("大文件搜索走后端而不是遍历 DOM",
+      hugeFind.searched >= 1 && hugeFind.count === 2, `命中 ${hugeFind.count} 处，search_text ${hugeFind.searched} 次`);
+    check("命中项标出行号并高亮关键词",
+      hugeFind.labels[0] === "第 1201 行" && hugeFind.marked >= 2,
+      `"${hugeFind.labels.join(" / ")}"，<mark> ${hugeFind.marked} 处`);
+
+    await evaluate(ws, `document.querySelectorAll('#findHits .find-hit')[0].click()`);
+    const jumped = await evaluate(ws, `(async () => {
+      await new Promise((r) => setTimeout(r, 600));
+      const area = document.querySelector('${pane} .scroll-area');
+      const nums = document.querySelector('${pane} .tx-gutter').textContent.split("\\n").map(Number);
+      const firstVisible = Math.round(area.scrollTop / 20);
+      return {
+        scrollTop: Math.round(area.scrollTop),
+        windowFirst: nums[0],
+        // 可视区顶部那一行的行号：窗口首行号 + 相对偏移
+        topLine: nums[firstVisible - (nums[0] - 1)],
+      };
+    })()`);
+    check("点击命中跳到对应行",
+      jumped.topLine === 1201 && jumped.scrollTop === (1201 - 1) * 20,
+      `滚到 ${jumped.scrollTop}px，可视区首行 ${jumped.topLine}（窗口从 ${jumped.windowFirst} 行起）`);
+    errs = await errors();
+    check("大文件搜索无未捕获异常", errs.length === 0, errs.join(" | "));
+    await shot(ws, "text-huge-search");
 
     /* --- 更新安装提示：非模态卡片，可稍后，点立即安装才走安装命令 --- */
     await evaluate(ws, `(async () => {

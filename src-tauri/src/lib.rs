@@ -18,6 +18,8 @@ pub fn run() {
                 .unwrap_or_default();
             let title = if language == "en" { "YueJian Reader" } else { "阅笺" };
             app.manage(state);
+            // 大文件的行索引：打开时建一次，窗口读取时按它换算字节偏移
+            app.manage(commands::TextIndexCache::default());
 
             // 窗口的 WebView2 数据目录指向运行时数据目录，
             // 否则 Tauri 会默认在 %LOCALAPPDATA%\<identifier> 下建目录。
@@ -52,6 +54,8 @@ pub fn run() {
             commands::assign_category,
             commands::read_pdf_bytes,
             commands::read_pdf_range,
+            commands::read_text_window,
+            commands::search_text,
             commands::app_version,
             commands::download_update,
             commands::install_update,

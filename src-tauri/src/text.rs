@@ -12,25 +12,36 @@
 //! 编码识别不是 100% 准确的（短文件尤甚），因此 `encoding` 会回传给界面，
 //! 由「信息」面板显示出来——用户遇到乱码时，至少能据此判断是文件本身有问题
 //! 还是判定错了。手动切换编码留到后续阶段，此处不做。
+//!
+//! 大文件（> `MAX_VIEW_BYTES`）不整篇解码，而是先建一份**行索引**（每行的起始
+//! 字节偏移），由前端按可视区窗口取用。索引只存偏移不存内容，100MB 日志约
+//! 100 万行、索引约 4MB，与文件大小基本脱钩。
+
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom};
+use std::path::Path;
 
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8};
 use serde::Serialize;
 
 /// 探测器与二进制检测都只看开头这么多字节：对准确率没有损失的窗口足够小，
 /// 避免打开一个大文件时先把它整个扫一遍。
-const SNIFF_BYTES: usize = 8 * 1024;
+pub const SNIFF_BYTES: usize = 8 * 1024;
 
-/// 文本类文档的元信息 + 正文。正文一次性回传，超过 `MAX_VIEW_BYTES` 时截断。
+/// 文本类文档的元信息 + 正文。
+///
+/// 小文件（≤ `MAX_VIEW_BYTES`）一次性带回正文；大文件只带元信息（`windowed = true`），
+/// 正文由 `read_text_window` 按可视区取，见文件头部的说明。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextDoc {
-    /// 已解码的正文（截断时只含已加载部分）
+    /// 已解码的正文；`windowed` 时为空串
     pub text: String,
     /// 实际使用的编码名，如 `UTF-8` / `GB18030` / `UTF-16LE`
     pub encoding: String,
     /// 行数（按 `\n` 计，末行没有换行符也算一行）
     pub lines: u32,
-    /// 字符数（Unicode 标量值，不是字节数）
+    /// 字符数（Unicode 标量值，不是字节数）；`windowed` 时无从统计，为 0
     pub chars: u32,
     /// `LF` / `CRLF` / `CR`
     pub eol: String,
@@ -40,14 +51,39 @@ pub struct TextDoc {
     pub mode: String,
     /// 是否只加载了文件开头一部分
     pub truncated: bool,
+    /// 是否走窗口模式（大文件）：正文按需取，不随本次响应回传
+    pub windowed: bool,
+    /// 窗口模式下是否还有没索引到的行（超过行数上限）
+    pub clipped: bool,
 }
 
-/// 打开文本时的读取上限。超过它只读前面一段并标记 `truncated`。
+/// 小文件的读取上限。超过它不再整篇解码：要么走行索引 + 窗口（`windowed`），
+/// 要么退回截断（编码或行结构不适合窗口时）。
 ///
-/// 一期的取舍：一次性把正文交给前端最简单也最稳，8MB 的字符串经 IPC 传输大约几十毫秒。
-/// 更大的文件（日志动辄上百 MB）要靠窗口读取 + 虚拟滚动，那是下一期的事——
-/// 但**不能**在这里直接报错，那等于把「常见文本格式」挡在门外一半。
+/// 8MB 这个数的依据：一次性把正文交给前端最简单也最稳，8MB 的字符串经 IPC
+/// 传输约几十毫秒，两棵 `<pre>` 的排版也在毫秒级；再大就该走窗口了。
 pub const MAX_VIEW_BYTES: u64 = 8 * 1024 * 1024;
+
+/// 窗口模式的最小行数。行数太少的超大文件（压缩过的 JSON、超长单行）没有
+/// 「按窗口翻」的意义，退回截断更诚实——否则一次窗口就是几十 MB。
+pub const MIN_VIRTUAL_LINES: u32 = 64;
+
+/// 索引支持的体积上限。行起点用 `u32` 存，超过 4GB 的文本文件不在支持范围内
+/// （这种体量已经不是「随手看一眼」，明确报错好过静默出错）。
+pub const MAX_INDEX_BYTES: u64 = u32::MAX as u64;
+
+/// 窗口模式下可导航的最大行数。
+///
+/// 这个数由浏览器对**元素高度**的上限倒推出来：Tauri 用的 WebView2（Chromium）、
+/// WKWebView 与 WebKitGTK 的布局尺寸上限都在 3355 万像素附近，前端按 20px 行高
+/// 铺画布，30 047 000 像素对应约 150 万行，留了一点余量。
+/// 超过这个行数不报错也不退回截断，而是只暴露前 150 万行并把 `clipped` 标出来——
+/// 150 万行已经是 100MB 量级的日志，剩下的部分明确告知，比停在 8MB 更近人情。
+pub const MAX_WINDOWED_LINES: u32 = 1_500_000;
+
+/// 一次窗口最多取这么多字节。单行特别长的文件靠它兜底：宁可少给几行，
+/// 也不让一次 IPC 传几十 MB。
+pub const MAX_WINDOW_BYTES: u64 = 8 * 1024 * 1024;
 
 /// 前 8KB 里出现 NUL 字节即判定「不是文本」。图片、压缩包被改名成 `.txt` 时，
 /// 与其渲染满屏乱码，不如明确告诉用户这不是文本文件。
@@ -228,7 +264,198 @@ pub fn build(text: String, encoding: &str, lang: &str, mode: &str, truncated: bo
         lang: lang.to_string(),
         mode: mode.to_string(),
         truncated,
+        windowed: false,
+        clipped: false,
     }
+}
+
+/// 组装窗口模式的文档：只有元信息，正文留给 `read_text_window` 按需取。
+///
+/// `chars` 只能是 0——统计字符数要整篇解码，那正是窗口模式要避免的事。
+/// 界面据此隐藏「字数」，改显示行数。
+pub fn build_virtual(
+    lines: u32,
+    encoding: &str,
+    eol: &str,
+    lang: &str,
+    mode: &str,
+    clipped: bool,
+) -> TextDoc {
+    TextDoc {
+        text: String::new(),
+        encoding: encoding.to_string(),
+        lines,
+        chars: 0,
+        eol: eol.to_string(),
+        lang: lang.to_string(),
+        mode: mode.to_string(),
+        truncated: false,
+        windowed: true,
+        clipped,
+    }
+}
+
+/// 按已知编码解码一段字节。
+///
+/// 窗口是切开读的，不能再用探测器重新猜——必须沿用打开时判定的编码，
+/// 否则同一份文件前后两屏可能是两种解码结果。
+pub fn decode_with(bytes: &[u8], label: &str) -> String {
+    let encoding = Encoding::for_label(label.as_bytes()).unwrap_or(UTF_8);
+    let (text, _, _) = encoding.decode(bytes);
+    text.into_owned()
+}
+
+/// 这种编码能否安全地按字节切行。
+///
+/// 单字节与 UTF-8 / GB18030 的续字节都不会是 `0x0A`，按 `\n` 切一定落在
+/// 字符边界上；UTF-16 的换行是两个字节，切在 `0x0A` 上可能劈开一个码元
+/// （UTF-16BE 里 U+0A00 的高字节就是 0x0A），因此大文件不进窗口模式。
+pub fn line_safe(encoding: &str) -> bool {
+    !encoding.to_uppercase().starts_with("UTF-16")
+}
+
+/* ---------------- 行索引与窗口读取 ---------------- */
+
+/// 大文件的行索引：每行的起始字节偏移 + 统计信息。
+pub struct LineIndex {
+    starts: Vec<u32>,
+    size: u64,
+    pub encoding: String,
+    pub eol: String,
+    /// 行数超过 `MAX_WINDOWED_LINES`，后面还有没索引到的行
+    pub clipped: bool,
+}
+
+impl LineIndex {
+    pub fn lines(&self) -> u32 {
+        self.starts.len() as u32
+    }
+
+    /// 第 `line` 行起始处的字节偏移。末行之后返回文件长度——所以它同时
+    /// 也是「前 `line` 行的总字节数」，窗口截断就靠这一点。
+    fn offset_of(&self, line: u32) -> u64 {
+        self.starts.get(line as usize).copied().map(u64::from).unwrap_or(self.size)
+    }
+}
+
+/// 扫出每行的起始字节偏移。返回索引与「是否因为行数上限提前停止」。
+///
+/// 规则与 `str::lines()` 一致：末尾的换行不额外算一行，「a\nb\n」是 2 行、
+/// 「\n」是 1 行、空文件是 0 行。所以判断「换行后还有没有内容」必须看下一块，
+/// 这也是这里要留 `pending` 的原因。
+pub fn scan_line_starts<R: Read>(mut reader: R, max_lines: usize) -> io::Result<(Vec<u32>, bool)> {
+    const CHUNK: usize = 1 << 20;
+
+    let mut buffer = vec![0u8; CHUNK];
+    let mut starts: Vec<u32> = vec![0];
+    let mut base: u64 = 0;
+    // 上一块以换行结尾：那一行是否存在，要看这一块还有没有字节
+    let mut pending: Option<u32> = None;
+    let mut seen = false;
+
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        if let Some(start) = pending.take() {
+            // 走到这里说明这一行后面确实还有内容，是真实的一行
+            if starts.len() >= max_lines {
+                return Ok((starts, true));
+            }
+            starts.push(start);
+        }
+        seen = true;
+
+        // memchr 是 SIMD 的字节搜索：26MB 的日志建索引从 264ms 降到二十几毫秒，
+        // 换行查找占了建索引的全部时间，值得用
+        for index in memchr::memchr_iter(b'\n', &buffer[..read]) {
+            let next = base + index as u64 + 1;
+            if next > u64::from(u32::MAX) {
+                return Err(too_big());
+            }
+            let next = next as u32;
+            // 块内还有字节，说明换行后面确实还有一行；否则留给下一块判断
+            if index + 1 < read {
+                if starts.len() >= max_lines {
+                    return Ok((starts, true));
+                }
+                starts.push(next);
+            } else {
+                pending = Some(next);
+            }
+        }
+        base += read as u64;
+    }
+
+    if !seen {
+        return Ok((Vec::new(), false));
+    }
+    Ok((starts, false))
+}
+
+fn too_big() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "文件超过 4GB，不支持窗口模式")
+}
+
+/// 为一个大文件建立行索引。
+///
+/// 只做两件 IO：读前 64KB 判换行符、按 1MB 分块扫一遍字节。100MB 的日志
+/// 大约几百毫秒，放在 `spawn_blocking` 里对界面无感。
+pub fn build_index(path: &Path, encoding: &str, size: u64) -> io::Result<LineIndex> {
+    if size > MAX_INDEX_BYTES {
+        return Err(too_big());
+    }
+
+    let mut head = vec![0u8; 64 * 1024];
+    let head_len = {
+        let mut file = File::open(path)?;
+        let read = file.read(&mut head)?;
+        head.truncate(read);
+        read
+    };
+    let eol = if head_len == 0 {
+        "LF".to_string()
+    } else {
+        eol_of(&decode_with(&head, encoding)).to_string()
+    };
+
+    let file = File::open(path)?;
+    let (starts, clipped) =
+        scan_line_starts(io::BufReader::with_capacity(1 << 20, file), MAX_WINDOWED_LINES as usize)?;
+    Ok(LineIndex {
+        starts,
+        size,
+        encoding: encoding.to_string(),
+        eol,
+        clipped,
+    })
+}
+
+/// 读第 `start` 行起的若干行，返回原始字节与**实际行数**。
+///
+/// 字节数超过 `MAX_WINDOW_BYTES` 时会在行边界上少给几行——首尾都是完整行，
+/// 前端按收到的 `\n` 数就能知道拿到几行，不需要额外的元信息。
+pub fn read_window(
+    file: &mut File,
+    index: &LineIndex,
+    start: u32,
+    count: u32,
+) -> io::Result<(Vec<u8>, u32)> {
+    let total = index.lines();
+    let start = start.min(total);
+    let begin = index.offset_of(start);
+    let mut end = start.saturating_add(count).min(total);
+    // 单行特别长的文件：宁可少给几行，也不让一次 IPC 传几十 MB
+    while end > start + 1 && index.offset_of(end) - begin > MAX_WINDOW_BYTES {
+        end -= 1;
+    }
+
+    let size = (index.offset_of(end) - begin) as usize;
+    let mut buffer = vec![0u8; size];
+    file.seek(SeekFrom::Start(begin))?;
+    file.read_exact(&mut buffer)?;
+    Ok((buffer, end - start))
 }
 
 #[cfg(test)]
@@ -286,5 +513,95 @@ mod tests {
         assert_eq!(classify("", "Makefile").unwrap().0, "code");
         assert!(classify("exe", "a.exe").is_none());
         assert!(classify("", "a").is_none());
+    }
+
+    /// 行数口径必须与 `str::lines()` 一致，否则界面上「第几行」永远差一行
+    #[test]
+    fn line_starts_match_str_lines() {
+        for sample in ["", "a", "a\n", "a\nb", "a\nb\n", "\n", "a\n\nb\n", "a\r\nb\r\n", "\n\n"] {
+            let (starts, clipped) = scan_line_starts(sample.as_bytes(), MAX_WINDOWED_LINES as usize).unwrap();
+            assert_eq!(starts.len(), sample.lines().count(), "样本 {sample:?}");
+            assert!(!clipped);
+            // 每个起点都要落在真实的行首上
+            for (i, start) in starts.iter().enumerate() {
+                let rest = &sample[*start as usize..];
+                if i > 0 {
+                    assert!(sample.as_bytes()[*start as usize - 1] == b'\n', "样本 {sample:?} 第 {i} 行不在行首");
+                }
+                assert!(rest.len() + *start as usize <= sample.len());
+            }
+        }
+    }
+
+    /// 跨 1MB 块边界时不能丢行：块尾的换行要等下一块有内容才补
+    #[test]
+    fn line_starts_across_chunk_boundary() {
+        let line = "0123456789abcdef\n"; // 17 字节
+        let count = 200_000;
+        let text = line.repeat(count);
+        let (starts, clipped) = scan_line_starts(text.as_bytes(), MAX_WINDOWED_LINES as usize).unwrap();
+        assert_eq!(starts.len(), count);
+        assert_eq!(starts[1], 17);
+        assert!(!clipped);
+
+        // 恰好让某一块以换行结尾、下一块还有内容
+        let mut cut = 1 << 20;
+        while cut % 17 != 0 {
+            cut += 1;
+        }
+        let text = line.repeat(count);
+        let (starts, _) = scan_line_starts(&text.as_bytes()[..cut + 20], MAX_WINDOWED_LINES as usize).unwrap();
+        assert_eq!(starts.len(), (cut + 20) / 17 + 1);
+    }
+
+    /// 行数上限是「够用就停」，不是报错：超出部分交给 clipped 说明
+    #[test]
+    fn scan_stops_at_line_limit() {
+        let text = "x\n".repeat(100);
+        let (starts, clipped) = scan_line_starts(text.as_bytes(), 10).unwrap();
+        assert_eq!(starts.len(), 10);
+        assert!(clipped);
+
+        // 恰好等于上限、后面没有更多行时不该谎报 clipped
+        let text = "x\n".repeat(9) + "x";
+        let (starts, clipped) = scan_line_starts(text.as_bytes(), 10).unwrap();
+        assert_eq!(starts.len(), 10);
+        assert!(!clipped);
+    }
+
+    #[test]
+    fn window_read_keeps_whole_lines() {
+        let path = std::env::temp_dir().join(format!("yuejian-window-{}.txt", std::process::id()));
+        let text = (1..=500).map(|i| format!("第 {i} 行 line-{i}\n")).collect::<String>();
+        std::fs::write(&path, &text).unwrap();
+
+        let size = text.len() as u64;
+        let index = build_index(&path, "UTF-8", size).unwrap();
+        assert_eq!(index.lines(), 500);
+        assert_eq!(index.eol, "LF");
+
+        let mut file = File::open(&path).unwrap();
+        let (bytes, got) = read_window(&mut file, &index, 99, 3).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert_eq!(got, 3);
+        assert_eq!(text, "第 100 行 line-100\n第 101 行 line-101\n第 102 行 line-102\n");
+
+        // 末窗不足一整屏：少给几行而不是报错
+        let (_, got) = read_window(&mut file, &index, 498, 10).unwrap();
+        assert_eq!(got, 2);
+        // 越界起点直接给空
+        let (bytes, got) = read_window(&mut file, &index, 900, 10).unwrap();
+        assert!(bytes.is_empty() && got == 0);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// UTF-16 的换行是两个字节，按 0x0A 切会劈开码元——这类文件不进窗口模式
+    #[test]
+    fn utf16_is_not_line_safe() {
+        assert!(line_safe("UTF-8"));
+        assert!(line_safe("GB18030"));
+        assert!(!line_safe("UTF-16LE"));
+        assert!(!line_safe("utf-16be"));
     }
 }
