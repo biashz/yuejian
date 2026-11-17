@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8" />
+<title>阅笺 · 文本阅读原型</title>
+<style>
+/* ============ 1. Tokens（与 src/styles.css 完全一致） ============ */
+:root{
+  --paper:#f3ede1; --surface:#fbf7ee; --surface-2:#ede4d3;
+  --ink:#241f1a; --ink-2:#5e5548; --ink-3:#8c8272;
+  --line:#dfd4c0; --line-strong:#c9bba2;
+  --accent:#b23a2b; --accent-ink:#8e2c20; --accent-weak:#ebd9d3; --ok:#4f7355; --warn:#a8792c;
+  --cat-clay:#b23a2b; --cat-indigo:#4a5c7a; --cat-olive:#5f7350;
+  --cat-amber:#a8792c; --cat-plum:#7a4a63; --cat-slate:#55606b;
+  --font-display:"KaiTi","STKaiti","Kaiti SC","Songti SC",serif;
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  --font-read:"Songti SC","Source Han Serif SC","Noto Serif CJK SC","SimSun",Georgia,serif;
+  --font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  --r-sm:4px; --r-md:8px; --r-lg:14px; --r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(40,32,20,.06);
+  --shadow-md:0 8px 24px -12px rgba(40,32,20,.24);
+  --shadow-lg:0 24px 60px -20px rgba(40,32,20,.38);
+  --ease:cubic-bezier(.22,.8,.24,1);
+  --rail-w:56px; --lib-w:304px; --ctx-w:268px; --measure:720px;
+  --read-size:17px; --read-lh:1.9;
+}
+html[data-theme="night"]{
+  --paper:#12100e; --surface:#1a1715; --surface-2:#221e1a;
+  --ink:#ede5d8; --ink-2:#b7ab98; --ink-3:#7e7466;
+  --line:#2e2924; --line-strong:#3d362f;
+  --accent:#e0705c; --accent-ink:#c95c49; --accent-weak:#3a2620; --ok:#7fa585; --warn:#d6aa5a;
+  --cat-clay:#e0705c; --cat-indigo:#8fa3c4; --cat-olive:#96ac84;
+  --cat-amber:#d6aa5a; --cat-plum:#c087a6; --cat-slate:#9aa6b2;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:0 10px 28px -14px rgba(0,0,0,.7);
+  --shadow-lg:0 28px 64px -24px rgba(0,0,0,.8);
+}
+html[data-theme="sepia"]{
+  --paper:#e9e1ce; --surface:#f2ead8; --surface-2:#e0d5be;
+  --ink:#2a2419; --ink-2:#5c5342; --ink-3:#8a7f69;
+  --line:#d3c6ac; --line-strong:#bfb094;
+  --accent:#a0622d; --accent-ink:#85501f; --accent-weak:#e4d3bb;
+  --cat-clay:#9c4a33; --cat-indigo:#4c5a72; --cat-olive:#5c6b46;
+  --cat-amber:#8f6524; --cat-plum:#6f4459; --cat-slate:#515a62;
+}
+
+/* ============ 2. Reset ============ */
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; font-family:var(--font-ui); font-size:13px; color:var(--ink);
+  background:var(--paper); overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input{font:inherit;color:inherit}
+h1,h2,h3,p{margin:0}
+.ic{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+/* ============ 3. 原型控制条（不属于产品界面） ============ */
+body{display:flex;flex-direction:column}
+.proto{
+  flex:none; display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  padding:8px 16px; border-bottom:1px solid var(--line-strong);
+  background:var(--surface-2);
+}
+.proto-group{display:flex; align-items:center; gap:7px}
+.proto-label{font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3)}
+.proto-row{display:flex; gap:4px}
+.proto-row button{
+  height:24px; padding:0 9px; font-size:11.5px; border-radius:var(--r-sm);
+  border:1px solid var(--line); color:var(--ink-2); background:var(--surface);
+  transition:background 160ms var(--ease),color 160ms var(--ease),border-color 160ms var(--ease);
+}
+.proto-row button:hover{border-color:var(--line-strong); color:var(--ink)}
+.proto-row button[aria-pressed="true"]{
+  background:var(--accent); border-color:var(--accent); color:var(--surface);
+}
+.proto-hint{flex:1; min-width:220px; font-size:11px; line-height:1.5; color:var(--ink-2); margin:0; text-align:right}
+.proto-hint b{color:var(--ink); font-weight:600}
+
+/* ============ 4. 应用外壳 ============ */
+.app{flex:1; min-height:0; display:grid; grid-template-columns:var(--rail-w) var(--lib-w) minmax(0,1fr) var(--ctx-w)}
+
+/* ---- rail ---- */
+.rail{
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:14px 0; border-right:1px solid var(--line); background:var(--paper);
+}
+.rail-btn{
+  width:34px; height:34px; display:grid; place-items:center; border-radius:var(--r-md);
+  color:var(--ink-3); transition:background 160ms var(--ease),color 160ms var(--ease);
+}
+.rail-btn:hover{background:var(--surface-2); color:var(--ink-2)}
+.rail-btn.is-active{background:var(--surface); color:var(--accent); box-shadow:var(--shadow-sm)}
+.rail-spacer{flex:1}
+
+/* ---- 文档库 ---- */
+.lib{
+  display:flex; flex-direction:column; min-height:0;
+  border-right:1px solid var(--line); background:var(--surface);
+}
+.lib-head{padding:16px 16px 10px; border-bottom:1px solid var(--line)}
+.lib-title{display:flex; align-items:baseline; gap:8px; font-family:var(--font-display); font-size:16px; letter-spacing:.02em}
+.lib-count{font-family:var(--font-ui); font-size:11px; color:var(--ink-3)}
+.chips{display:flex; flex-wrap:wrap; gap:5px; margin-top:12px}
+.chip{
+  height:23px; padding:0 9px; border:1px solid var(--line); border-radius:var(--r-pill);
+  font-size:11px; color:var(--ink-2); background:var(--surface);
+}
+.chip:hover{border-color:var(--line-strong); color:var(--ink)}
+.chip.is-on{background:var(--accent-weak); border-color:color-mix(in srgb,var(--accent) 34%,var(--line)); color:var(--accent-ink)}
+.lib-list{flex:1; overflow:auto; padding:8px}
+.book{
+  display:flex; gap:10px; align-items:center; width:100%; text-align:left;
+  padding:9px 10px; border-radius:var(--r-md); border:1px solid transparent;
+  transition:background 160ms var(--ease),border-color 160ms var(--ease);
+}
+.book:hover{background:var(--surface-2)}
+.book.is-on{background:var(--paper); border-color:var(--line-strong); box-shadow:var(--shadow-sm)}
+.book-spine{width:3px; height:26px; border-radius:2px; background:var(--cat-clay); flex:none}
+.book-spine.mono{background:var(--cat-indigo)}
+.book-spine.table{background:var(--cat-olive)}
+.book-body{min-width:0; flex:1}
+.book-name{font-size:12.5px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.book-sub{margin-top:3px; font-size:10.5px; color:var(--ink-3); display:flex; align-items:center; gap:5px}
+.type-dot{width:4px; height:4px; border-radius:50%; background:var(--ink-3)}
+.type-dot.txt{background:var(--cat-clay)} .type-dot.code{background:var(--cat-indigo)} .type-dot.csv{background:var(--cat-olive)}
+
+/* ---- 阅读区 ---- */
+.reader{display:flex; flex-direction:column; min-width:0; background:var(--paper)}
+.doc-head{
+  display:flex; align-items:flex-end; justify-content:space-between; gap:16px;
+  padding:15px 26px 12px;
+}
+.doc-name{font-family:var(--font-display); font-size:19px; letter-spacing:.01em; color:var(--ink)}
+.doc-sub{margin-top:5px; font-size:11px; color:var(--ink-3); display:flex; align-items:center; gap:7px}
+.doc-actions{display:flex; gap:4px}
+.ghost-btn{
+  height:28px; padding:0 11px; border:1px solid var(--line); border-radius:var(--r-md);
+  font-size:11.5px; color:var(--ink-2); background:var(--surface);
+  transition:background 160ms var(--ease),border-color 160ms var(--ease),color 160ms var(--ease);
+}
+.ghost-btn:hover{border-color:var(--line-strong); color:var(--ink)}
+.ghost-btn.is-on{background:var(--accent-weak); border-color:color-mix(in srgb,var(--accent) 34%,var(--line)); color:var(--accent-ink)}
+
+/* ---- 工具栏 ---- */
+.toolbar{
+  display:flex; align-items:center; gap:10px;
+  padding:0 26px 11px;
+}
+.seg{
+  display:flex; align-items:center; gap:2px; padding:2px;
+  border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface);
+}
+.seg button{
+  height:24px; padding:0 11px; border-radius:var(--r-sm); font-size:11.5px; color:var(--ink-2);
+  transition:background 160ms var(--ease),color 160ms var(--ease);
+}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-pressed="true"]{background:var(--paper); color:var(--ink); box-shadow:var(--shadow-sm)}
+.seg button:disabled{opacity:.42; cursor:not-allowed}
+.tool-sep{width:1px; height:16px; background:var(--line)}
+.tool-note{font-size:11px; color:var(--ink-3); font-variant-numeric:tabular-nums}
+.tool-spacer{flex:1}
+.switch{display:flex; align-items:center; gap:5px; font-size:11.5px; color:var(--ink-2); cursor:pointer}
+.switch input{appearance:none; width:26px; height:15px; border-radius:var(--r-pill); background:var(--line-strong); position:relative; transition:background 160ms var(--ease); cursor:pointer}
+.switch input::after{content:""; position:absolute; top:2px; left:2px; width:11px; height:11px; border-radius:50%; background:var(--surface); transition:transform 160ms var(--ease)}
+.switch input:checked{background:var(--accent)}
+.switch input:checked::after{transform:translateX(11px)}
+
+/* ---- 大文件提示条 ---- */
+.notice{
+  display:flex; align-items:center; gap:8px;
+  margin:0 26px 10px; padding:7px 11px;
+  border:1px solid color-mix(in srgb,var(--warn) 30%,var(--line));
+  border-radius:var(--r-md);
+  background:color-mix(in srgb,var(--warn) 8%,var(--surface));
+  font-size:11.5px; color:var(--ink-2);
+}
+
+/* ---- 阅读画布 ---- */
+.surface{flex:1; overflow:auto; padding:4px 0 80px}
+.surface::-webkit-scrollbar{width:10px;height:10px}
+.surface::-webkit-scrollbar-thumb{background:var(--line-strong); border-radius:var(--r-pill); border:3px solid var(--paper)}
+
+/* 正文模式 */
+.plain{padding:6px 0 0}
+.plain .para{
+  max-width:var(--measure); margin:0 auto 1.1em; padding:0 26px;
+  font-family:var(--font-read); font-size:var(--read-size); line-height:var(--read-lh);
+  color:var(--ink); text-align:justify;
+}
+.plain .para:first-child{color:var(--ink)}
+.plain.with-gutter .para{display:grid; grid-template-columns:52px minmax(0,1fr); gap:14px; max-width:calc(var(--measure) + 52px)}
+.plain .gutter{
+  font-family:var(--font-mono); font-size:11px; line-height:2.9; color:var(--ink-3);
+  text-align:right; user-select:none; padding-top:2px;
+}
+
+/* 等宽模式 */
+.code{display:flex; align-items:flex-start; min-width:max-content}
+.code .gutter{
+  position:sticky; left:0; z-index:2; flex:none;
+  padding:6px 10px 40px 26px;
+  font-family:var(--font-mono); font-size:12.5px; line-height:1.6;
+  color:var(--ink-3); text-align:right; user-select:none;
+  background:var(--paper); border-right:1px solid var(--line);
+}
+.code .lines{
+  flex:1; padding:6px 26px 40px 14px;
+  font-family:var(--font-mono); font-size:12.5px; line-height:1.6;
+  color:var(--ink); tab-size:4;
+}
+.code .ln{white-space:pre; min-height:1.6em}
+.code.wrap .ln{white-space:pre-wrap; word-break:break-word}
+.code .ln:hover{background:color-mix(in srgb,var(--surface-2) 60%,transparent)}
+.lv-error{color:var(--accent); font-weight:600}
+.lv-warn{color:var(--warn); font-weight:600}
+.lv-info{color:var(--ink-2)}
+.lv-debug{color:var(--ink-3)}
+.ts{color:var(--ink-3)}
+.t-key{color:var(--accent)}
+.t-str{color:var(--cat-olive)}
+.t-cmt{color:var(--ink-3); font-style:italic}
+.t-num{color:var(--cat-amber)}
+.t-fn{color:var(--cat-indigo)}
+.t-ty{color:var(--cat-plum)}
+
+/* 表格模式 */
+.table-wrap{padding:6px 26px 40px}
+table{border-collapse:collapse; width:100%; font-size:12.5px}
+thead th{
+  position:sticky; top:0; z-index:1;
+  text-align:left; padding:8px 12px; white-space:nowrap;
+  font-weight:600; color:var(--ink-2); font-size:11.5px; letter-spacing:.02em;
+  background:var(--surface-2); border-bottom:1px solid var(--line-strong);
+}
+tbody td{padding:7px 12px; border-bottom:1px solid var(--line); color:var(--ink); vertical-align:top}
+tbody tr:hover td{background:color-mix(in srgb,var(--surface) 70%,transparent)}
+td.num{font-family:var(--font-mono); font-variant-numeric:tabular-nums; color:var(--ink-2); text-align:right}
+td.q{color:var(--ink-2)}
+
+/* 空状态 */
+.empty{
+  display:grid; place-items:center; gap:8px; height:100%; min-height:280px;
+  color:var(--ink-3); font-size:12.5px; text-align:center; line-height:1.8;
+}
+
+/* ---- 上下文面板 ---- */
+.ctx{display:flex; flex-direction:column; min-height:0; border-left:1px solid var(--line); background:var(--surface)}
+.ctx-tabs{display:flex; gap:2px; padding:10px 10px 0; border-bottom:1px solid var(--line)}
+.ctx-tabs button{
+  height:28px; padding:0 11px; font-size:11.5px; color:var(--ink-3);
+  border-bottom:2px solid transparent; border-radius:var(--r-sm) var(--r-sm) 0 0;
+}
+.ctx-tabs button:hover{color:var(--ink-2); background:var(--surface-2)}
+.ctx-tabs button[aria-selected="true"]{color:var(--accent-ink); border-bottom-color:var(--accent)}
+.ctx-body{flex:1; overflow:auto; padding:14px}
+.info-row{display:flex; justify-content:space-between; gap:10px; padding:7px 0; border-bottom:1px dashed var(--line)}
+.info-row:last-child{border-bottom:0}
+.info-key{font-size:11.5px; color:var(--ink-3)}
+.info-val{font-size:11.5px; color:var(--ink); text-align:right; word-break:break-all}
+.info-val.mono{font-family:var(--font-mono)}
+.link-btn{color:var(--accent-ink); text-decoration:underline; text-underline-offset:2px; font-size:11px}
+.search-box{
+  display:flex; align-items:center; gap:7px; height:30px; padding:0 9px;
+  border:1px solid var(--line); border-radius:var(--r-md); background:var(--paper);
+  color:var(--ink-3); font-size:12px;
+}
+.hits{margin-top:12px; display:flex; flex-direction:column; gap:4px}
+.hit{
+  display:block; width:100%; text-align:left; padding:7px 9px; border-radius:var(--r-sm);
+  font-size:11.5px; color:var(--ink-2); line-height:1.55;
+  border:1px solid transparent;
+}
+.hit:hover{background:var(--surface-2); border-color:var(--line)}
+.hit b{color:var(--ink-3); font-weight:400; margin-right:6px; font-family:var(--font-mono); font-size:10.5px}
+.hit mark{background:var(--accent-weak); color:var(--accent-ink); border-radius:2px; padding:0 1px}
+</style>
+</head>
+<body>
+
+<!-- 原型控制条 -->
+<div class="proto" role="group" aria-label="原型控制">
+  <div class="proto-group">
+    <span class="proto-label">方案</span>
+    <div class="proto-row" id="variantRow">
+      <button data-variant="A" aria-pressed="true">A 阅读优先</button>
+      <button data-variant="B" aria-pressed="false">B 统一源码</button>
+      <button data-variant="C" aria-pressed="false">C 双面切换</button>
+    </div>
+  </div>
+  <div class="proto-group">
+    <span class="proto-label">文档</span>
+    <div class="proto-row" id="docRow">
+      <button data-doc="txt" aria-pressed="true">.txt</button>
+      <button data-doc="log" aria-pressed="false">.log</button>
+      <button data-doc="csv" aria-pressed="false">.csv</button>
+      <button data-doc="rs" aria-pressed="false">.rs</button>
+    </div>
+  </div>
+  <div class="proto-group">
+    <span class="proto-label">主题</span>
+    <div class="proto-row" id="themeRow">
+      <button data-theme="paper" aria-pressed="true">纸白</button>
+      <button data-theme="night" aria-pressed="false">夜读</button>
+      <button data-theme="sepia" aria-pressed="false">护眼</button>
+    </div>
+  </div>
+  <p class="proto-hint" id="protoHint"></p>
+</div>
+
+<div class="app">
+  <!-- 导航条 -->
+  <nav class="rail" aria-label="主导航">
+    <button class="rail-btn is-active" title="书架">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M4 5h6v14H4zM14 5h6v14h-6z"/></svg>
+    </button>
+    <button class="rail-btn" title="阅读">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7h8M8 11h6"/></svg>
+    </button>
+    <button class="rail-btn" title="搜索">
+      <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" title="设置">
+      <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg>
+    </button>
+  </nav>
+
+  <!-- 文档库 -->
+  <aside class="lib">
+    <div class="lib-head">
+      <div class="lib-title">文档库 <span class="lib-count">126</span></div>
+      <div class="chips">
+        <button class="chip is-on">全部</button>
+        <button class="chip">PDF</button>
+        <button class="chip">MARKDOWN</button>
+        <button class="chip">文本</button>
+        <button class="chip">收藏</button>
+      </div>
+    </div>
+    <div class="lib-list" id="libList"></div>
+  </aside>
+
+  <!-- 阅读区 -->
+  <main class="reader">
+    <div class="doc-head">
+      <div>
+        <h1 class="doc-name" id="docName">项脊轩志.txt</h1>
+        <div class="doc-sub" id="docSub">TXT · 4 段 · 3.2 KB</div>
+      </div>
+      <div class="doc-actions">
+        <button class="ghost-btn">在系统中打开</button>
+        <button class="ghost-btn">导出</button>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar"></div>
+    <div id="noticeSlot"></div>
+    <div class="surface" id="surface"></div>
+  </main>
+
+  <!-- 上下文面板 -->
+  <aside class="ctx">
+    <div class="ctx-tabs">
+      <button aria-selected="true" data-tab="info">信息</button>
+      <button aria-selected="false" data-tab="find">搜索</button>
+    </div>
+    <div class="ctx-body" id="ctxBody"></div>
+  </aside>
+</div>
+
+<script>
+/* ============ 文档样本 ============ */
+const DOCS = {
+  txt: {
+    id: "txt", file: "项脊轩志.txt", kind: "TXT", spine: "",
+    size: "3.2 KB", lines: 24, chars: 1198, encoding: "UTF-8", eol: "LF",
+    hint: "正文模式：宋体、限宽 720、软换行。首段首字用楷体点题。",
+    info: [["类型","TXT 纯文本"],["编码","UTF-8"],["行数","24"],["字符","1 198"],["体积","3.2 KB"],["换行","LF"],["修改","11-16 23:41"]],
+    query: "明月",
+    body: [
+      "项脊轩，旧南阁子也。室仅方丈，可容一人居。百年老屋，尘泥渗漉，雨泽下注；每移案，顾视无可置者。又北向，不能得日，日过午已昏。余稍为修葺，使不上漏。前辟四窗，垣墙周庭，以当南日，日影反照，室始洞然。又杂植兰桂竹木于庭，旧时栏楯，亦遂增胜。借书满架，偃仰啸歌，冥然兀坐，万籁有声；而庭阶寂寂，小鸟时来啄食，人至不去。三五之夜，明月半墙，桂影斑驳，风移影动，珊珊可爱。",
+      "然余居于此，多可喜，亦多可悲。先是庭中通南北为一。迨诸父异爨，内外多置小门墙，往往而是。东犬西吠，客逾庖而宴，鸡栖于厅。庭中始为篱，已为墙，凡再变矣。",
+      "家有老妪，尝居于此。妪，先大母婢也，乳二世，先妣抚之甚厚。室西连于中闺，先妣尝一至。妪每谓余曰：“某所，而母立于兹。”妪又曰：“汝姊在吾怀，呱呱而泣；娘以指叩门扉曰：‘儿寒乎？欲食乎？’吾从板外相为应答。”语未毕，余泣，妪亦泣。",
+      "余自束发读书轩中，一日，大母过余曰：“吾儿，久不见若影，何竟日默默在此，大类女郎也？”比去，以手阖门，自语曰：“吾家读书久不效，儿之成，则可待乎！”顷之，持一象笏至，曰：“此吾祖太常公宣德间执此以朝，他日汝当用之！”瞻顾遗迹，如在昨日，令人长号不自禁。"
+    ]
+  },
+  log: {
+    id: "log", file: "yuejian-2026-11-17.log", kind: "LOG", spine: "mono",
+    size: "48.6 MB", lines: "124 800", chars: "9 926 414", encoding: "UTF-8", eol: "LF",
+    hint: "大文件：等宽 + 行号，语法高亮与软换行已自动关闭，按行窗口渲染。",
+    info: [["类型","LOG 日志"],["编码","UTF-8"],["行数","124 800"],["体积","48.6 MB"],["换行","LF"],["模式","大文件窗口"],["渲染","1–200 行 / 虚拟滚动"]],
+    query: "cache miss",
+    entries: [
+      ['info','2026-11-17 09:41:02.318 INFO  [shelf] store loaded books=126 categories=6 elapsed=12ms'],
+      ['info','2026-11-17 09:41:02.402 INFO  [store] state.json 校验通过，未发现损坏字段'],
+      ['info','2026-11-17 09:41:02.551 INFO  [win] window restored size=1440x900 scale=1.25 theme=paper'],
+      ['debug','2026-11-17 09:41:02.663 DEBUG [update] last-check=1763353262s skipped=true'],
+      ['info','2026-11-17 09:41:03.115 INFO  [shelf] cover tint resolved clay/indigo/olive for 126 books'],
+      ['warn','2026-11-17 09:41:04.887 WARN  [pdf] page cache miss doc=营造法式 页数=842 耗时=186ms'],
+      ['info','2026-11-17 09:41:04.902 INFO  [pdf] range transport ready chunk=256KB file=38.4MB'],
+      ['debug','2026-11-17 09:41:05.010 DEBUG [pdf] worker spawned pid=18844 version=5.0.375'],
+      ['info','2026-11-17 09:41:05.224 INFO  [reader] open doc=营造法式.pdf kind=pdf pages=842 from=ratio:0.318'],
+      ['info','2026-11-17 09:41:05.418 INFO  [pdf] render page=268 viewport=1440x742 dpr=1.25 ms=144'],
+      ['warn','2026-11-17 09:41:05.602 WARN  [pdf] cjk font fallback 宋体→SourceHanSerif glyphs=12'],
+      ['info','2026-11-17 09:41:06.140 INFO  [shelf] progress saved id=bk_7f2a9c ratio=0.318 page=268'],
+      ['error','2026-11-17 09:41:31.664 ERROR [download] curl exit=35 msg=SSL connect error url=https://github.com/biashz/yuejian/releases/download/v0.1.25/YueJian.Reader_0.1.25_x64-setup.exe proxy=127.0.0.1:7890 retry=1/3 elapsed=28441ms'],
+      ['info','2026-11-17 09:41:33.702 INFO  [download] retry scheduled in 3000ms attempt=2/3'],
+      ['info','2026-11-17 09:41:41.115 INFO  [download] resume from=8437760 total=4542464 bytes …'],
+      ['info','2026-11-17 09:41:52.480 INFO  [download] done size=4542464 sha=9c1f… duration=22.8s'],
+      ['info','2026-11-17 09:41:52.511 INFO  [update] installer ready path=%TEMP%\\yuejian-setup.exe'],
+      ['debug','2026-11-17 09:41:52.560 DEBUG [ui] install prompt shown non-modal=true'],
+      ['info','2026-11-17 09:42:10.884 INFO  [reader] open doc=项脊轩志.txt kind=text encoding=UTF-8 lines=24'],
+      ['info','2026-11-17 09:42:10.903 INFO  [text] decode ok bom=false detector=none confidence=1.00'],
+      ['debug','2026-11-17 09:42:10.921 DEBUG [text] layout mode=plain measure=720 lh=1.9'],
+      ['info','2026-11-17 09:42:31.004 INFO  [reader] pane split=off link=on'],
+      ['warn','2026-11-17 09:42:58.771 WARN  [store] persist retry 1/2 err=EBUSY state.json'],
+      ['info','2026-11-17 09:42:58.910 INFO  [store] persist ok size=48211ms'],
+      ['info','2026-11-17 09:43:02.336 INFO  [idle] flush progress queue=0 pending=3']
+    ]
+  },
+  csv: {
+    id: "csv", file: "阅读台账-2026.csv", kind: "CSV", spine: "table",
+    size: "6.8 KB", lines: 42, chars: "2 104", encoding: "UTF-8 (含 BOM)", eol: "CRLF",
+    hint: "表格模式：粘性表头、列宽自适应，含逗号的单元格按 RFC 4180 处理。",
+    info: [["类型","CSV 表格"],["编码","UTF-8（BOM）"],["行数","42"],["列数","6"],["体积","6.8 KB"],["换行","CRLF"],["分隔符","逗号"]],
+    query: "营造法式",
+    head: ["日期","书名","作者","分类","进度","备注"],
+    rows: [
+      ["2026-11-16","项脊轩志","归有光","古文","100%","篇幅短，一晚上读完"],
+      ["2026-11-15","营造法式","李诫","建筑","38%","图样部分需要放大看，, 逗号测试"],
+      ["2026-11-14","长物志","文震亨","器物","72%","与《园冶》对读更有意思"],
+      ["2026-11-12","The Elements of Typographic Style","Robert Bringhurst","排版","24%","第 3 章讲节奏，值得抄一遍"],
+      ["2026-11-09","园冶","计成","园林","100%","“虽由人作，宛自天开”"],
+      ["2026-11-06","考工记","佚名","工艺","12%","车制部分略过"],
+      ["2026-11-03","闲情偶寄","李渔","生活","56%","戏曲部比居室部有意思"],
+      ["2026-11-01","中国建筑史","梁思成","建筑","88%","对照营造法式看构造"],
+      ["2026-10-28","文心雕龙","刘勰","文论","31%","神思篇反复读"],
+      ["2026-10-25","Local-first software","Ink & Switch","技术","100%","七个理想，值得对照本项目"]
+    ]
+  },
+  rs: {
+    id: "rs", file: "text.rs", kind: "RUST", spine: "mono",
+    size: "4.6 KB", lines: 29, chars: "812", encoding: "UTF-8", eol: "LF",
+    hint: "代码：等宽 + 行号 + 语法高亮，Tab 宽 4，长行横向滚动不折行。",
+    info: [["类型","Rust 源码"],["编码","UTF-8"],["行数","29"],["语言","rust"],["体积","4.6 KB"],["Tab","4"],["高亮","hljs 11.11.1"]],
+    query: "read_to_string",
+    code: [
+      'use std::fs::File;',
+      'use std::io::{Read, Seek, SeekFrom};',
+      '',
+      '/// 按字节区间读取文本，避免整份日志进内存。',
+      '/// `start` / `end` 由前端按行索引给出，不做行边界校正。',
+      'pub fn read_text_window(path: &str, start: u64, end: u64) -> Result<Vec<u8>, String> {',
+      '    let mut file = File::open(path).map_err(|e| e.to_string())?;',
+      '    file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;',
+      '',
+      '    let len = end.saturating_sub(start) as usize;',
+      '    if len > 8 * 1024 * 1024 {',
+      '        return Err("单次窗口超过 8MB".into());',
+      '    }',
+      '',
+      '    let mut buf = vec![0u8; len];',
+      '    let read = file.read(&mut buf).map_err(|e| e.to_string())?;',
+      '    buf.truncate(read);',
+      '    Ok(buf)',
+      '}',
+      '',
+      '#[cfg(test)]',
+      'mod tests {',
+      '    use super::*;',
+      '',
+      '    #[test]',
+      '    fn window_is_clamped() {',
+      '        assert!(read_text_window("missing.log", 0, 4).is_err());',
+      '    }',
+      '}'
+    ]
+  }
+};
+
+/* ============ 状态 ============ */
+const state = { variant: "A", doc: "txt", theme: "paper", view: null, gutter: false, wrap: true, tab: "info" };
+
+/** 各方案 / 各文档下的默认开关：等宽视图默认带行号、不折行，正文视图相反 */
+function defaultsFor(docId, variant) {
+  const mono = variant === "B" || ["log", "rs"].includes(docId);
+  return { gutter: mono, wrap: !mono };
+}
+
+/* ============ 高亮：只为原型服务的最小实现 ============ */
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function highlightRust(line) {
+  if (/^\s*\/\//.test(line)) return `<span class="t-cmt">${esc(line)}</span>`;
+  let out = esc(line);
+  out = out.replace(/("(?:[^"\\]|\\.)*")/g, '<span class="t-str">$1</span>');
+  out = out.replace(/\b(use|pub|fn|let|mut|return|if|mod|struct|impl|match|as|const|true|false)\b(?!<\/span>)/g, '<span class="t-key">$1</span>');
+  out = out.replace(/\b([A-Z][A-Za-z0-9_]*)\b(?![^<]*<\/span>)/g, '<span class="t-ty">$1</span>');
+  out = out.replace(/\b(\d+)\b/g, '<span class="t-num">$1</span>');
+  out = out.replace(/\b([a-z_][a-z0-9_]*)\(/g, '<span class="t-fn">$1</span>(');
+  return out;
+}
+
+function highlightLog(line) {
+  const m = line.match(/^(\S+ \S+)\s+(INFO|WARN|ERROR|DEBUG)\s+(.*)$/);
+  if (!m) return esc(line);
+  const lv = { INFO: "lv-info", WARN: "lv-warn", ERROR: "lv-error", DEBUG: "lv-debug" }[m[2]];
+  return `<span class="ts">${esc(m[1])}</span> <span class="${lv}">${m[2]}</span> ${esc(m[3])}`;
+}
+
+/* ============ 视图模式推导 ============ */
+function resolveMode() {
+  const doc = DOCS[state.doc];
+  if (state.view) return state.view;                  // 用户在本会话里手动选过
+  if (state.variant === "B") return "code";           // 方案 B：一律源码视图
+  if (doc.kind === "CSV") return "table";
+  if (doc.kind === "LOG" || doc.kind === "RUST") return "code";
+  return "plain";
+}
+
+/* ============ 工具栏 ============ */
+function renderToolbar() {
+  const doc = DOCS[state.doc];
+  const mode = resolveMode();
+  const bar = document.getElementById("toolbar");
+  const hasTable = doc.kind === "CSV";
+  const range = doc.kind === "LOG" ? `1–200 / ${doc.lines} 行`
+    : doc.kind === "CSV" ? `${doc.lines} 行 · ${doc.head.length} 列`
+    : doc.kind === "RUST" ? `${doc.lines} 行`
+    : `${doc.chars} 字`;
+
+  let left = "";
+  if (state.variant === "A") {
+    left = `<div class="seg" role="group" aria-label="视图模式">
+      <button data-view="plain" aria-pressed="${mode === "plain"}">正文</button>
+      <button data-view="code" aria-pressed="${mode === "code"}">等宽</button>
+      <button data-view="table" aria-pressed="${mode === "table"}" ${hasTable ? "" : "disabled"}>表格</button>
+    </div>`;
+  } else if (state.variant === "B") {
+    left = `<span class="tool-note">源码视图 · 全部文本一律等宽 + 行号</span>`;
+  } else {
+    const toCode = mode !== "code";
+    const back = doc.kind === "CSV" ? "回到表格" : "回到正文";
+    left = `<button class="ghost-btn" data-view="${toCode ? "code" : (doc.kind === "CSV" ? "table" : "plain")}">
+      ${toCode ? "查看源码" : back}
+    </button>`;
+  }
+
+  bar.innerHTML = `
+    ${left}
+    <span class="tool-sep"></span>
+    <label class="switch"><input type="checkbox" id="gutterToggle" ${state.gutter ? "checked" : ""} ${mode === "table" ? "disabled" : ""} />行号</label>
+    <label class="switch"><input type="checkbox" id="wrapToggle" ${state.wrap ? "checked" : ""} ${mode === "table" ? "disabled" : ""} />软换行</label>
+    <span class="tool-spacer"></span>
+    <span class="tool-note">${range}</span>`;
+
+  bar.querySelectorAll("[data-view]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.view = btn.dataset.view;
+      state.wrap = state.view !== "code";
+      render();
+    });
+  });
+  bar.querySelector("#gutterToggle").addEventListener("change", (e) => { state.gutter = e.target.checked; render(); });
+  bar.querySelector("#wrapToggle").addEventListener("change", (e) => { state.wrap = e.target.checked; render(); });
+}
+
+/* ============ 阅读画布 ============ */
+function renderSurface() {
+  const doc = DOCS[state.doc];
+  const mode = resolveMode();
+  const surface = document.getElementById("surface");
+
+  if (mode === "plain") {
+    const paras = (doc.body || []).map((text, i) => `
+      <div class="para">
+        ${state.gutter ? `<span class="gutter">${i * 6 + 1}</span>` : ""}
+        <span>${esc(text)}</span>
+      </div>`).join("");
+    surface.innerHTML = `<div class="plain ${state.gutter ? "with-gutter" : ""}">${paras}</div>`;
+    return;
+  }
+
+  if (mode === "code") {
+    const lines = doc.kind === "LOG"
+      ? doc.entries.map(([, text]) => highlightLog(text))
+      : doc.code.map(highlightRust);
+    const gutter = lines.map((_, i) => i + 1).join("<br>");
+    surface.innerHTML = `<div class="code ${state.wrap ? "wrap" : ""}">
+      ${state.gutter ? `<div class="gutter">${gutter}</div>` : ""}
+      <div class="lines">${lines.map((l) => `<div class="ln">${l}</div>`).join("")}</div>
+    </div>`;
+    return;
+  }
+
+  if (mode === "table") {
+    const rows = doc.rows.map((cells) => `<tr>${cells.map((c, i) =>
+      `<td class="${i === 4 ? "num" : (i === 5 ? "q" : "")}">${esc(c)}</td>`).join("")}</tr>`).join("");
+    surface.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr>${doc.head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+    return;
+  }
+}
+
+/* ============ 上下文面板 ============ */
+function renderCtx() {
+  const doc = DOCS[state.doc];
+  const body = document.getElementById("ctxBody");
+
+  if (state.tab === "info") {
+    const rows = doc.info.map(([k, v]) => `
+      <div class="info-row">
+        <span class="info-key">${k}</span>
+        <span class="info-val ${/UTF|LF|CRLF|rust|hljs|\d+%/i.test(v) ? "mono" : ""}">${esc(v)}</span>
+      </div>`).join("");
+    body.innerHTML = `
+      ${rows}
+      <div class="info-row">
+        <span class="info-key">编码不准？</span>
+        <span class="info-val"><button class="link-btn">换一个编码</button></span>
+      </div>`;
+    return;
+  }
+
+  const q = doc.query;
+  const hits = state.doc === "csv"
+    ? [["第 3 行","2026-11-15 · <mark>营造法式</mark> · 李诫 · 建筑 · 38%"]]
+    : state.doc === "rs"
+      ? [["第 12 行","let read = file.read(&mut buf) <mark>read_to_string</mark> 不再使用"],
+         ["第 5 行","按字节区间读取文本，避免整份日志进内存"]]
+      : [[state.doc === "log" ? "第 6 行" : "第 1 段","…三五之夜，<mark>明月</mark>半墙，桂影斑驳…"],
+         [state.doc === "log" ? "第 14 行" : "第 4 段","…瞻顾遗迹，如在前日，令人长号不自禁"]];
+
+  body.innerHTML = `
+    <div class="search-box">
+      <svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+      <span>${esc(q)}</span>
+    </div>
+    <div class="hits">
+      ${hits.map(([at, text]) => `<button class="hit"><b>${at}</b>${text}</button>`).join("")}
+    </div>
+    <p class="proto-hint" style="margin-top:12px;color:var(--ink-3)">2 处匹配 · 点击跳转并高亮</p>`;
+}
+
+/* ============ 文档信息头 ============ */
+function renderHead() {
+  const doc = DOCS[state.doc];
+  document.getElementById("docName").textContent = doc.file;
+  const count = doc.body ? `${doc.body.length} 段` : `${doc.lines} 行`;
+  document.getElementById("docSub").innerHTML =
+    `<span>${doc.kind}</span><span>·</span><span>${count}</span><span>·</span><span>${doc.size}</span><span>·</span><span>${doc.encoding}</span>`;
+
+  const notice = document.getElementById("noticeSlot");
+  notice.innerHTML = doc.kind === "LOG"
+    ? `<div class="notice">
+        <svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px;color:var(--warn)"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="8.5"/></svg>
+        大文件模式：语法高亮与软换行已关闭 · 仅渲染可视窗口（1–200 行 / 共 ${doc.lines} 行）
+       </div>`
+    : "";
+}
+
+/* ============ 文档库列表 ============ */
+function renderLib() {
+  const items = [
+    { id: "txt", name: "项脊轩志.txt", meta: "TXT", spine: "", dot: "txt" },
+    { id: "log", name: "yuejian-2026-11-17.log", meta: "LOG · 48.6 MB", spine: "mono", dot: "code" },
+    { id: "csv", name: "阅读台账-2026.csv", meta: "CSV · 42 行", spine: "table", dot: "csv" },
+    { id: "rs", name: "text.rs", meta: "RUST · 29 行", spine: "mono", dot: "code" },
+    { id: "pdf", name: "营造法式.pdf", meta: "PDF · 842 页", spine: "", dot: "" },
+    { id: "md", name: "设计契约.md", meta: "MARKDOWN", spine: "", dot: "" }
+  ];
+  document.getElementById("libList").innerHTML = items.map((it) => `
+    <button class="book ${it.id === state.doc ? "is-on" : ""}" ${["pdf", "md"].includes(it.id) ? "disabled style=opacity:.5" : `data-doc="${it.id}"`}>
+      <span class="book-spine ${it.spine}"></span>
+      <span class="book-body">
+        <span class="book-name">${it.name}</span>
+        <span class="book-sub"><i class="type-dot ${it.dot}"></i>${it.meta}</span>
+      </span>
+    </button>`).join("");
+
+  document.querySelectorAll("#libList [data-doc]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.doc = btn.dataset.doc;
+      state.view = null;                 // 换文档回到自动分型
+      Object.assign(state, defaultsFor(state.doc, state.variant));
+      render();
+    });
+  });
+}
+
+/* ============ 提示文案 ============ */
+const HINTS = {
+  A: "<b>方案 A · 阅读优先</b>：按扩展名自动分型（txt→正文 / log·code→等宽 / csv→表格），工具栏三态胶囊可随时覆盖，只在本次会话记住。",
+  B: "<b>方案 B · 统一源码</b>：一切文本都是等宽 + 行号，没有分型也没有胶囊，工具栏最省。txt 会失去宋体正文的阅读感。",
+  C: "<b>方案 C · 双面切换</b>：工具栏只留一个按钮，在「正文 / 源码」之间翻转。比 A 少一个控件，但 CSV 仍需要第三种模式。"
+};
+
+/* ============ 渲染入口 ============ */
+function render() {
+  renderHead();
+  renderToolbar();
+  renderSurface();
+  renderCtx();
+  renderLib();
+  document.getElementById("protoHint").innerHTML = HINTS[state.variant];
+  document.querySelectorAll("#variantRow button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.variant === state.variant)));
+  document.querySelectorAll("#docRow button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.doc === state.doc)));
+  document.querySelectorAll("#themeRow button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.theme === state.theme)));
+  // 把当前状态写进 hash，方便把某个具体画面直接发给别人看
+  history.replaceState(null, "", `#${state.variant}/${state.doc}/${state.theme}`);
+}
+
+/* ============ 从 hash 恢复画面 ============ */
+const [hashVariant, hashDoc, hashTheme] = decodeURIComponent(location.hash.replace(/^#/, "")).split("/");
+if ("ABC".includes(hashVariant)) state.variant = hashVariant;
+if (hashDoc && DOCS[hashDoc]) state.doc = hashDoc;
+if (["paper", "night", "sepia"].includes(hashTheme)) state.theme = hashTheme;
+document.documentElement.dataset.theme = state.theme;
+Object.assign(state, defaultsFor(state.doc, state.variant));
+
+/* ============ 事件绑定 ============ */
+document.getElementById("variantRow").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-variant]");
+  if (!btn) return;
+  state.variant = btn.dataset.variant;
+  state.view = null;                     // 切方案时让新方案自己的默认分型生效
+  Object.assign(state, defaultsFor(state.doc, state.variant));
+  render();
+});
+
+document.getElementById("docRow").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-doc]");
+  if (!btn) return;
+  state.doc = btn.dataset.doc;
+  state.view = null;
+  Object.assign(state, defaultsFor(state.doc, state.variant));
+  render();
+});
+
+document.getElementById("themeRow").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-theme]");
+  if (!btn) return;
+  state.theme = btn.dataset.theme;
+  document.documentElement.dataset.theme = state.theme;
+  render();
+});
+
+document.querySelectorAll(".ctx-tabs button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.tab = btn.dataset.tab;
+    document.querySelectorAll(".ctx-tabs button").forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
+    renderCtx();
+  });
+});
+
+document.querySelectorAll(".chips .chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    document.querySelectorAll(".chips .chip").forEach((c) => c.classList.toggle("is-on", c === chip));
+  });
+});
+
+render();
+</script>
+</body>
+</html>

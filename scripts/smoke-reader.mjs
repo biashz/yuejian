@@ -98,6 +98,22 @@ const MIME = {
 const MD_HTML = '<h1 id="h1">第一章</h1>' + "<p>正文段落。</p>".repeat(120)
   + '<h2 id="h2">第二节</h2>' + "<p>更多正文。</p>".repeat(120);
 
+/** 日志样本：行数固定，断言才好比对；含一条超长行（横向滚动）与一处空行 */
+const TEXT_LOG = [
+  "2026-11-17 09:41:02.318 INFO  [shelf] store loaded books=126 categories=6 elapsed=12ms",
+  "2026-11-17 09:41:02.402 INFO  [store] state.json 校验通过，未发现损坏字段",
+  "2026-11-17 09:41:02.551 INFO  [win] window restored size=1440x900 scale=1.25 theme=paper",
+  "2026-11-17 09:41:03.115 INFO  [shelf] cover tint resolved clay/indigo/olive for 126 books",
+  "",
+  "2026-11-17 09:41:04.887 WARN  [pdf] page cache miss doc=营造法式 页数=842 耗时=186ms",
+  "2026-11-17 09:41:05.418 INFO  [pdf] render page=268 viewport=1440x742 dpr=1.25 ms=144",
+  "2026-11-17 09:41:31.664 ERROR [download] curl exit=35 msg=SSL connect error url=https://github.com/biashz/yuejian/releases/download/v0.1.25/YueJian.Reader_0.1.25_x64-setup.exe proxy=127.0.0.1:7890 retry=1/3 elapsed=28441ms",
+  "2026-11-17 09:41:52.480 INFO  [download] done size=4542464 duration=22.8s",
+  "2026-11-17 09:42:10.884 INFO  [reader] open doc=项脊轩志.txt kind=text encoding=UTF-8 lines=24",
+  "2026-11-17 09:42:10.903 INFO  [text] decode ok bom=false detector=none confidence=1.00",
+  "2026-11-17 09:43:02.336 INFO  [idle] flush progress queue=0 pending=3",
+].join("\n");
+
 function stubSource() {
   return `(() => {
   // 收集所有未捕获异常：模块里漏 import 的调用会在这里冒出来
@@ -115,6 +131,9 @@ function stubSource() {
     { id: "b-pdf", path: "/fixtures/sample.pdf", title: "示例 PDF", author: "本地", kind: "pdf",
       size: 4000, pages: 3, words: 0, addedAt: now - 8000, lastOpenedAt: now - 4000, favorite: true,
       categoryId: "", progress: { ratio: 0, page: 2, zoom: 1 } },
+    { id: "b-txt", path: "C:/fixtures/run.log", title: "运行日志", author: "本地", kind: "text",
+      size: 9200, pages: 0, words: 680, addedAt: now - 7000, lastOpenedAt: now - 3000, favorite: false,
+      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
   ];
   const SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true,
     zen: false, split: false, linkSync: true, language: "zh", autoCheckUpdate: false };
@@ -130,6 +149,11 @@ function stubSource() {
         if (command === "app_version") return Promise.resolve("0.0.0-smoke");
         if (command === "open_book") {
           if (args.id === "b-pdf") return Promise.resolve(clone({ kind: "pdf", path: "/fixtures/sample.pdf", pages: 3, size: 4000 }));
+          if (args.id === "b-txt") return Promise.resolve(clone({
+            kind: "text", text: ${JSON.stringify(TEXT_LOG)}, encoding: "UTF-8",
+            lines: ${TEXT_LOG.split("\n").length}, chars: ${TEXT_LOG.replace(/\s/g, "").length},
+            eol: "LF", lang: "", mode: "code", truncated: false,
+          }));
           return Promise.resolve(clone({
             kind: "markdown", html: HTML, dir: "C:/fixtures", words: 3200,
             toc: [{ level: 1, text: "第一章", id: "h1" }, { level: 2, text: "第二节", id: "h2" }],
@@ -168,9 +192,20 @@ async function waitFor(ws, expression, label, timeout = 10000) {
     if (await evaluate(ws, expression)) return true;
     await sleep(80);
   }
-  throw new Error(`等待超时：${label}`);
+  // 超时多半是某个模块在启动阶段就抛了异常、界面根本没建起来，
+  // 把页面里的未捕获异常一起打出来，否则只能看到一句「等待超时」
+  const state = await evaluate(ws, `JSON.stringify({
+    errors: window.__errors || null,
+    books: document.querySelectorAll("#bookList .book-row").length,
+    list: (document.querySelector("#bookList")?.innerHTML || "").slice(0, 260),
+    bodyLength: document.body.innerHTML.length,
+    calls: window.__calls || null,
+  })`).catch(() => "无法读取页面状态");
+  const consoleTail = pageErrors.slice(-3).join(" || ");
+  throw new Error(`等待超时：${label} | ${state}${consoleTail ? ` | console: ${consoleTail}` : ""}`);
 }
 
+const pageErrors = [];
 const results = [];
 function check(name, ok, detail = "") {
   results.push({ name, ok, detail });
@@ -247,6 +282,9 @@ async function main() {
         else waiter.resolve(data.result);
       } else if (data.method === "Runtime.exceptionThrown") {
         exceptions.push(data.params.exceptionDetails.exception?.description || data.params.exceptionDetails.text);
+      } else if (data.method === "Runtime.consoleAPICalled" && data.params.type === "error") {
+        // 模块加载失败、被 catch 住的异常都会走 console.error，超时时一并打出来
+        pageErrors.push(data.params.args.map((arg) => arg.value ?? arg.description ?? "").join(" "));
       }
     };
 
@@ -254,8 +292,8 @@ async function main() {
     await send(ws, "Runtime.enable");
     await send(ws, "Page.addScriptToEvaluateOnNewDocument", { source: stubSource() });
     await send(ws, "Page.navigate", { url: `${origin}/` });
-    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length >= 2", "书架渲染");
-    check("启动完成，书架渲染 2 本书", true);
+    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length >= 3", "书架渲染");
+    check("启动完成，书架渲染 3 本书", true);
 
     const pane = '[data-pane-root="0"]';
     const errors = () => evaluate(ws, "window.__errors.slice()");
@@ -324,6 +362,85 @@ async function main() {
     check("翻页成功", Number(pageNext) > Number(pageStart), `${pageStart} → ${pageNext}`);
     check("翻页与缩放无未捕获异常", errs.length === 0, errs.join(" | "));
     check("缩放比例已刷新", /%$/.test(zoomLabel), `比例 "${zoomLabel}"`);
+
+    /* --- 文本类文档：等宽行号 / 视图切换 / 信息面板 --- */
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-txt"]').click()`);
+    await waitFor(ws, `!!document.querySelector('${pane} .tx-code')`, "文本等宽渲染");
+    await sleep(300);
+
+    const codeInfo = await evaluate(ws, `(() => {
+      const root = document.querySelector('${pane} .md-doc');
+      const gutter = root.querySelector('.tx-gutter');
+      const lines = root.querySelectorAll('.tx-lines')[0];
+      return {
+        cls: root.className,
+        gutterHead: gutter ? gutter.textContent.split("\\n").slice(0, 2).join(",") : "",
+        gutterCount: gutter ? gutter.textContent.trim().split("\\n").length : 0,
+        lineCount: lines ? lines.textContent.split("\\n").length : 0,
+        nodes: root.querySelectorAll('*').length,
+        sub: document.querySelector('#docSub')?.textContent || "",
+      };
+    })()`);
+    errs = await errors();
+    check("文本按等宽渲染", codeInfo.cls.includes("text-code"), `class="${codeInfo.cls}"`);
+    check("行号与正文行数一致且从 1 开始",
+      codeInfo.gutterHead === "1,2" && codeInfo.gutterCount === codeInfo.lineCount && codeInfo.lineCount === 12,
+      `行号 ${codeInfo.gutterCount} 行 / 正文 ${codeInfo.lineCount} 行，前两行 "${codeInfo.gutterHead}"`);
+    // 关键性能约束：不是「一行一个 div」，十几万行的日志也只有常数个节点
+    check("等宽视图节点数为常数", codeInfo.nodes <= 4, `节点数 ${codeInfo.nodes}`);
+    check("文档副标题显示行数与字数", /行/.test(codeInfo.sub) && /字/.test(codeInfo.sub), `"${codeInfo.sub}"`);
+
+    const tbInfo = await evaluate(ws, `(() => ({
+      plain: !!document.querySelector('[data-act="text-plain"]'),
+      code: document.querySelector('[data-act="text-code"]')?.classList.contains('is-on'),
+      gutter: document.querySelector('[data-act="text-gutter"]')?.classList.contains('is-on'),
+      wrap: document.querySelector('[data-act="text-wrap"]')?.classList.contains('is-on'),
+      stat: document.querySelector('.read-toolbar .page-total')?.textContent?.trim() || "",
+    }))()`);
+    check("文本工具栏：等宽视图 + 行号默认打开 + 行数统计",
+      tbInfo.plain && tbInfo.code && tbInfo.gutter && !tbInfo.wrap && /行$/.test(tbInfo.stat),
+      `等宽=${tbInfo.code} 行号=${tbInfo.gutter} 软换行=${tbInfo.wrap} 统计="${tbInfo.stat}"`);
+
+    /* 切到正文视图：空行分段，段落数应为 4（样本里有 3 处空行） */
+    await evaluate(ws, `document.querySelector('[data-act="text-plain"]').click()`);
+    await sleep(200);
+    const plainInfo = await evaluate(ws, `(() => {
+      const root = document.querySelector('${pane} .md-doc');
+      return { cls: root.className, paras: root.querySelectorAll('.tx-para').length,
+        wrapDisabled: document.querySelector('[data-act="text-wrap"]')?.disabled };
+    })()`);
+    check("切到正文视图按空行分段",
+      plainInfo.cls.includes("text-plain") && plainInfo.paras >= 2,
+      `段落 ${plainInfo.paras}，软换行按钮禁用=${plainInfo.wrapDisabled}`);
+
+    /* 回到等宽，打开软换行：行号应自动让位（两者互斥） */
+    await evaluate(ws, `document.querySelector('[data-act="text-code"]').click()`);
+    await sleep(150);
+    await evaluate(ws, `document.querySelector('[data-act="text-wrap"]').click()`);
+    await sleep(200);
+    const wrapInfo = await evaluate(ws, `(() => ({
+      wrap: document.querySelector('[data-act="text-wrap"]')?.classList.contains('is-on'),
+      gutterOn: document.querySelector('[data-act="text-gutter"]')?.classList.contains('is-on'),
+      gutterDisabled: document.querySelector('[data-act="text-gutter"]')?.disabled,
+      gutterGone: !document.querySelector('${pane} .tx-gutter'),
+      wrapped: document.querySelector('${pane} .text-code')?.classList.contains('is-wrap'),
+    }))()`);
+    check("打开软换行自动关掉行号（避免错位）",
+      wrapInfo.wrap && !wrapInfo.gutterOn && wrapInfo.gutterGone && wrapInfo.gutterDisabled && wrapInfo.wrapped,
+      `软换行=${wrapInfo.wrap} 行号=${wrapInfo.gutterOn} 行号栏已移除=${wrapInfo.gutterGone}`);
+
+    /* 侧栏：文本类只保留「信息 / 搜索」，信息里要能看到编码 */
+    const infoPanel = await evaluate(ws, `(() => {
+      const tabs = [...document.querySelectorAll('#ctxTabs .ctx-tab')].filter((t) => !t.hidden).map((t) => t.dataset.ctx);
+      const rows = [...document.querySelectorAll('#ctxBody .info-row')].map((r) => r.textContent.trim());
+      return { tabs, rows, body: document.querySelector('#ctxBody')?.textContent || "" };
+    })()`);
+    errs = await errors();
+    check("文本类侧栏只保留「信息 / 搜索」", infoPanel.tabs.join(",") === "info,find", `tabs=${infoPanel.tabs.join(",")}`);
+    check("信息面板列出编码与行数",
+      infoPanel.body.includes("UTF-8") && infoPanel.body.includes("LF") && infoPanel.rows.length >= 5,
+      `行数 ${infoPanel.rows.length}`);
+    check("文本阅读无未捕获异常", errs.length === 0, errs.join(" | "));
 
     /* --- 更新安装提示：非模态卡片，可稍后，点立即安装才走安装命令 --- */
     await evaluate(ws, `(async () => {

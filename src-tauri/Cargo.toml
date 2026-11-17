@@ -1,6 +1,6 @@
 [package]
 name = "yuejian"
-version = "0.1.25"
+version = "0.1.26"
 description = "阅笺 · PDF 与 Markdown 本地阅读器"
 authors = ["YueJian"]
 edition = "2021"
@@ -19,6 +19,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 comrak = "0.49.0"
 rfd = "0.17.2"
+# 文本格式：编码探测 + 解码。两者都是 Firefox 在用的实现：
+# chardetng 负责在没有 BOM 时猜编码，encoding_rs 负责真正解码（GB18030 / Big5 / Shift_JIS 全覆盖）。
+encoding_rs = "0.8"
+chardetng = "0.1"
 
 [profile.release]
 opt-level = "s"

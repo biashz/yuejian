@@ -5,6 +5,7 @@
 import { invoke } from "../api.js";
 import { PdfReader } from "../reader-pdf.js";
 import { renderMarkdown, setupScrollSpy } from "../reader-md.js";
+import { renderText, defaultTextView } from "../reader-text.js";
 import { $, clamp, escapeHtml } from "../core/dom.js";
 import { t } from "../i18n.js";
 import { state } from "../core/session.js";
@@ -72,6 +73,7 @@ async function openBook(id, pane = activePane()) {
   if (wasActive) state.doc = doc;
 
   if (doc.kind === "pdf") await openPdf(doc, pane);
+  else if (doc.kind === "text") openText(doc, pane);
   else openMarkdown(doc, pane);
 
   renderBookList(visibleBooks());
@@ -95,9 +97,20 @@ function updateDocSub() {
     sub.textContent = "";
     return;
   }
-  sub.textContent = book.kind === "pdf"
-    ? t("reader.docSubPdf", { pages: state.pdfTotal || book.pages || "…", size: formatBytes(book.size) })
-    : t("reader.docSubMd", { words: book.words || 0, size: formatBytes(book.size) });
+  if (book.kind === "pdf") {
+    sub.textContent = t("reader.docSubPdf", { pages: state.pdfTotal || book.pages || "…", size: formatBytes(book.size) });
+    return;
+  }
+  if (book.kind === "text") {
+    const doc = activePane()?.doc;
+    sub.textContent = t("reader.docSubText", {
+      lines: doc?.lines ?? 0,
+      chars: doc?.chars ?? book.words ?? 0,
+      size: formatBytes(book.size),
+    });
+    return;
+  }
+  sub.textContent = t("reader.docSubMd", { words: book.words || 0, size: formatBytes(book.size) });
 }
 
 async function openPdf(doc, pane) {
@@ -122,6 +135,8 @@ async function openPdf(doc, pane) {
 function openMarkdown(doc, pane) {
   const area = pane.scrollArea;
   area.scrollTop = 0;
+  // 从文本类文档切过来时，要清掉 text-plain / text-code 这些排版类
+  pane.mdDoc.className = "md-doc";
   pane.headingEls = renderMarkdown(doc, pane.mdDoc);
   pane.spyCleanup = setupScrollSpy(area, pane.headingEls, (id) => {
     if (pane.index === activePaneIndex) markTocActive(id);
@@ -132,6 +147,40 @@ function openMarkdown(doc, pane) {
   }
 
   requestAnimationFrame(() => scrollPaneToRatio(pane, pane.book?.progress.ratio || 0));
+}
+
+/* ---------------- 文本类文档 ---------------- */
+function openText(doc, pane) {
+  const area = pane.scrollArea;
+  area.scrollTop = 0;
+  // 同一份文档在本次会话内切回来时保留用户的视图选择；换一份文档则回到默认视图
+  if (!pane.textView || pane.textView.bookId !== pane.book?.id) {
+    pane.textView = { ...defaultTextView(doc), bookId: pane.book?.id };
+  }
+  pane.headingEls = [];
+  renderText(doc, pane.mdDoc, pane.textView);
+  if (doc.truncated) toast(t("reader.textTruncated"));
+  if (pane.index === activePaneIndex) {
+    renderToolbar();
+    renderCtx();
+    updateDocSub();
+  }
+
+  requestAnimationFrame(() => scrollPaneToRatio(pane, pane.book?.progress.ratio || 0));
+}
+
+/**
+ * 切换视图（正文/等宽、行号、软换行）后重绘。
+ * 会保留当前的滚动比例——否则每换一次视图就被弹回文首。
+ */
+function refreshTextView(pane = activePane()) {
+  if (!pane?.doc || pane.doc.kind !== "text" || !pane.textView) return;
+  const area = pane.scrollArea;
+  const span = area.scrollHeight - area.clientHeight;
+  const ratio = span > 0 ? area.scrollTop / span : 0;
+  renderText(pane.doc, pane.mdDoc, pane.textView);
+  if (pane.index === activePaneIndex) renderToolbar();
+  requestAnimationFrame(() => scrollPaneToRatio(pane, ratio));
 }
 
 /* ---------------- PDF 阅读器 ---------------- */
@@ -195,4 +244,4 @@ function handlePdfReady(pane, pages) {
   flushProgress();
 }
 
-export { openBook, updateDocSub, openPdf, openMarkdown, ensurePdfReader, handleZoomChange, handlePageChange, handlePdfReady };
+export { openBook, updateDocSub, openPdf, openMarkdown, openText, refreshTextView, ensurePdfReader, handleZoomChange, handlePageChange, handlePdfReady };

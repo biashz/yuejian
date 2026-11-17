@@ -1,10 +1,18 @@
 /**
- * 侧栏三视图：文档大纲、页面缩略图、全文搜索。全部针对「当前活动栏」渲染。
+ * 侧栏视图：文档大纲、页面缩略图、文本信息、全文搜索。全部针对「当前活动栏」渲染。
  */
 import { $, $$, escapeHtml } from "../core/dom.js";
 import { t } from "../i18n.js";
 import { state } from "../core/session.js";
+import { kindLabel } from "../core/constants.js";
+import { formatBytes } from "../core/format.js";
 import { activePane } from "./panes.js";
+
+/* 每种文档能用的侧栏视图：PDF 有缩略图，文本类没有大纲但有文件信息 */
+const TABS_BY_KIND = {
+  pdf: ["toc", "thumbs", "find"],
+  text: ["info", "find"],
+};
 
 
 /* 本模块自有的可变句柄，不对外暴露 */
@@ -30,12 +38,51 @@ function switchCtxTab(tab) {
   renderCtx();
 }
 
+/**
+ * 按文档类型显示/隐藏侧栏标签。
+ * 文本类没有 PDF 大纲，也没有缩略图，硬留着两个空 tab 只会让人多点两次。
+ */
+function syncCtxTabs(book) {
+  const allowed = TABS_BY_KIND[book.kind] || ["toc", "thumbs", "find"];
+  if (!allowed.includes(state.ctxTab)) state.ctxTab = allowed[0];
+  $$("#ctxTabs .ctx-tab").forEach((tab) => {
+    tab.hidden = !allowed.includes(tab.dataset.ctx);
+    tab.classList.toggle("is-on", tab.dataset.ctx === state.ctxTab);
+  });
+}
+
 function renderCtx() {
   const book = state.current;
   if (!book) return;
+  syncCtxTabs(book);
+  if (state.ctxTab === "info") return renderInfo();
   if (state.ctxTab === "toc") return renderToc();
   if (state.ctxTab === "thumbs") return renderThumbs();
   return renderFind();
+}
+
+/** 文本类的文件信息：编码、行数、字符数、换行符。编码是重点——探测可能不准 */
+function renderInfo() {
+  const body = $("#ctxBody");
+  const pane = activePane();
+  const doc = pane?.doc;
+  if (!doc || doc.kind !== "text") {
+    body.innerHTML = `<div class="ctx-empty">${t("reader.infoEmpty")}</div>`;
+    return;
+  }
+  const rows = [
+    [t("reader.infoKind"), kindLabel("text", pane.book)],
+    [t("reader.infoEncoding"), doc.encoding],
+    [t("reader.infoLines"), String(doc.lines)],
+    [t("reader.infoChars"), String(doc.chars)],
+    [t("reader.infoEol"), doc.eol],
+    [t("reader.infoSize"), formatBytes(pane.book?.size || 0)],
+  ];
+  body.innerHTML = `
+    <dl class="info-list">
+      ${rows.map(([key, value]) => `<div class="info-row"><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
+    </dl>
+    ${doc.truncated ? `<p class="info-note">${t("reader.infoTruncated")}</p>` : ""}`;
 }
 
 async function renderToc() {

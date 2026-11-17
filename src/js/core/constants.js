@@ -4,11 +4,19 @@
 import { t } from "../i18n.js";
 
 const THEME_ORDER = ["paper", "night", "sepia"];
-const KIND_LABEL = { pdf: "PDF", markdown: "MARKDOWN" };
-const KIND_CLASS = { pdf: "pdf", markdown: "md" };
+const KIND_LABEL = { pdf: "PDF", markdown: "MARKDOWN", text: "文本" };
+const KIND_CLASS = { pdf: "pdf", markdown: "md", text: "txt" };
 /* 主题名与文档类型名随语言切换，用函数取值避免缓存旧语言文案 */
 const themeLabel = (theme) => t(`status.theme.${theme}`);
-const kindLabel = (kind) => KIND_LABEL[kind] || t("library.document");
+/**
+ * 文本类的角标直接用扩展名（TXT / LOG / CSV / RS…）：
+ * 一份日志和一份散文都叫「文本」的话，书架上就分不出该点哪个了。
+ */
+const textBadge = (book) => {
+  const match = /\.([a-z0-9]{1,6})$/i.exec(book?.path || "");
+  return match ? match[1].toUpperCase() : t("library.document");
+};
+const kindLabel = (kind, book) => (kind === "text" ? textBadge(book) : KIND_LABEL[kind] || t("library.document"));
 const TINTS = ["clay", "indigo", "olive", "sand", "plum"];
 /* 分类色板：取值同时用作 CSS 类名后缀（.c-clay）与 state.json 里的 color 字段 */
 const CATEGORY_COLORS = ["clay", "indigo", "olive", "amber", "plum", "slate"];

@@ -10,6 +10,7 @@ import { activePane, splitMode, linkSync, setSplit, setLink } from "../reader/pa
 import { setView, updateStatus } from "../view.js";
 import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, fitPdfPage, fitPdfWidth, renderToolbar } from "../reader/toolbar.js";
 import { setCtxOpen, switchCtxTab } from "../reader/ctx.js";
+import { refreshTextView } from "../reader/open.js";
 import { presenting, presentEntering, enterPresent, exitPresent, presentStep, handlePresentWheel, schedulePresentPaint } from "../reader/present.js";
 import { applySettings, syncSettingsUI, persistSettings, toggleZen } from "../preferences.js";
 import { toggleFavorite } from "../actions.js";
@@ -130,6 +131,26 @@ export function bindReaderEvents() {
       syncSettingsUI();
       renderToolbar();
       persistSettings();
+    }
+    if (act === "text-plain" || act === "text-code") {
+      const pane = activePane();
+      if (pane?.textView) {
+        pane.textView.mode = act === "text-plain" ? "plain" : "code";
+        // 两种视图的常用开关不一样：正文不常要行号，等宽几乎总要有
+        pane.textView.gutter = pane.textView.mode === "code";
+        refreshTextView(pane);
+      }
+    }
+    if (act === "text-gutter" || act === "text-wrap") {
+      const pane = activePane();
+      if (pane?.textView) {
+        const key = act === "text-gutter" ? "gutter" : "wrap";
+        pane.textView[key] = !pane.textView[key];
+        // 软换行与行号在等宽视图里是互斥的：一旦折行，一个逻辑行占多行，
+        // 行号就不再与左侧行首对齐。打开软换行就关掉行号，避免屏幕看起来「坏了」
+        if (key === "wrap" && pane.textView.wrap) pane.textView.gutter = false;
+        refreshTextView(pane);
+      }
     }
   });
 

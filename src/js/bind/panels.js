@@ -133,11 +133,10 @@ export function bindPanelEvents() {
       }
       document.body.classList.remove("is-dragging");
       if (payload.type !== "drop") return;
-      const paths = (payload.paths || []).filter((path) => /\.(pdf|md|markdown|mdown)$/i.test(path));
-      if (!paths.length) {
-        toast(t("toast.onlySupported"));
-        return;
-      }
+      // 不在前端过滤扩展名：Rust 侧决定哪些能导入，导不进的文件会被跳过并计数，
+      // 用户看到的是「导入 2 份，跳过 1 个」，而不是拖进来毫无反应
+      const paths = payload.paths || [];
+      if (!paths.length) return;
       importDocuments(paths);
     });
   }

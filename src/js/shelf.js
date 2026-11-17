@@ -15,7 +15,7 @@ function visibleBooks() {
   return state.books
     .filter((book) => {
       if (state.filter === "star" && !book.favorite) return false;
-      if ((state.filter === "pdf" || state.filter === "markdown") && book.kind !== state.filter) return false;
+      if (["pdf", "markdown", "text"].includes(state.filter) && book.kind !== state.filter) return false;
       if (!matchCategory(book)) return false;
       if (query && !`${book.title} ${book.author}`.toLowerCase().includes(query)) return false;
       return true;
@@ -34,6 +34,10 @@ function bookProgressText(book) {
   if (book.kind === "pdf") {
     const pages = book.pages ? t("reader.pagesCount", { count: book.pages }) : "";
     return pages ? `${pages} · ${formatBytes(book.size)}` : formatBytes(book.size);
+  }
+  if (book.kind === "text") {
+    const words = book.words ? t("reader.wordsCount", { count: book.words }) : "";
+    return words ? `${words} · ${formatBytes(book.size)}` : formatBytes(book.size);
   }
   const words = book.words ? t("reader.wordsCount", { count: book.words }) : "Markdown";
   return `${words} · ${formatBytes(book.size)}`;
@@ -75,7 +79,7 @@ function renderBookList(books) {
       <div class="book-row-main">
         <div class="book-row-title">${escapeHtml(book.title)}</div>
         <div class="book-row-meta">
-          <i class="type-dot ${KIND_CLASS[book.kind] || "md"}"></i>${kindLabel(book.kind)} · ${formatRelative(book.lastOpenedAt)}
+          <i class="type-dot ${KIND_CLASS[book.kind] || "md"}"></i>${kindLabel(book.kind, book)} · ${formatRelative(book.lastOpenedAt)}
           ${bookCategoryDot(book)}
         </div>
         <div class="progress-line"><i style="width:${percentOf(book)}%"></i></div>
@@ -99,7 +103,7 @@ function renderGrid(books) {
       tabindex="0" draggable="true" style="animation-delay:${140 + index * 40}ms">
       <div class="cover tint-${tintOf(book.id)}">
         <div class="cover-inner">
-          <span class="cover-kind">${kindLabel(book.kind)}</span>
+          <span class="cover-kind">${kindLabel(book.kind, book)}</span>
           <span class="cover-title">${escapeHtml(book.title)}</span>
           <span class="cover-rule"></span>
           <span class="cover-author">${escapeHtml(bookProgressText(book))}</span>
@@ -112,7 +116,7 @@ function renderGrid(books) {
         <div class="card-title">${escapeHtml(book.title)}</div>
         <div class="card-sub">
           ${category ? `<span class="cat-dot is-tiny c-${category.color}" title="${escapeHtml(category.name)}"></span>` : ""}
-          ${kindLabel(book.kind)} · ${formatRelative(book.lastOpenedAt)}
+          ${kindLabel(book.kind, book)} · ${formatRelative(book.lastOpenedAt)}
         </div>
         <div class="card-foot">
           <span class="progress-line"><i style="width:${percentOf(book)}%"></i></span>
@@ -143,7 +147,7 @@ function renderResume() {
   card.innerHTML = `
     <div class="resume-cover tint-${tintOf(candidate.id)}">
       <div class="cover-inner">
-        <span class="cover-kind">${kindLabel(candidate.kind)}</span>
+        <span class="cover-kind">${kindLabel(candidate.kind, candidate)}</span>
         <span class="cover-title">${escapeHtml(candidate.title)}</span>
         <span class="cover-rule"></span>
         <span class="cover-author">${escapeHtml(bookProgressText(candidate))}</span>
@@ -151,7 +155,7 @@ function renderResume() {
     </div>
     <div class="resume-info">
       <h3>${escapeHtml(candidate.title)}</h3>
-      <p>${kindLabel(candidate.kind)} · ${escapeHtml(bookProgressText(candidate))}</p>
+      <p>${kindLabel(candidate.kind, candidate)} · ${escapeHtml(bookProgressText(candidate))}</p>
       <div class="resume-meta">
         <span>${candidate.kind === "pdf" ? t("reader.pageN", { page: `<b>${page}</b>` }) : t("reader.lastPosition")}</span>
         <span>${t("reader.openedAt", { time: `<b>${formatRelative(candidate.lastOpenedAt)}</b>` })}</span>

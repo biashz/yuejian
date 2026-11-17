@@ -1,5 +1,5 @@
 /**
- * 未声明调用检查（no-undefined-call）
+ * 未声明调用检查（no-undefined-call）+ 模块路径解析检查（no-broken-import）
  *
  * 针对本项目最易复发的一类缺陷：模块拆分后函数被调用却漏了 import。
  * 这类错误不会在模块链接期报错（标识符被当成全局查找），只有真正执行到那一行才抛
@@ -9,10 +9,14 @@
  * 方法简写）→ 找出所有「调用式」标识符 → 减去声明名与全局白名单。
  * 只看调用位置（`name(`），因此不会把属性访问、对象字面量键误判成遗漏声明。
  *
+ * 同时校验相对导入的路径是否存在。写错一级目录（把 `./core/dom.js` 写成 `../core/dom.js`）
+ * 在 `node --check` 与上面那套检查里全都通得过——`escapeHtml` 已由 import 登记为「已声明」，
+ * 但浏览器会在链接期对整个模块图 404，表现为页面一秒都没启动、控制台零报错。
+ *
  * 退出码：发现问题为 1，可直接接进 CI。
  */
-import { readdir, readFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { readdir, readFile, access } from "node:fs/promises";
+import { join, relative, posix } from "node:path";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const SRC = join(ROOT, "src", "js");
@@ -43,8 +47,11 @@ const GLOBALS = new Set([
   "webkitRequestAnimationFrame",
 ]);
 
-/** 注释与字符串挖空；模板字面量保留 ${} 里的表达式，其余替换为空格 */
-function blankOut(source) {
+/**
+ * 注释挖空；字符串与模板字面量默认也挖空，只保留定界引号。
+ * `keepStrings` 时保留原文——模块路径校验需要拿到 `"./core/dom.js"` 里的真实路径。
+ */
+function blankOut(source, { keepStrings = false } = {}) {
   let out = "";
   let i = 0;
   const n = source.length;
@@ -70,8 +77,8 @@ function blankOut(source) {
       out += quote;
       i += 1;
       while (i < n && source[i] !== quote) {
-        if (source[i] === "\\") { out += " "; i += 1; }
-        out += source[i] === "\n" ? "\n" : " ";
+        if (source[i] === "\\") { out += keepStrings ? source.slice(i, i + 2) : "  "; i += 2; continue; }
+        out += keepStrings ? source[i] : (source[i] === "\n" ? "\n" : " ");
         i += 1;
       }
       out += quote;
@@ -83,11 +90,12 @@ function blankOut(source) {
       i += 1;
       let depth = 0;
       while (i < n) {
-        if (source[i] === "\\") { out += "  "; i += 2; continue; }
+        if (source[i] === "\\") { out += keepStrings ? source.slice(i, i + 2) : "  "; i += 2; continue; }
         if (depth === 0 && source[i] === "`") { break; }
         if (source[i] === "$" && source[i + 1] === "{") { depth += 1; out += "${"; i += 2; continue; }
         if (depth > 0 && source[i] === "}") { depth -= 1; out += "}"; i += 1; continue; }
-        out += depth > 0 ? source[i] : (source[i] === "\n" ? "\n" : " ");
+        if (keepStrings) out += source[i];
+        else out += depth > 0 ? source[i] : (source[i] === "\n" ? "\n" : " ");
         i += 1;
       }
       out += "`";
@@ -231,6 +239,21 @@ async function walk(dir) {
 const files = await walk(SRC);
 const problems = [];
 
+/** 相对导入的路径必须真的落在磁盘上；只查静态字符串，动态 import() 不在此列 */
+async function checkImports(file, code) {
+  const broken = [];
+  for (const match of code.matchAll(/\bfrom\s+["'](\.[^"']*)["']/g)) {
+    const spec = match[1];
+    const target = posix.normalize(posix.join(posix.dirname(relative(ROOT, file).replace(/\\/g, "/")), spec));
+    try {
+      await access(join(ROOT, target));
+    } catch {
+      broken.push({ line: code.slice(0, match.index).split("\n").length, spec, target });
+    }
+  }
+  return broken;
+}
+
 for (const file of files) {
   const raw = await readFile(file, "utf8");
   const code = blankOut(raw);
@@ -238,6 +261,14 @@ for (const file of files) {
   for (const call of collectCalls(code)) {
     if (declared.has(call.name) || GLOBALS.has(call.name)) continue;
     problems.push({ file: relative(ROOT, file).replace(/\\/g, "/"), line: call.line, name: call.name });
+  }
+  // 路径校验必须用保留字符串的版本：默认版本会把 "./core/dom.js" 挖成空串
+  for (const bad of await checkImports(file, blankOut(raw, { keepStrings: true }))) {
+    problems.push({
+      file: relative(ROOT, file).replace(/\\/g, "/"),
+      line: bad.line,
+      name: `import "${bad.spec}" → ${bad.target} 不存在`,
+    });
   }
 }
 
@@ -251,10 +282,12 @@ for (const item of problems) {
   if (!byFile.has(item.file)) byFile.set(item.file, []);
   byFile.get(item.file).push(item);
 }
-console.error(`发现 ${problems.length} 处「调用了未声明/未导入的函数」：\n`);
+console.error(`发现 ${problems.length} 处「未声明调用 / 导入路径不存在」：\n`);
 for (const [file, items] of byFile) {
   console.error(`  ${file}`);
-  for (const item of items) console.error(`    L${item.line}  ${item.name}(...)`);
+  for (const item of items) {
+    console.error(item.name.startsWith("import ") ? `    L${item.line}  ${item.name}` : `    L${item.line}  ${item.name}(...)`);
+  }
   console.error("");
 }
 process.exit(1);

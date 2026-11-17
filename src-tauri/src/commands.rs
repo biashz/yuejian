@@ -1,5 +1,6 @@
 use crate::markdown;
 use crate::store::{self, Book, Category, Progress, Settings, StoreState};
+use crate::text;
 use serde::Serialize;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
@@ -8,6 +9,8 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 const MAX_TEXT_SIZE: u64 = 16 * 1024 * 1024;
+/// 导入时统计字数的上限：再大就跳过，不为书架上的一个数字去读整份文件
+const COUNT_TEXT_SIZE: u64 = 2 * 1024 * 1024;
 /// asset 协议失效时兜底读取的上限，超过后直接报错而不是把内存吃光
 const MAX_PDF_BYTES: u64 = 128 * 1024 * 1024;
 /// 单次 range 读取的安全上限：正常页面对象远小于该值，
@@ -35,11 +38,24 @@ fn quiet(command: &mut std::process::Command) -> &mut std::process::Command {
     command
 }
 
+/// 文档类型判定：pdf / markdown / text。
+///
+/// 文本类不再逐个枚举扩展名——`text::classify` 那一张表同时服务于
+/// 「能不能打开」「默认哪种视图」「用什么语言高亮」三件事，避免三处各写一份。
 fn detect_kind(path: &Path) -> Option<&'static str> {
-    match path.extension()?.to_string_lossy().to_lowercase().as_str() {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    match ext.as_str() {
         "pdf" => Some("pdf"),
         "md" | "markdown" | "mdown" => Some("markdown"),
-        _ => None,
+        _ => text::is_text(&ext, &name).then_some("text"),
     }
 }
 
@@ -62,6 +78,19 @@ fn build_book(path: &Path) -> Result<Book, String> {
                     title = heading;
                 }
                 words = markdown::word_count(&source);
+            }
+        }
+    } else if kind == "text" {
+        // 只对小文件统计字数：导入一份 200MB 的日志时不该为了书架上的一个数字
+        // 把它整个读一遍，那是肉眼可见的卡顿。
+        // 书名仍然用文件名：日志首行是时间戳、代码首行是 `use …`，
+        // 拿它们当书名只会让书架更难扫读。
+        if meta.len() <= COUNT_TEXT_SIZE {
+            if let Ok(bytes) = fs::read(&canonical) {
+                if !text::looks_binary(&bytes) {
+                    let (source, _) = text::decode(&bytes);
+                    words = source.chars().filter(|c| !c.is_whitespace()).count() as u32;
+                }
             }
         }
     }
@@ -100,12 +129,23 @@ pub fn save_settings(state: State<'_, StoreState>, settings: Settings) -> Result
     store::persist(&data, &state.dir)
 }
 
+/// 文件对话框里默认列出的扩展名。
+///
+/// 只影响「默认看得见哪些」：用户仍可用「所有文件」选任意文件，
+/// 不支持的会在导入时被跳过（前端会提示跳过了几个）。
+const PICK_EXTS: &[&str] = &[
+    "pdf", "md", "markdown", "mdown", "txt", "text", "log", "nfo", "csv", "tsv", "json", "yml",
+    "yaml", "toml", "ini", "conf", "xml", "html", "css", "js", "ts", "rs", "go", "py", "java",
+    "c", "h", "cpp", "cs", "php", "rb", "sh", "sql", "diff",
+];
+
 /// 调起系统文件对话框，返回选中的路径
 #[tauri::command]
 pub async fn pick_files() -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(|| {
         rfd::FileDialog::new()
-            .add_filter("文档", &["pdf", "md", "markdown", "mdown"])
+            .add_filter("文本与文档", PICK_EXTS)
+            .add_filter("所有文件", &["*"])
             .set_title("导入到阅笺")
             .pick_files()
             .unwrap_or_default()
@@ -152,6 +192,8 @@ pub enum OpenDoc {
         dir: String,
         words: u32,
     },
+    /// 文本类（txt / log / csv / 代码配置）：正文 + 元信息
+    Text(text::TextDoc),
 }
 
 #[tauri::command]
@@ -176,6 +218,43 @@ pub async fn open_book(state: State<'_, StoreState>, id: String) -> Result<OpenD
             pages: book.pages,
             size,
         });
+    }
+
+    if book.kind == "text" {
+        let path = PathBuf::from(&book.path);
+        let meta = fs::metadata(&path).map_err(|err| format!("读取文本失败：{err}"))?;
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let (mode, lang) = text::classify(&ext, &file_name).unwrap_or(("plain", ""));
+
+        // 解码是 CPU 活，几十 MB 的文本足够卡住一次 UI 帧，放到阻塞线程池
+        let doc = tauri::async_runtime::spawn_blocking(move || {
+            let file = fs::File::open(&path).map_err(|err| format!("读取文本失败：{err}"))?;
+            let truncated = meta.len() > text::MAX_VIEW_BYTES;
+            let mut buf = Vec::with_capacity(meta.len().min(text::MAX_VIEW_BYTES) as usize);
+            file.take(text::MAX_VIEW_BYTES)
+                .read_to_end(&mut buf)
+                .map_err(|err| format!("读取文本失败：{err}"))?;
+
+            if text::looks_binary(&buf) {
+                return Err("这看起来不是文本文件（检测到二进制内容）".to_string());
+            }
+
+            // 截断点退到最后一个完整行，否则末尾会多出一个 U+FFFD
+            let bytes = if truncated { text::truncate_at_line(&buf) } else { &buf[..] };
+            let (source, encoding) = text::decode(bytes);
+            Ok::<_, String>(text::build(source, encoding.name(), lang, mode, truncated))
+        })
+        .await
+        .map_err(|err| err.to_string())??;
+
+        return Ok(OpenDoc::Text(doc));
     }
 
     let path = PathBuf::from(&book.path);

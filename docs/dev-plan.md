@@ -56,14 +56,14 @@ yuejian/
 │  │  ├─ update-ui.js    更新状态机与更新卡片
 │  │  ├─ bind/           事件绑定（index 聚合 + 五个事件域）
 │  │  ├─ api.js / i18n.js / update.js
-│  │  └─ reader-pdf.js / reader-md.js
+│  │  └─ reader-pdf.js / reader-md.js / reader-text.js
 │  └─ vendor/{pdfjs,highlight}/   离线第三方资源
 ├─ src-tauri/
 │  ├─ Cargo.toml
 │  ├─ tauri.conf.json
 │  ├─ capabilities/default.json
 │  ├─ icons/
-│  └─ src/{main,lib,store,markdown,commands}.rs
+│  └─ src/{main,lib,store,markdown,text,commands}.rs
 ├─ scripts/vendor-assets.mjs      把 npm 依赖拷进 src/vendor
 └─ package.json
 ```
@@ -97,7 +97,7 @@ yuejian/
 8. **分类的三层分工**：`categories.js` 只做纯计算（排序/计数/筛选判定），`category-ui.js` 只把 state 画成 DOM 并收集输入，`actions.js` 是唯一写入口（调用命令 + 刷新书架）。弹层只返回 `{action, name, color}`，不自己发请求，避免 UI 模块直接持有后端调用。
 9. **选中态不重绘**：`Ctrl+点击` 只切 class 并刷新批量条，不重建列表。整表 `innerHTML` 重建会把滚动位置打回顶部，长书架下体验很差。
 10. **分类删改的引用完整性**：`delete_category` 在**同一把锁**内删除分类并把其下文档 `categoryId` 清空，否则会留下指向已删分类的悬挂引用；前端额外用 `pruneSelection()` 丢弃指向已移除文档的选中项。
-11. **「漏 import」用脚本兜住**：模块拆分后函数被调用却没 import，链接期不报错（标识符当全局查），只有执行到那一行才抛 `XXX is not defined`。项目无打包器也无 linter，因此用 `npm run check`（`scripts/check-undefined.mjs`）兜底：挖空注释与字符串后，比对「调用式标识符」与「本文件已声明的名字」，未声明即报错并以退出码 1 拦截。该脚本上线后一次性扫出 3 处真实遗漏（`updateToolbarPage` / `scrollPaneToRatio` / `renderToolbar`），均已修复。静态检查管不到的运行时问题由 `npm run smoke`（`scripts/smoke-reader.mjs`）负责：真 Chrome + 注入 `__TAURI__` 桩跑完整阅读流程，PDF 现场生成、任何未捕获异常即失败。
+11. **「漏 import」用脚本兜住**：模块拆分后函数被调用却没 import，链接期不报错（标识符当全局查），只有执行到那一行才抛 `XXX is not defined`。项目无打包器也无 linter，因此用 `npm run check`（`scripts/check-undefined.mjs`）兜底：挖空注释与字符串后，比对「调用式标识符」与「本文件已声明的名字」，未声明即报错并以退出码 1 拦截。该脚本上线后一次性扫出 3 处真实遗漏（`updateToolbarPage` / `scrollPaneToRatio` / `renderToolbar`），均已修复。同一脚本还校验相对导入的路径是否真的存在：写错一级目录（把 `./core/dom.js` 写成 `../core/dom.js`）时，被导入的名字照样被登记为「已声明」，`node --check` 与上面那套比对全部通过，但浏览器会在模块链接期对整个模块图 404——现象是页面一秒都没启动、控制台零报错、`window.__errors` 为空，极难定位。该检查上线后正是靠它确认了 `reader-text.js` 的这类路径错误。静态检查管不到的运行时问题由 `npm run smoke`（`scripts/smoke-reader.mjs`）负责：真 Chrome + 注入 `__TAURI__` 桩跑完整阅读流程，PDF 现场生成、任何未捕获异常即失败。
 12. **更新下载复用 curl，但代理必须自己补**：`download_update` 交给系统自带 `curl`，不引入 HTTP 依赖。坑在于 curl **只认 `HTTPS_PROXY` 类环境变量，不读 Windows 系统代理**，而 WebView2 里的 `fetch` 会读——于是「检查更新能查到、点下载一直 0 字节」，浏览器却打得开下载页。现在读一次注册表 `Internet Settings` 补上 `--proxy`（环境变量已设则不插手），并用 `--connect-timeout 20`、`--speed-limit 1024 --speed-time 40` 把无限等待变成明确失败；失败时把 curl 退出码与 stderr 翻译成可处置的提示。前端另有看门狗：12 秒无字节提示「正在连接」、45 秒无新字节提示「下载没有响应」并放出发布页入口。
     **子进程一律 `quiet()`**：应用是 GUI 子系统（`windows_subsystem = "windows"`），自己没有控制台，此时启动 `curl.exe` / `reg.exe` / `cmd.exe` 这类控制台程序，Windows 会为它新建一个控制台窗口——curl 一跑几十秒，那个黑框就整个下载期间挂在桌面上。统一走 `commands::quiet()`（`CREATE_NO_WINDOW`）后再 `spawn`，输出仍可经管道读，桌面干净。
 13. **升级拆成两个独立、各自完整的阶段**：`nsis/installer.nsi` 里 `YueJianUninstallPrevious` 的时序错一步，结果都是「升级装不上」，而且失败时旧版本原封不动，看起来就像「自动卸载功能没了」。因此把「升级」明确切成 **阶段 1/2 检测并完整卸载旧版本** + **阶段 2/2 完整安装新版本**，`Section Install` 只有在阶段 1/2 明确「本机已无旧版本」之后才动手写文件，两个阶段在 `DetailPrint` 里各自带 `阶段 1/2`／`阶段 2/2` 前缀，卡在哪一半一眼可辨。阶段 1/2 有四个出口，都必须把「卸载」这件事做到完整：①检测不到旧版本 → `$(YueJianNoOld)` 后返回；②检测到且有卸载程序 → 静默卸载后补删残留；③检测到但 `uninstall.exe` 已丢失（目录被手工删过、被安全软件清掉）→ 不再静默 `Return`（那样会留下指向旧路径的「设置 → 应用」记录），改为 `YueJianRemoveResidual` 手工补完：删主程序（占着就等 800ms 再删）→ 删指向旧 exe 的快捷方式 → `RMDir` → 删 `${UNINSTKEY}`；④卸载后主程序仍在 → `Abort` 并给出可操作提示。
@@ -109,6 +109,11 @@ yuejian/
 14. **安装提示用非模态卡片，不用模态弹框**：更新包下载完成时用户多半正在读东西，铺遮罩 + 抢焦点的模态框会把阅读打断（还要处理 ESC 与全局快捷键的抢占）。因此做成右下角常驻卡片（`#installPrompt`，`role="dialog"` 但**不带** `aria-modal`）：不铺遮罩、`card.focus()` 一律不调、不注册任何全局键盘监听，点「立即安装」才 `installUpdate()`，「稍后再说」只收起卡片——状态不丢，侧栏红点与设置面板里的按钮仍在。文案与 URL 都走 i18n，标题里的版本号由 JS 填（带参数的键不能挂 `data-i18n`，否则会渲染出字面量 `{version}`）。
 
 15. **PDF 默认「适合宽度」而不是「适合页面」**：默认值就是 `PdfReader.open()` 里 `zoom == null` 时的分支——`fitMode = "width"`，比例由 `fitWidthZoom()` 按可视区算（`clientWidth - 64` 除以基准页宽）。理由：正文阅读要的是字够大，整页看全属于排版审视，是少数场景，放进缩放菜单即可。代价是页面高度超过一屏、看得到页顶看不到页底，所以「下一页」用页码跳转与纵向滚动配合（`handleResize` 里高度变化的适配只对 `"page"` 生效，`"width"` 只跟宽度走）。缩放比例仍然不跨会话恢复：每次打开都重算，避免在窄窗口记下 165%、换到分栏后变成一堆超宽页。
+
+16. **文本编码不假定 UTF-8**：Windows 记事本默认存 ANSI（中文即 GBK），`fs::read_to_string` 遇到 GBK 会整篇失败（`stream did not contain valid UTF-8`），报错还指向不了真正原因。因此文本读取走三段式：①**BOM**（`EF BB BF` / `FF FE` / `FE FF`）是硬证据，存在即按对应编码解码；②无 BOM 时用 `chardetng`（Firefox 的检测器，纯 Rust）读前 8KB 猜编码——判错也只是个别字符受影响，不会整篇失败；③交给 `encoding_rs`（同为 Firefox 实现）**有损**解码，无法映射的字节替换为 `�` 而不是抛错。选这两个库而不是 `encoding` 之类，是因为它们就是 Firefox 在用的那一套，GBK / GB18030 / Shift_JIS 的判定质量有长期实践背书，且纯 Rust、无需外部依赖；代价是 `encoding_rs` 会把完整码表打进二进制（约 300–400KB），对本项目可接受。判定结果（`encoding`）与换行符（`eol`）一并返回给前端，显示在「信息」面板——用户看到乱码时能立刻区分「文件本身有问题」还是「应用判错了」。
+
+    配套两条约束：①**超限不静默**——超过 `MAX_VIEW_BYTES`（8MB）只读前 8MB，在最后一个完整行处截断（保证不出现半行），以 toast 告知并在「信息」面板标注，绝不悄悄渲染半截；②**节点数恒定**——等宽视图整篇只有两个 `<pre>`（行号栏 + 正文），不按行建节点。一份 5MB 日志十几万行，按行建 DOM 会卡几秒且滚动持续掉帧；两个 `<pre>` 靠相同 `line-height` 天然对齐，节点数与行数无关，冒烟里直接把「节点数 ≤ 4」写成断言，防止后续重构退回逐行渲染。
+
 
 ## 5. 风险与对策
 

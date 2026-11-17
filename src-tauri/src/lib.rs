@@ -2,6 +2,7 @@ mod commands;
 mod markdown;
 pub mod paths;
 mod store;
+mod text;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 

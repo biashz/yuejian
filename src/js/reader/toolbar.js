@@ -82,6 +82,33 @@ function renderToolbar() {
       <div class="tool-group">
         <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
       </div>${paneTools}`;
+  } else if (book.kind === "text") {
+    // 文本类：视图三态（一期只有正文/等宽，「表格」随 CSV 那一期上线）
+    const pane = activePane();
+    const view = pane?.textView || { mode: "code", gutter: true, wrap: false };
+    const doc = pane?.doc || {};
+    const stat = view.mode === "code"
+      ? t("reader.textStatLines", { lines: doc.lines || 0 })
+      : t("reader.textStatChars", { chars: doc.chars || 0 });
+    bar.innerHTML = `
+      <div class="tool-group">
+        <button class="tool-btn ${view.mode === "plain" ? "is-on" : ""}" data-act="text-plain" title="${t("reader.textPlainTip")}">${t("reader.textPlain")}</button>
+        <button class="tool-btn ${view.mode === "code" ? "is-on" : ""}" data-act="text-code" title="${t("reader.textCodeTip")}">${t("reader.textCode")}</button>
+      </div>
+      <span class="tool-sep"></span>
+      <div class="tool-group">
+        <button class="tool-btn ${view.gutter ? "is-on" : ""}" data-act="text-gutter"
+          ${view.mode === "code" && view.wrap ? "disabled" : ""}
+          title="${view.mode === "code" && view.wrap ? t("reader.textGutterOffTip") : t("reader.textGutterTip")}">${t("reader.textGutter")}</button>
+        <button class="tool-btn ${view.wrap ? "is-on" : ""}" data-act="text-wrap"
+          ${view.mode === "plain" ? "disabled" : ""}
+          title="${view.mode === "plain" ? t("reader.textWrapPlainTip") : t("reader.textWrapTip")}">${t("reader.textWrap")}</button>
+      </div>
+      <span class="tool-sep"></span>
+      <div class="tool-group">
+        <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
+      </div>
+      <span class="page-total">${stat}</span>${paneTools}`;
   } else {
     const settings = state.settings;
     bar.innerHTML = `

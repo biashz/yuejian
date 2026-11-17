@@ -2,9 +2,9 @@
 
 [English](README.en.md) · 简体中文
 
-> 把 PDF 论文与 Markdown 笔记放进同一个安静的阅读空间。
+> 把 PDF 论文、Markdown 笔记与随手下载的文本文件放进同一个安静的阅读空间。
 
-本地优先的桌面阅读器：Rust + Tauri 2 外壳、pdf.js 渲染 PDF、comrak 渲染 Markdown。无账号、无云同步、无遥测，所有文档与阅读记录都留在本机。
+本地优先的桌面阅读器：Rust + Tauri 2 外壳、pdf.js 渲染 PDF、comrak 渲染 Markdown、encoding_rs 解码纯文本。无账号、无云同步、无遥测，所有文档与阅读记录都留在本机。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-b23a2b.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24c8db.svg)](https://tauri.app)
@@ -17,7 +17,8 @@
 ## 功能
 
 - **PDF 阅读**：pdf.js 连续滚动渲染，叠加透明文本层支持选择复制；长文档按视口懒加载。
-- **侧栏三视图**：文档大纲跳章节、缩略图定位、全文档关键词搜索与高亮。
+- **文本阅读**：`txt` / `log` / `csv` 与三十余种代码、配置扩展名直接打开；正文与等宽双视图、行号、软换行；按 BOM + 探测自动识别编码，中文记事本存的 GBK 文本也不会乱码。
+- **侧栏四视图**：文档大纲跳章节、缩略图定位、文件信息（编码 / 行数 / 换行符）、全文档关键词搜索与高亮。
 - **Markdown 阅读**：Rust 端 comrak 渲染 GFM（表格、任务列表、脚注、删除线、自动链接），标题自动生成目录锚点，代码块语法高亮。
 - **阅读排版**：纸白 / 夜读 / 护眼三套主题；正文字号 15 / 17 / 19 / 21px、行高 1.7 / 1.9 / 2.1、版心 620 / 720 / 820px；专注模式收起非正文元素。
 - **阅读进度**：页码、缩放与滚动位置自动保存，下次打开回到原处。
@@ -54,6 +55,7 @@
 | 前端 | 原生 HTML / CSS / ES Module | 无打包器、无构建步骤，启动即加载 |
 | PDF 渲染 | pdf.js | 画布渲染 + 文本层 + 搜索 |
 | Markdown | comrak | Rust 侧 GFM 解析，输出净化后的 HTML |
+| 文本编码 | encoding_rs + chardetng | Firefox 同源实现，BOM + 探测判定，GBK / GB18030 不乱码 |
 | 代码高亮 | highlight.js | 官方浏览器构建，随包离线分发 |
 | 持久化 | serde_json | 单文件 `state.json`，先写临时文件再重命名 |
 | 应用更新 | GitHub Releases API + 系统 curl | 静默检查最新发布，后台下载 NSIS 安装包，退出应用后由安装器替换 |
@@ -74,6 +76,7 @@ yuejian/
 │   │   ├── update.js        # 更新桥接：查询 Release、下载、启动安装器
 │   │   ├── reader-pdf.js    # pdf.js 封装：渲染、翻页、缩放、搜索
 │   │   ├── reader-md.js     # Markdown 渲染与目录滚动同步
+│   │   ├── reader-text.js   # 文本渲染：正文 / 等宽双视图、行号、软换行
 │   │   ├── shelf.js         # 书架：列表 / 网格 / 继续阅读 / 统计 / 三重筛选
 │   │   ├── categories.js    # 分类纯计算：排序、计数、配色、筛选判定
 │   │   ├── category-ui.js   # 分类区、批量条与分类编辑弹层
@@ -98,6 +101,7 @@ yuejian/
 │   │   ├── lib.rs           # 窗口创建与命令注册
 │   │   ├── commands.rs      # 书架、导入、进度、设置等命令
 │   │   ├── markdown.rs      # Markdown → HTML 与目录提取
+│   │   ├── text.rs          # 文本编码判定、解码、类型分类、截断
 │   │   ├── store.rs         # state.json 读写与数据结构
 │   │   └── paths.rs         # 运行时数据目录解析
 │   ├── tauri.conf.json      # 通用配置
@@ -135,7 +139,7 @@ npm run dev      # 增量编译 debug 版并启动应用
 | `npm run bundle` | 构建当前平台的安装包 |
 | `npm run vendor` | 同步前端离线资源到 `src/vendor`：pdf.js 取自 `node_modules`，highlight.js 下载官方浏览器构建 |
 | `npm run check` | 静态检查全部前端模块，报出「调用了但没声明/没导入」的函数；有问题时退出码为 1 |
-| `npm run smoke` | 用本机 Chrome 无头跑真浏览器冒烟（打开 Markdown/PDF、翻页、缩放、Ctrl+B），无未捕获异常才通过；未装 Chrome 时跳过 |
+| `npm run smoke` | 用本机 Chrome 无头跑真浏览器冒烟（打开 Markdown / PDF / 文本、翻页、缩放、文本双视图、Ctrl+B），无未捕获异常才通过；未装 Chrome 时跳过 |
 | `npm run version:bump` | 手动递增版本号（默认 patch，可加 `--minor` / `--major` / `--set 1.2.3`） |
 | `npm run tauri -- <args>` | 透传任意 Tauri CLI 参数 |
 
@@ -179,7 +183,7 @@ data/
       "path": "D:\\docs\\paper.pdf",
       "title": "纸页上的呼吸",
       "author": "",
-      "kind": "pdf",               // pdf | markdown
+      "kind": "pdf",               // pdf | markdown | text
       "size": 2483102,
       "pages": 6,
       "words": 0,

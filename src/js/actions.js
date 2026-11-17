@@ -33,11 +33,20 @@ async function importDocuments(paths) {
   renderLibrary();
   updateStatus();
 
+  // 不在前端维护「支持哪些扩展名」的副本：Rust 侧 text::classify 是唯一事实来源，
+  // 这里只比对导入后书架上真实存在的条目，得出「跳过了几个」
   const normalized = list.map((path) => path.replace(/\//g, "\\").toLowerCase());
-  const imported = state.books.find((book) => normalized.includes(book.path.toLowerCase()));
-  toast(t("toast.imported", { count: list.length }));
-  if (list.length === 1 && imported) openBook(imported.id);
-  return list.length;
+  const imported = state.books.filter((book) => normalized.includes(book.path.toLowerCase()));
+  const skipped = list.length - imported.length;
+  if (!imported.length) {
+    toast(t("toast.onlySupported"));
+    return 0;
+  }
+  toast(skipped
+    ? t("toast.importedSkipped", { count: imported.length, skipped })
+    : t("toast.imported", { count: imported.length }));
+  if (list.length === 1) openBook(imported[0].id);
+  return imported.length;
 }
 
 async function removeBook(id) {

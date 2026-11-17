@@ -36,7 +36,7 @@ function paletteItems(query) {
       group: t("palette.documents"),
       icon: book.kind === "pdf" ? "file-text" : "book-open",
       title: book.title,
-      sub: `${kindLabel(book.kind)} · ${formatRelative(book.lastOpenedAt)}`,
+      sub: `${kindLabel(book.kind, book)} · ${formatRelative(book.lastOpenedAt)}`,
       run: `open:${book.id}`,
     }));
 

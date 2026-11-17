@@ -538,6 +538,7 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .type-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--ink-3); }
 .type-dot.pdf { background: var(--accent); }
 .type-dot.md { background: var(--ok); }
+.type-dot.txt { background: var(--cat-indigo); }
 .progress-line {
   position: relative;
   height: 2px; margin-top: 6px;
@@ -1036,6 +1037,81 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .hljs-built_in, .hljs-type, .hljs-params { color: var(--ink-2); }
 html[data-theme="night"] .hljs-title,
 html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
+
+/* ---------- 文本类文档（txt / log / csv / 代码配置） ----------
+   复用 .md-doc 这个 <article>，通过 text-plain / text-code 切换排版。
+   等宽视图用两个 <pre>（行号 + 正文）而不是「一行一个 div」：
+   十几万行的日志也只有常数个节点，行高一致时天然对齐。 */
+.md-doc.text-plain .tx-para {
+  white-space: pre-wrap;
+  text-align: justify;
+  margin: 0 0 1.15em;
+}
+.md-doc.text-plain .tx-para:last-child { margin-bottom: 0; }
+.tx-empty {
+  color: var(--ink-3);
+  text-align: center;
+  padding: 72px 0;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+}
+
+/* 等宽：铺满可用宽度，长行横向滚动 */
+.md-doc.text-code {
+  max-width: none;
+  padding: 0 0 60px;
+}
+.tx-code { display: flex; align-items: flex-start; min-width: min-content; }
+.tx-code > pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.62;
+  tab-size: 4;
+}
+.tx-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex: none;
+  padding: 18px 10px 48px 22px;
+  text-align: right;
+  color: var(--ink-3);
+  user-select: none;
+  background: var(--paper);
+  border-right: 1px solid var(--line);
+}
+.tx-lines { flex: 1; padding: 18px 26px 48px 14px; color: var(--ink); }
+.md-doc.text-code.is-wrap .tx-lines { white-space: pre-wrap; word-break: break-word; }
+
+/* 侧栏「信息」：编码是重点，探测可能不准，所以要显眼 */
+.info-list { margin: 0; }
+.info-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.info-row:last-child { border-bottom: 0; }
+.info-row dt { font-size: 11.5px; color: var(--ink-3); }
+.info-row dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink);
+  text-align: right;
+  word-break: break-all;
+}
+.info-note {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
 
 /* 阅读工具栏 */
 .read-toolbar {
