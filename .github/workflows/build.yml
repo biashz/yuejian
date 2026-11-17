@@ -49,9 +49,14 @@ jobs:
           )
           mirror=""
           for url in "${candidates[@]}"; do
-            code=$(curl -s -o /dev/null -m 8 -w '%{http_code}' "$url/dists/jammy/Release" || true)
-            echo "探测 $url -> ${code:-超时}"
-            if [ "$code" = "200" ]; then mirror="$url"; break; fi
+            ok=1
+            for suite in jammy jammy-updates jammy-security; do
+              code=$(curl -s -o /dev/null -m 8 -w '%{http_code}' "$url/dists/$suite/Release" || true)
+              if [ "$code" != "200" ]; then ok=0; break; fi
+            done
+            echo "探测 $url -> $([ "$ok" = "1" ] && echo 可用 || echo 不可用)"
+            # 三个 suite 必须都能取到：缺 jammy-security 会让 apt-get update 直接失败
+            if [ "$ok" = "1" ]; then mirror="$url"; break; fi
           done
           if [ -z "$mirror" ]; then echo "所有候选镜像都不可用，拒绝继续" >&2; exit 1; fi
           echo "使用镜像 $mirror"
@@ -75,8 +80,9 @@ jobs:
           )
           export DEBIAN_FRONTEND=noninteractive
           sudo timeout 240 apt-get update "${APT_OPTS[@]}"
-          # 20 分钟上限：正常镜像 2–4 分钟就够，给慢镜像是留余地，不是给它 36 分钟
-          sudo timeout 1200 apt-get install -y --no-install-recommends "${APT_OPTS[@]}" \
+          # install 的超时给到 40 分钟：它的作用只是兜住「不失败也不前进」，不该把
+          # 「慢但能装完」（换成慢镜像时约 37 分钟）变成失败。真正的速度靠上面选镜像。
+          sudo timeout 2400 apt-get install -y --no-install-recommends "${APT_OPTS[@]}" \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
 
       - uses: actions/setup-node@v4
