@@ -23,3 +23,6 @@ dist/
 .DS_Store
 Thumbs.db
 *.log
+
+# 本地样本与临时试验文件
+.playground/

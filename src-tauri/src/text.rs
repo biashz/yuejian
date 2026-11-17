@@ -10,7 +10,8 @@
 //!    也要把文件显示出来，而不是把用户挡在错误信息外面。
 //!
 //! 编码识别不是 100% 准确的（短文件尤甚），因此 `encoding` 会回传给界面，
-//! 由「信息」面板显示出来，并允许用户手动换一个。
+//! 由「信息」面板显示出来——用户遇到乱码时，至少能据此判断是文件本身有问题
+//! 还是判定错了。手动切换编码留到后续阶段，此处不做。
 
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8};
 use serde::Serialize;
@@ -35,7 +36,8 @@ pub struct TextDoc {
     pub eol: String,
     /// 语法高亮的语言别名；空串表示不做高亮
     pub lang: String,
-    /// 默认视图模式：`plain` / `code` / `table`
+    /// 默认视图模式：`plain` / `code`。取值域里留了 `table`，但当前还没有表格渲染器，
+    /// 因此不会有文件被判定成 `table`（见 `classify` 里 csv 分支的说明）。
     pub mode: String,
     /// 是否只加载了文件开头一部分
     pub truncated: bool,
@@ -120,9 +122,8 @@ fn eol_of(text: &str) -> &'static str {
         "CRLF"
     } else if cr > lf && cr > 0 {
         "CR"
-    } else if lf > 0 || crlf > 0 {
-        "LF"
     } else {
+        // 只剩下 LF，或者整篇没有任何换行（单行文件按 LF 记，不影响显示）
         "LF"
     }
 }
@@ -151,8 +152,11 @@ pub fn classify(ext: &str, file_name: &str) -> Option<(&'static str, &'static st
     }
 
     let known = match ext.as_str() {
-        // 表格：一期先按等宽显示，二期再上表格视图
-        "csv" | "tsv" => ("table", ""),
+        // 表格：还没有表格渲染器，因此**必须**回 `code` 而不是预告一个不存在的 `table`。
+        // 回 `table` 会落到前端「非 code 即 plain」的兜底分支，CSV 于是被当成散文、
+        // 用宋体整段排下来，列完全对不齐；等宽 + 行号至少还能看出分隔符在哪。
+        // 表格视图上了之后再改回 `table`。
+        "csv" | "tsv" => ("code", ""),
 
         // 日志：没有语言可高亮，但需要行号与横向滚动
         "log" | "nfo" => ("code", ""),
@@ -269,7 +273,9 @@ mod tests {
     fn classify_common_extensions() {
         assert_eq!(classify("log", "a.log").unwrap().0, "code");
         assert_eq!(classify("txt", "a.txt").unwrap().0, "plain");
-        assert_eq!(classify("csv", "a.csv").unwrap().0, "table");
+        // 表格视图尚未实现，CSV 必须按等宽渲染；回 `table` 会让它掉进正文视图
+        assert_eq!(classify("csv", "a.csv").unwrap().0, "code");
+        assert_eq!(classify("tsv", "a.tsv").unwrap().0, "code");
         assert_eq!(classify("rs", "a.rs").unwrap().1, "rust");
         assert_eq!(classify("", "README").unwrap().0, "plain");
         assert_eq!(classify("", "Makefile").unwrap().0, "code");
