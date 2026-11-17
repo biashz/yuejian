@@ -36,8 +36,7 @@ pub struct TextDoc {
     pub eol: String,
     /// 语法高亮的语言别名；空串表示不做高亮
     pub lang: String,
-    /// 默认视图模式：`plain` / `code`。取值域里留了 `table`，但当前还没有表格渲染器，
-    /// 因此不会有文件被判定成 `table`（见 `classify` 里 csv 分支的说明）。
+    /// 默认视图模式：`plain` / `code` / `table`
     pub mode: String,
     /// 是否只加载了文件开头一部分
     pub truncated: bool,
@@ -152,11 +151,9 @@ pub fn classify(ext: &str, file_name: &str) -> Option<(&'static str, &'static st
     }
 
     let known = match ext.as_str() {
-        // 表格：还没有表格渲染器，因此**必须**回 `code` 而不是预告一个不存在的 `table`。
-        // 回 `table` 会落到前端「非 code 即 plain」的兜底分支，CSV 于是被当成散文、
-        // 用宋体整段排下来，列完全对不齐；等宽 + 行号至少还能看出分隔符在哪。
-        // 表格视图上了之后再改回 `table`。
-        "csv" | "tsv" => ("code", ""),
+        // 表格：表格视图按分隔符拆行，分隔符由前端从表头行数出来（.tsv 是制表符，
+        // 欧洲的 CSV 常用分号），比按扩展名硬编码更准
+        "csv" | "tsv" => ("table", ""),
 
         // 日志：没有语言可高亮，但需要行号与横向滚动
         "log" | "nfo" => ("code", ""),
@@ -277,9 +274,9 @@ mod tests {
     fn classify_common_extensions() {
         assert_eq!(classify("log", "a.log").unwrap().0, "code");
         assert_eq!(classify("txt", "a.txt").unwrap().0, "plain");
-        // 表格视图尚未实现，CSV 必须按等宽渲染；回 `table` 会让它掉进正文视图
-        assert_eq!(classify("csv", "a.csv").unwrap().0, "code");
-        assert_eq!(classify("tsv", "a.tsv").unwrap().0, "code");
+        // 表格视图已实现，CSV / TSV 回到 table 才是对的
+        assert_eq!(classify("csv", "a.csv").unwrap().0, "table");
+        assert_eq!(classify("tsv", "a.tsv").unwrap().0, "table");
         assert_eq!(classify("rs", "a.rs").unwrap().1, "rust");
         assert_eq!(classify("graphql", "a.graphql").unwrap().1, "graphql");
         // .vbs 是 VBScript，不能被当成 VB.NET 高亮

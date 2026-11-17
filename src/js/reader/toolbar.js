@@ -83,26 +83,35 @@ function renderToolbar() {
         <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
       </div>${paneTools}`;
   } else if (book.kind === "text") {
-    // 文本类：视图三态（一期只有正文/等宽，「表格」随 CSV 那一期上线）
+    // 文本类：视图三态。表格只对 CSV/TSV 出现——doc.mode 是打开时按扩展名定的
+    // 默认模式，不会因为用户切视图而变，用它判断最稳
     const pane = activePane();
     const view = pane?.textView || { mode: "code", gutter: true, wrap: false };
     const doc = pane?.doc || {};
-    const stat = view.mode === "code"
-      ? t("reader.textStatLines", { lines: doc.lines || 0 })
-      : t("reader.textStatChars", { chars: doc.chars || 0 });
+    const tableMode = doc.mode === "table";
+    const table = pane?.table;
+    const stat = view.mode === "table"
+      ? t("reader.textStatTable", { rows: table?.rows || 0, cols: table?.cols || 0 })
+      : view.mode === "code"
+        ? t("reader.textStatLines", { lines: doc.lines || 0 })
+        : t("reader.textStatChars", { chars: doc.chars || 0 });
+    // 行号与软换行只对等宽视图有意义：表格自带行号列，正文不需要行号
+    const codeView = view.mode === "code";
+    const gutterOff = codeView && view.wrap;
     bar.innerHTML = `
       <div class="tool-group">
         <button class="tool-btn ${view.mode === "plain" ? "is-on" : ""}" data-act="text-plain" title="${t("reader.textPlainTip")}">${t("reader.textPlain")}</button>
-        <button class="tool-btn ${view.mode === "code" ? "is-on" : ""}" data-act="text-code" title="${t("reader.textCodeTip")}">${t("reader.textCode")}</button>
+        <button class="tool-btn ${codeView ? "is-on" : ""}" data-act="text-code" title="${t("reader.textCodeTip")}">${t("reader.textCode")}</button>
+        ${tableMode ? `<button class="tool-btn ${view.mode === "table" ? "is-on" : ""}" data-act="text-table" title="${t("reader.textTableTip")}">${t("reader.textTable")}</button>` : ""}
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">
-        <button class="tool-btn ${view.gutter ? "is-on" : ""}" data-act="text-gutter"
-          ${view.mode === "code" && view.wrap ? "disabled" : ""}
-          title="${view.mode === "code" && view.wrap ? t("reader.textGutterOffTip") : t("reader.textGutterTip")}">${t("reader.textGutter")}</button>
-        <button class="tool-btn ${view.wrap ? "is-on" : ""}" data-act="text-wrap"
-          ${view.mode === "plain" ? "disabled" : ""}
-          title="${view.mode === "plain" ? t("reader.textWrapPlainTip") : t("reader.textWrapTip")}">${t("reader.textWrap")}</button>
+        <button class="tool-btn ${view.gutter && codeView ? "is-on" : ""}" data-act="text-gutter"
+          ${codeView && !gutterOff ? "" : "disabled"}
+          title="${gutterOff ? t("reader.textGutterOffTip") : t("reader.textGutterTip")}">${t("reader.textGutter")}</button>
+        <button class="tool-btn ${view.wrap && codeView ? "is-on" : ""}" data-act="text-wrap"
+          ${codeView ? "" : "disabled"}
+          title="${codeView ? t("reader.textWrapTip") : t("reader.textWrapPlainTip")}">${t("reader.textWrap")}</button>
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">

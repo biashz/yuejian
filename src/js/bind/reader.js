@@ -132,13 +132,16 @@ export function bindReaderEvents() {
       renderToolbar();
       persistSettings();
     }
-    if (act === "text-plain" || act === "text-code") {
+    if (act === "text-plain" || act === "text-code" || act === "text-table") {
       const pane = activePane();
       if (pane?.textView) {
-        pane.textView.mode = act === "text-plain" ? "plain" : "code";
-        // 两种视图的常用开关不一样：正文不常要行号，等宽几乎总要有
-        pane.textView.gutter = pane.textView.mode === "code";
-        // 正文与等宽的结构不同，这一处必须重绘
+        const mode = act === "text-plain" ? "plain" : act === "text-code" ? "code" : "table";
+        pane.textView.mode = mode;
+        // 每种视图各有一套常用开关：正文不要行号、要软换行；等宽反过来；
+        // 表格自带行号列，两个开关都不适用
+        pane.textView.gutter = mode === "code";
+        pane.textView.wrap = mode === "plain";
+        // 三种视图的结构都不同，必须重绘
         refreshTextView(pane);
       }
     }

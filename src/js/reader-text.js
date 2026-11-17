@@ -16,6 +16,7 @@
  */
 import { escapeHtml } from "./core/dom.js";
 import { t } from "./i18n.js";
+import { buildTable } from "./reader-csv.js";
 
 /**
  * 超过这个字符数就不做语法高亮，只显示等宽纯文本。
@@ -30,11 +31,17 @@ export const HIGHLIGHT_MAX_CHARS = 200 * 1024;
 
 /**
  * 首次打开某份文本时的视图状态。
- * 代码与日志默认等宽（要行号和横向滚动），其余默认正文（要宋体阅读感）。
+ * 代码与日志默认等宽（要行号和横向滚动），表格类默认表格，其余默认正文。
  */
 export function defaultTextView(doc) {
-  const code = doc.mode === "code";
-  return { mode: code ? "code" : "plain", gutter: code, wrap: !code };
+  const mode = doc.mode === "code" ? "code" : doc.mode === "table" ? "table" : "plain";
+  return {
+    mode,
+    // 行号只属于等宽视图：表格自带行号列，正文不需要行号
+    gutter: mode === "code",
+    // 软换行只属于正文；等宽靠横向滚动，表格靠单元格自身换行
+    wrap: mode === "plain",
+  };
 }
 
 /** 归一化换行：CRLF / CR 一律按 LF 处理，行号与分段才不会错位 */
@@ -44,13 +51,13 @@ function normalize(text) {
 
 /** 视图对应的类名；mode 之外的两个开关都只影响类名 */
 function viewClass(view) {
-  const code = view.mode === "code";
+  const mode = view.mode === "code" ? "code" : view.mode === "table" ? "table" : "plain";
   return [
     "md-doc",
     "is-text",
-    code ? "text-code" : "text-plain",
-    view.wrap ? "is-wrap" : "",
-    code && view.gutter ? "show-gutter" : "",
+    `text-${mode}`,
+    mode === "code" && view.wrap ? "is-wrap" : "",
+    mode === "code" && view.gutter ? "show-gutter" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -73,16 +80,17 @@ function gutterText(count) {
 
 /**
  * 渲染到容器（复用 .md-doc 这个 <article>，通过类名切换排版）。
- * @returns {number} 渲染出的行数（正文视图按段落折算），用于状态栏
+ * @returns {{blocks: number, table: object|null}} blocks 用于状态栏；
+ *   table 是表格视图的摘要（行列数、分隔符），工具栏与信息面板要用
  */
 export function renderText(doc, container, view) {
   const text = normalize(doc.text || "");
-  const mode = view.mode === "code" ? "code" : "plain";
+  const mode = view.mode === "code" ? "code" : view.mode === "table" ? "table" : "plain";
   container.className = viewClass({ ...view, mode });
 
   if (!text.trim()) {
     container.innerHTML = `<p class="tx-empty">${t("reader.textEmpty")}</p>`;
-    return 0;
+    return { blocks: 0, table: null };
   }
 
   if (mode === "plain") {
@@ -91,7 +99,13 @@ export function renderText(doc, container, view) {
     container.innerHTML = paras
       .map((para) => `<p class="tx-para">${escapeHtml(para)}</p>`)
       .join("");
-    return paras.length;
+    return { blocks: paras.length, table: null };
+  }
+
+  if (mode === "table") {
+    const summary = buildTable(text);
+    container.innerHTML = summary.html;
+    return { blocks: summary.rows, table: summary };
   }
 
   const body = text.replace(/\n+$/, "");
@@ -101,7 +115,7 @@ export function renderText(doc, container, view) {
     `<pre class="tx-gutter" aria-hidden="true">${gutterText(lineCount)}</pre>` +
     `<pre class="tx-lines">${escapeHtml(body)}</pre>` +
     `</div>`;
-  return lineCount;
+  return { blocks: lineCount, table: null };
 }
 
 /* ---------------- 语法高亮 ---------------- */

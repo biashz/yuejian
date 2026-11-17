@@ -129,6 +129,26 @@ const RUST_CODE = [
 /** 超过 HIGHLIGHT_MAX_CHARS（200KB）的代码：应当放弃高亮，只给等宽纯文本 */
 const BIG_CODE = RUST_CODE.repeat(Math.ceil((220 * 1024) / RUST_CODE.length));
 
+/**
+ * CSV 样本：5 列。
+ * 第 2 行第 5 列含半角逗号且在引号内——被拆成两列就是解析错了。
+ * 最后一行只有 4 列——渲染时要补到 5 列，不能错位。
+ * 中间塞满 120 行，是为了让表格真的能纵向滚动：只有几行时「表头粘住」根本测不出来。
+ */
+const CSV_ROWS = [
+  "日期,书名,作者,进度,备注",
+  '2026-11-16,项脊轩志,归有光,100%,"短，但读完很久"',
+  '2026-11-17,营造法式,李诫,32%,"图版多,页边窄"',
+];
+for (let i = 0; i < 120; i += 1) {
+  CSV_ROWS.push(`2026-10-${String((i % 28) + 1).padStart(2, "0")},书目 ${i},作者 ${i},${i % 100}%,备注 ${i}`);
+}
+CSV_ROWS.push("2026-11-18,长物志,文震亨,8%");
+const CSV_SAMPLE = CSV_ROWS.join("\n");
+
+/** TSV 样本：制表符分隔，用来验证分隔符是从内容判出来的而不是按扩展名 */
+const TSV_SAMPLE = ["id\t名称\t状态", "1\t书架\t完成", "2\t阅读\t进行中"].join("\n");
+
 function stubSource() {
   return `(() => {
   // 收集所有未捕获异常：模块里漏 import 的调用会在这里冒出来
@@ -154,6 +174,12 @@ function stubSource() {
       categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
     { id: "b-big", path: "C:/fixtures/big.rs", title: "big.rs", author: "本地", kind: "text",
       size: 235000, pages: 0, words: 0, addedAt: now - 5000, lastOpenedAt: now - 1000, favorite: false,
+      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+    { id: "b-csv", path: "C:/fixtures/reading-log.csv", title: "reading-log.csv", author: "本地", kind: "text",
+      size: 180, pages: 0, words: 0, addedAt: now - 4000, lastOpenedAt: now - 900, favorite: false,
+      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+    { id: "b-tsv", path: "C:/fixtures/reading-log.tsv", title: "reading-log.tsv", author: "本地", kind: "text",
+      size: 90, pages: 0, words: 0, addedAt: now - 3000, lastOpenedAt: now - 800, favorite: false,
       categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
   ];
   const SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true,
@@ -184,6 +210,16 @@ function stubSource() {
             kind: "text", text: ${JSON.stringify(BIG_CODE)}, encoding: "UTF-8",
             lines: ${BIG_CODE.split("\n").length}, chars: ${BIG_CODE.replace(/\s/g, "").length},
             eol: "LF", lang: "rust", mode: "code", truncated: false,
+          }));
+          if (args.id === "b-csv") return Promise.resolve(clone({
+            kind: "text", text: ${JSON.stringify(CSV_SAMPLE)}, encoding: "UTF-8",
+            lines: ${CSV_SAMPLE.split("\n").length}, chars: ${CSV_SAMPLE.replace(/\s/g, "").length},
+            eol: "LF", lang: "", mode: "table", truncated: false,
+          }));
+          if (args.id === "b-tsv") return Promise.resolve(clone({
+            kind: "text", text: ${JSON.stringify(TSV_SAMPLE)}, encoding: "UTF-8",
+            lines: ${TSV_SAMPLE.split("\n").length}, chars: ${TSV_SAMPLE.replace(/\s/g, "").length},
+            eol: "LF", lang: "", mode: "table", truncated: false,
           }));
           return Promise.resolve(clone({
             kind: "markdown", html: HTML, dir: "C:/fixtures", words: 3200,
@@ -338,8 +374,8 @@ async function main() {
     await send(ws, "Runtime.enable");
     await send(ws, "Page.addScriptToEvaluateOnNewDocument", { source: stubSource() });
     await send(ws, "Page.navigate", { url: `${origin}/` });
-    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length >= 5", "书架渲染");
-    check("启动完成，书架渲染 5 本书", true);
+    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length >= 7", "书架渲染");
+    check("启动完成，书架渲染 7 本书", true);
 
     const pane = '[data-pane-root="0"]';
     const errors = () => evaluate(ws, "window.__errors.slice()");
@@ -558,6 +594,128 @@ async function main() {
       `行号 ${bigInfo.gutterLines} / 正文 ${bigInfo.bodyLines}（样本 ${BIG_CODE.split("\n").length} 行）`);
     check("信息面板说明高亮被关闭", bigInfo.info.includes("200 KB"), bigInfo.info);
     check("大文件阅读无未捕获异常", errs.length === 0, errs.join(" | "));
+
+    /* --- CSV：默认进表格视图，引号内的逗号不能被拆列 --- */
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-csv"]').click()`);
+    await waitFor(ws, `!!document.querySelector('${pane} .tx-table')`, "表格渲染");
+    const csvInfo = await evaluate(ws, `(() => {
+      const root = document.querySelector('${pane} .md-doc');
+      const table = root.querySelector('.tx-table');
+      const headCells = [...table.querySelectorAll('thead th')].map((c) => c.textContent);
+      const bodyRows = [...table.querySelectorAll('tbody tr')];
+      const lastRow = bodyRows[bodyRows.length - 1];
+      const secondRow = bodyRows[1];
+      const headTh = table.querySelector('thead th:not(.tx-rowno)');
+      const rowNo = table.querySelector('tbody .tx-rowno');
+      return {
+        cls: root.className,
+        headCells,
+        bodyCount: bodyRows.length,
+        lastRowCells: [...lastRow.children].map((c) => c.textContent),
+        secondRowCells: [...secondRow.children].map((c) => c.textContent),
+        stickyHead: getComputedStyle(headTh).position,
+        stickyRowNo: getComputedStyle(rowNo).position,
+        rowNoFirst: rowNo.textContent,
+        hasTableBtn: !!document.querySelector('[data-act="text-table"]'),
+        tableBtnOn: document.querySelector('[data-act="text-table"]')?.classList.contains('is-on'),
+        gutterDisabled: document.querySelector('[data-act="text-gutter"]')?.disabled,
+        stat: document.querySelector('.read-toolbar .page-total')?.textContent?.trim() || "",
+        info: [...document.querySelectorAll('#ctxBody .info-row')].map((r) => r.textContent.trim()).join(" / "),
+      };
+    })()`);
+    errs = await errors();
+    check("CSV 默认按表格渲染", csvInfo.cls.includes("text-table") && csvInfo.tableBtnOn,
+      `class="${csvInfo.cls}"`);
+    check("表头 5 列且第 5 列是备注", csvInfo.headCells.join(",") === "#,日期,书名,作者,进度,备注",
+      `表头 ${csvInfo.headCells.join("|")}`);
+    check("引号内的逗号不拆列",
+      csvInfo.secondRowCells.length === 6 && csvInfo.secondRowCells[5] === "图版多,页边窄",
+      `第 2 行 ${csvInfo.secondRowCells.length} 格：${csvInfo.secondRowCells.slice(4).join(" | ")}`);
+    check("残缺行补齐到表头列数", csvInfo.lastRowCells.length === 6,
+      `末行 ${csvInfo.lastRowCells.length} 格：${csvInfo.lastRowCells.join(" | ")}`);
+    check("表头与行号列都是 sticky",
+      csvInfo.stickyHead === "sticky" && csvInfo.stickyRowNo === "sticky",
+      `表头 ${csvInfo.stickyHead} / 行号 ${csvInfo.stickyRowNo}，首个行号 "${csvInfo.rowNoFirst}"`);
+    check("表格统计为行 × 列", /行/.test(csvInfo.stat) && /列/.test(csvInfo.stat), `"${csvInfo.stat}"`);
+    check("表格视图下架掉行号开关", csvInfo.gutterDisabled === true);
+    check("信息面板标出分隔符为逗号", csvInfo.info.includes("逗号"), csvInfo.info);
+    check("CSV 阅读无未捕获异常", errs.length === 0, errs.join(" | "));
+    await shot(ws, "text-table-paper");
+
+    /* 真滚一次：computed 是 sticky 不等于粘住了，得看它滚完还在不在顶上 */
+    const stickyInfo = await evaluate(ws, `(() => {
+      const table = document.querySelector('${pane} .tx-table');
+      let scroller = table.parentElement;
+      while (scroller && scroller.scrollHeight <= scroller.clientHeight + 4) scroller = scroller.parentElement;
+      if (!scroller) return { ok: false, reason: "找不到滚动容器" };
+      // .scroll-area 带 scroll-behavior: smooth，直接赋 scrollTop 会启动动画，
+      // 同步读回来还是 0。测量前必须临时改成 auto
+      scroller.style.scrollBehavior = "auto";
+      // .md-doc 有 animation: rise 600ms both，进场时整块内容被 translateY 推下去，
+      // 期间量到的「表头偏移」是动画的位移，不是 sticky 的偏差（上一轮 1px、这一轮
+      // 10px 就是这么来的）。测量前把动画一律走到终点
+      document.getAnimations().forEach((a) => { try { a.finish(); } catch {} });
+      scroller.scrollTop = 600;
+      const head = table.querySelector('thead th:not(.tx-rowno)');
+      const rowNo = table.querySelector('thead .tx-rowno');
+      const box = scroller.getBoundingClientRect();
+      return {
+        ok: true,
+        scrolled: scroller.scrollTop,
+        headOffset: Math.round(head.getBoundingClientRect().top - box.top),
+        rowNoOffset: Math.round(rowNo.getBoundingClientRect().top - box.top),
+        // 表头自己（th）粘住了，但表头行（thead）应该已经滚出去——
+        // 这两个数一起看才能排除「整块没滚」造成的假通过
+        theadOffset: Math.round(table.querySelector("thead").getBoundingClientRect().top - box.top),
+      };
+    })()`);
+    check("滚动后表头仍贴在顶部（真的 sticky，不是只有声明）",
+      stickyInfo.ok && stickyInfo.scrolled > 500 && stickyInfo.theadOffset < -500
+        && Math.abs(stickyInfo.headOffset) <= 2 && Math.abs(stickyInfo.rowNoOffset) <= 2,
+      stickyInfo.ok
+        ? `表体滚出 ${-stickyInfo.theadOffset}px，表头与行号列偏移 ${stickyInfo.headOffset} / ${stickyInfo.rowNoOffset}px`
+        : stickyInfo.reason);
+    await shot(ws, "text-table-scrolled");
+
+    /* 行号不能缺：截图里看着像少一行时，靠 DOM 说话，别靠眼睛 */
+    const rowNos = await evaluate(ws, `(() => {
+      const cells = [...document.querySelectorAll('${pane} .tx-table tbody th.tx-rowno')];
+      const nums = cells.map((c) => c.textContent.trim());
+      const bad = nums.findIndex((v, i) => v !== String(i + 1));
+      const empty = nums.filter((v) => !v).length;
+      return { count: nums.length, bad, empty, head: nums.slice(0, 3).join(",") };
+    })()`);
+    check("表格行号从 1 连续到末行、无空格子",
+      rowNos.bad === -1 && rowNos.empty === 0 && rowNos.count === 123,
+      `${rowNos.count} 个行号，首个 "${rowNos.head}"，空格子 ${rowNos.empty}，首个断点 ${rowNos.bad}`);
+    // 横向滚动不测：本机视口 1440px 下 5 列撑不满，滚不动
+
+    /* --- TSV：分隔符靠内容判断，不按扩展名写死 --- */
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-tsv"]').click()`);
+    await waitFor(ws, `!!document.querySelector('${pane} .tx-table')`, "TSV 表格渲染");
+    const tsvInfo = await evaluate(ws, `(() => {
+      const table = document.querySelector('${pane} .tx-table');
+      return {
+        headCells: [...table.querySelectorAll('thead th')].map((c) => c.textContent),
+        text: table.querySelector('tbody tr').textContent,
+        info: [...document.querySelectorAll('#ctxBody .info-row')].map((r) => r.textContent.trim()).join(" / "),
+      };
+    })()`);
+    check("TSV 按制表符拆列", tsvInfo.headCells.join(",") === "#,id,名称,状态",
+      `表头 ${tsvInfo.headCells.join("|")}`);
+    check("信息面板标出分隔符为制表符", tsvInfo.info.includes("制表符"), tsvInfo.info);
+    check("TSV 阅读无未捕获异常", (await errors()).length === 0);
+
+    /* --- 表格按钮只对 CSV/TSV 出现：日志上不该有 --- */
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-txt"]').click()`);
+    await waitFor(ws, `!!document.querySelector('${pane} .tx-code')`, "回到日志");
+    const logToolbar = await evaluate(ws, `(() => ({
+      hasTableBtn: !!document.querySelector('[data-act="text-table"]'),
+      gutterOn: document.querySelector('[data-act="text-gutter"]')?.classList.contains('is-on'),
+    }))()`);
+    check("非表格类文档不出现表格按钮",
+      !logToolbar.hasTableBtn && logToolbar.gutterOn === true,
+      `表格按钮=${logToolbar.hasTableBtn} 行号=${logToolbar.gutterOn}`);
 
     /* --- 更新安装提示：非模态卡片，可稍后，点立即安装才走安装命令 --- */
     await evaluate(ws, `(async () => {

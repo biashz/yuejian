@@ -8,6 +8,7 @@ import { kindLabel } from "../core/constants.js";
 import { formatBytes } from "../core/format.js";
 import { activePane } from "./panes.js";
 import { canHighlight, willHighlight } from "../reader-text.js";
+import { delimiterLabel } from "../reader-csv.js";
 
 /* 每种文档能用的侧栏视图：PDF 有缩略图，文本类没有大纲但有文件信息 */
 const TABS_BY_KIND = {
@@ -91,11 +92,17 @@ function renderInfo() {
     [t("reader.infoSize"), formatBytes(pane.book?.size || 0)],
     [t("reader.infoLang"), highlightLabel(doc)],
   ];
+  // 分隔符只在表格类文档上有意义：它决定了列是怎么拆的，拆错了要能看出来
+  if (doc.mode === "table") {
+    const delimiter = pane.table?.delimiter || ",";
+    rows.push([t("reader.infoDelimiter"), t(`reader.infoDelimiter.${delimiterLabel(delimiter)}`)]);
+  }
   body.innerHTML = `
     <dl class="info-list">
       ${rows.map(([key, value]) => `<div class="info-row"><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
     </dl>
-    ${doc.truncated ? `<p class="info-note">${t("reader.infoTruncated")}</p>` : ""}`;
+    ${doc.truncated ? `<p class="info-note">${t("reader.infoTruncated")}</p>` : ""}
+    ${pane.table?.clipped ? `<p class="info-note">${t("reader.infoTableClipped")}</p>` : ""}`;
 }
 
 async function renderToc() {

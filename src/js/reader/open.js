@@ -158,7 +158,8 @@ function openText(doc, pane) {
     pane.textView = { ...defaultTextView(doc), bookId: pane.book?.id };
   }
   pane.headingEls = [];
-  renderText(doc, pane.mdDoc, pane.textView);
+  // 表格视图的摘要（行列数、分隔符）留给工具栏与信息面板用
+  pane.table = renderText(doc, pane.mdDoc, pane.textView).table;
   // 高亮异步补上：先把等宽纯文本给出去，别让打开动作等 hljs 算完
   scheduleHighlight(pane, doc, pane.mdDoc);
   if (doc.truncated) toast(t("reader.textTruncated"));
@@ -184,7 +185,7 @@ function refreshTextView(pane = activePane(), { rerender = true } = {}) {
   const ratio = span > 0 ? area.scrollTop / span : 0;
 
   if (rerender) {
-    renderText(pane.doc, pane.mdDoc, pane.textView);
+    pane.table = renderText(pane.doc, pane.mdDoc, pane.textView).table;
     scheduleHighlight(pane, pane.doc, pane.mdDoc);
   } else {
     applyTextView(pane.mdDoc, pane.textView);
