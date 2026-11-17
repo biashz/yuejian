@@ -315,11 +315,24 @@ LangString YueJianLangDllTitle ${LANG_SIMPCHINESE} "安装语言"
 LangString YueJianLangDllTitle ${LANG_ENGLISH} "Installer Language"
 LangString YueJianLangDllInfo ${LANG_SIMPCHINESE} "请选择安装程序使用的语言："
 LangString YueJianLangDllInfo ${LANG_ENGLISH} "Please select a language."
-; 安装前自动卸载旧版本时的进度提示
-LangString YueJianUninstallingOld ${LANG_SIMPCHINESE} "正在卸载已安装的旧版本…"
-LangString YueJianUninstallingOld ${LANG_ENGLISH} "Uninstalling the previous version…"
-LangString YueJianUninstalledOld ${LANG_SIMPCHINESE} "旧版本已卸载，正在安装新版本…"
-LangString YueJianUninstalledOld ${LANG_ENGLISH} "Previous version removed, installing the new version…"
+; 升级被拆成两个独立的阶段，日志里也按「阶段 1/2」「阶段 2/2」标出来，
+; 这样用户（或事后排查的人）一眼能分辨卡在哪一半：
+;   阶段 1/2  检测 → 完整卸载旧版本
+;   阶段 2/2  完整写入新版本
+LangString YueJianCheckingOld ${LANG_SIMPCHINESE} "阶段 1/2：检查本机是否已安装旧版本…"
+LangString YueJianCheckingOld ${LANG_ENGLISH} "Step 1/2: checking for a previously installed version…"
+LangString YueJianOldFound ${LANG_SIMPCHINESE} "阶段 1/2：检测到已安装的旧版本 v"
+LangString YueJianOldFound ${LANG_ENGLISH} "Step 1/2: found installed version v"
+LangString YueJianNoOld ${LANG_SIMPCHINESE} "阶段 1/2：未检测到旧版本，跳过卸载，直接全新安装。"
+LangString YueJianNoOld ${LANG_ENGLISH} "Step 1/2: no previous installation found, skipping the uninstall step."
+LangString YueJianUninstallingOld ${LANG_SIMPCHINESE} "阶段 1/2：正在卸载旧版本（静默，保留书架与设置）…"
+LangString YueJianUninstallingOld ${LANG_ENGLISH} "Step 1/2: uninstalling the previous version (silently, keeping your library and settings)…"
+LangString YueJianRemovingResidual ${LANG_SIMPCHINESE} "阶段 1/2：旧版本的卸载程序已缺失，改为直接清理残留文件、快捷方式与安装记录…"
+LangString YueJianRemovingResidual ${LANG_ENGLISH} "Step 1/2: the old uninstaller is missing — clearing leftover files, shortcuts and registry entries directly…"
+LangString YueJianUninstalledOld ${LANG_SIMPCHINESE} "阶段 1/2 完成：旧版本已卸载干净。"
+LangString YueJianUninstalledOld ${LANG_ENGLISH} "Step 1/2 done: the previous version is fully removed."
+LangString YueJianInstallingNew ${LANG_SIMPCHINESE} "阶段 2/2：开始写入新版本 v${VERSION}…"
+LangString YueJianInstallingNew ${LANG_ENGLISH} "Step 2/2: installing v${VERSION}…"
 ; 旧版本卸不掉时的提示：模板自带的 $(unableToUninstall) 只有「无法卸载！」四个字，无法指导用户
 LangString YueJianUninstallFailed ${LANG_SIMPCHINESE} "未能卸载已安装的旧版本，安装已取消。$\n$\n请先手动结束「阅笺」进程，或从「设置 → 应用」里卸载旧版本后重新运行安装程序。"
 LangString YueJianUninstallFailed ${LANG_ENGLISH} "The previous version could not be uninstalled, so the installation was cancelled.$\n$\nPlease close ${PRODUCTNAME} or uninstall the previous version from Settings > Apps, then run this installer again."
@@ -536,8 +549,9 @@ Section WebView2
   ${EndIf}
 SectionEnd
 
-; 安装前先卸载已安装的旧版本：避免新旧文件混装、卸载列表出现重复项。
-; 用户数据（$INSTDIR\data 下的书架与设置）不在此处删除，静默卸载不会勾选「删除应用数据」。
+; 升级 = 阶段 1/2 检测并「完整」卸载旧版本 + 阶段 2/2 完整安装新版本，两段之间不留半成品：
+; 只有在阶段 1/2 明确「本机已无旧版本」之后，Section Install 才动手写文件。
+; 用户数据（$INSTDIR\data 下的书架与设置）不在此处删除：静默卸载不会勾选「删除应用数据」。
 ;
 ; 这条链路有三处易错点，缺一处就会让「升级」变成「装不上」：
 ;   1. 旧版本进程必须先退出，否则卸载程序删不掉被占用的 yuejian.exe；
@@ -549,6 +563,7 @@ Function YueJianUninstallPrevious
   StrCpy $R8 ""
   StrCpy $R9 0 ; 0 = NSIS 安装，1 = WiX 安装
 
+  DetailPrint "$(YueJianCheckingOld)"
   ReadRegStr $R7 SHCTX "${MANUPRODUCTKEY}" ""
   ReadRegStr $R8 SHCTX "${UNINSTKEY}" "UninstallString"
   ${If} $R7 == ""
@@ -565,7 +580,9 @@ Function YueJianUninstallPrevious
 
   ${If} $R8 == ""
   ${AndIf} $R7 == ""
-    Return ; 没有检测到已安装版本，直接全新安装
+    ; 走到这里说明阶段 1/2 无事可做：干净机器上直接进安装
+    DetailPrint "$(YueJianNoOld)"
+    Return
   ${EndIf}
 
   ; 个别安装方式会把路径连引号一起写进注册表，先去掉首尾引号
@@ -592,16 +609,32 @@ Function YueJianUninstallPrevious
     ${GetParent} "$R7" $R7
   ${EndIf}
 
-  ; 卸载程序已不存在时视为已清理，注册表项会被本次安装覆盖
-  ${If} $R9 = 0
-  ${AndIfNot} ${FileExists} "$R7\uninstall.exe"
-    Return
+  ; 把检测结果说清楚：版本号 + 安装位置，出错时这两条就是唯一的线索
+  ${If} $R9 = 1
+    ReadRegStr $R2 HKLM "$R6" "DisplayVersion"
+  ${Else}
+    ReadRegStr $R2 SHCTX "${UNINSTKEY}" "DisplayVersion"
   ${EndIf}
+  ${If} $R2 == ""
+    StrCpy $R2 "?"
+  ${EndIf}
+  DetailPrint "$(YueJianOldFound)$R2 ($R7)"
 
   ; 旧版本进程必须先退出：卸载程序删不掉被占用的 yuejian.exe，
   ; 那样会演变成「卸载没卸干净 + 安装被下面的检查中断」，用户看到的就是升级失败。
   ; 该宏走 Restart Manager，静默 / 被动安装会直接强制关闭，交互安装会询问用户。
   !insertmacro CheckIfAppIsRunning "$R7\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+
+  ; 卸载程序已丢失（目录被手工删过、或被安全软件清掉）：不能再靠它，
+  ; 但「有旧版本」这个事实仍然成立，必须自己把卸载做完整——否则新版本会和残留混装，
+  ; 「设置 → 应用」里还会多出一条指向旧路径的废记录。
+  ${If} $R9 = 0
+  ${AndIfNot} ${FileExists} "$R7\uninstall.exe"
+    DetailPrint "$(YueJianRemovingResidual)"
+    Call YueJianRemoveResidual
+    DetailPrint "$(YueJianUninstalledOld)"
+    Return
+  ${EndIf}
 
   DetailPrint "$(YueJianUninstallingOld)"
   HideWindow
@@ -628,6 +661,9 @@ Function YueJianUninstallPrevious
       Sleep 500
       Delete "$R7\${MAINBINARYNAME}.exe"
     ${EndIf}
+    ; 旧卸载程序若走了 /UPDATE 分支会保留快捷方式；这里按「指向哪个 exe」补删一遍，
+    ; 保证阶段 1/2 结束时桌面与开始菜单里没有指向旧路径的残留
+    Call YueJianRemoveOldShortcuts
     RMDir "$R7"
   ${EndIf}
 
@@ -640,12 +676,66 @@ Function YueJianUninstallPrevious
   DetailPrint "$(YueJianUninstalledOld)"
 FunctionEnd
 
+; 卸载程序已丢失时，把「完整卸载」该做的事手工补完：
+; 主程序 → 指向它的快捷方式 → 「设置 → 应用」里的那条记录（以及安装位置记录）。
+; 刻意不动 $R7\data（书架与设置）以及文件关联 / 协议注册——后者阶段 2/2 会整体重写，
+; 在这里猜旧卸载程序留下了哪些键，风险大于收益。
+Function YueJianRemoveResidual
+  ; 主程序可能还被残留进程占着，等一下再删一次
+  ${If} ${FileExists} "$R7\${MAINBINARYNAME}.exe"
+    Delete "$R7\${MAINBINARYNAME}.exe"
+    ${If} ${FileExists} "$R7\${MAINBINARYNAME}.exe"
+      Sleep 800
+      Delete "$R7\${MAINBINARYNAME}.exe"
+    ${EndIf}
+  ${EndIf}
+
+  Call YueJianRemoveOldShortcuts
+  RMDir "$R7"
+
+  ; 不删这条记录，「设置 → 应用」里就会留下一条指向新版本的「旧记录」，
+  ; 卸载时还可能拿旧 UninstallString 去删已经不存在的 uninstall.exe
+  DeleteRegKey SHCTX "${UNINSTKEY}"
+FunctionEnd
+
+; 删掉指向旧主程序（$R7 下的 exe）的快捷方式。
+; 按「指向哪个 exe」判断而不是按文件名判断，避免误删用户自己建的、同名的快捷方式。
+; 调用方需先保证 $R7 是旧安装目录；本函数会占用 $0。
+Function YueJianRemoveOldShortcuts
+  !insertmacro MUI_STARTMENU_GETFOLDER Application $AppStartMenuFolder
+
+  !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$R7\${MAINBINARYNAME}.exe"
+  Pop $0
+  ${If} $0 = 1
+    !insertmacro UnpinShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+    Delete "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+    RMDir "$SMPROGRAMS\$AppStartMenuFolder"
+  ${EndIf}
+
+  !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$R7\${MAINBINARYNAME}.exe"
+  Pop $0
+  ${If} $0 = 1
+    !insertmacro UnpinShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+    Delete "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+  ${EndIf}
+
+  !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$R7\${MAINBINARYNAME}.exe"
+  Pop $0
+  ${If} $0 = 1
+    !insertmacro UnpinShortcut "$DESKTOP\${PRODUCTNAME}.lnk"
+    Delete "$DESKTOP\${PRODUCTNAME}.lnk"
+  ${EndIf}
+FunctionEnd
+
 Section Install
-  ; 先确保旧版本进程已退出，再自动卸载已安装的旧版本（静默、保留用户数据），
-  ; 最后才把新版本文件写进去。
+  ; 阶段 1/2：先确保旧版本进程已退出，再自动卸载已安装的旧版本（静默、保留用户数据）。
+  ; 注意顺序：CheckIfAppIsRunning 必须在卸载之前，否则旧卸载程序删不掉被占用的主程序。
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
   Call YueJianUninstallPrevious
 
+  ; 阶段 2/2：旧版本已确认不在，现在才把新版本完整写进去
+  ; （文件 → 关联 → 卸载信息 → 快捷方式，与全新安装走的是同一段代码）
+  DetailPrint "$(YueJianInstallingNew)"
   SetOutPath $INSTDIR
 
   !ifmacrodef NSIS_HOOK_PREINSTALL
