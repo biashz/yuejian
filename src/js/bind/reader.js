@@ -138,6 +138,7 @@ export function bindReaderEvents() {
         pane.textView.mode = act === "text-plain" ? "plain" : "code";
         // 两种视图的常用开关不一样：正文不常要行号，等宽几乎总要有
         pane.textView.gutter = pane.textView.mode === "code";
+        // 正文与等宽的结构不同，这一处必须重绘
         refreshTextView(pane);
       }
     }
@@ -149,7 +150,8 @@ export function bindReaderEvents() {
         // 软换行与行号在等宽视图里是互斥的：一旦折行，一个逻辑行占多行，
         // 行号就不再与左侧行首对齐。打开软换行就关掉行号，避免屏幕看起来「坏了」
         if (key === "wrap" && pane.textView.wrap) pane.textView.gutter = false;
-        refreshTextView(pane);
+        // 只加删类名：重绘会丢掉算好的高亮，还会把滚动位置弹走
+        refreshTextView(pane, { rerender: false });
       }
     }
   });

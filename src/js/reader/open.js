@@ -5,7 +5,7 @@
 import { invoke } from "../api.js";
 import { PdfReader } from "../reader-pdf.js";
 import { renderMarkdown, setupScrollSpy } from "../reader-md.js";
-import { renderText, defaultTextView } from "../reader-text.js";
+import { renderText, defaultTextView, applyTextView, scheduleHighlight } from "../reader-text.js";
 import { $, clamp, escapeHtml } from "../core/dom.js";
 import { t } from "../i18n.js";
 import { state } from "../core/session.js";
@@ -159,6 +159,8 @@ function openText(doc, pane) {
   }
   pane.headingEls = [];
   renderText(doc, pane.mdDoc, pane.textView);
+  // 高亮异步补上：先把等宽纯文本给出去，别让打开动作等 hljs 算完
+  scheduleHighlight(pane, doc, pane.mdDoc);
   if (doc.truncated) toast(t("reader.textTruncated"));
   if (pane.index === activePaneIndex) {
     renderToolbar();
@@ -170,17 +172,25 @@ function openText(doc, pane) {
 }
 
 /**
- * 切换视图（正文/等宽、行号、软换行）后重绘。
- * 会保留当前的滚动比例——否则每换一次视图就被弹回文首。
+ * 视图开关变更后刷新。
+ *
+ * 只有「正文 ↔ 等宽」需要重建 DOM（两者结构完全不同），此时保留滚动比例。
+ * 行号与软换行只影响类名，走 applyTextView——不重建、不丢高亮、不挪滚动条。
  */
-function refreshTextView(pane = activePane()) {
+function refreshTextView(pane = activePane(), { rerender = true } = {}) {
   if (!pane?.doc || pane.doc.kind !== "text" || !pane.textView) return;
   const area = pane.scrollArea;
   const span = area.scrollHeight - area.clientHeight;
   const ratio = span > 0 ? area.scrollTop / span : 0;
-  renderText(pane.doc, pane.mdDoc, pane.textView);
+
+  if (rerender) {
+    renderText(pane.doc, pane.mdDoc, pane.textView);
+    scheduleHighlight(pane, pane.doc, pane.mdDoc);
+  } else {
+    applyTextView(pane.mdDoc, pane.textView);
+  }
   if (pane.index === activePaneIndex) renderToolbar();
-  requestAnimationFrame(() => scrollPaneToRatio(pane, ratio));
+  if (rerender) requestAnimationFrame(() => scrollPaneToRatio(pane, ratio));
 }
 
 /* ---------------- PDF 阅读器 ---------------- */

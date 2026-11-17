@@ -1084,6 +1084,15 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 .tx-lines { flex: 1; padding: 18px 26px 48px 14px; color: var(--ink); }
 .md-doc.text-code.is-wrap .tx-lines { white-space: pre-wrap; word-break: break-word; }
 
+/* 行号栏始终在 DOM 里，靠类名显隐——切开关不重绘，高亮与滚动位置都能留住。
+   收起行号时正文左侧补回内边距，否则文字紧贴窗口边缘。 */
+.md-doc.text-code:not(.show-gutter) .tx-gutter { display: none; }
+.md-doc.text-code:not(.show-gutter) .tx-lines { padding-left: 26px; }
+/* 高亮只加颜色，行高与字体必须与行号栏一致，否则两侧行会错开。
+   hljs 自己不带背景（本项目的 token 配色见上方 .hljs-* 规则），这里只是
+   挡住以后误引入官方主题样式表时给正文加的底色。 */
+.tx-lines.hljs { background: none; }
+
 /* 侧栏「信息」：编码是重点，探测可能不准，所以要显眼 */
 .info-list { margin: 0; }
 .info-row {

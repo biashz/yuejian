@@ -114,6 +114,21 @@ const TEXT_LOG = [
   "2026-11-17 09:43:02.336 INFO  [idle] flush progress queue=0 pending=3",
 ].join("\n");
 
+/** 代码样本：8 行，含关键字 / 注释 / 字符串，用来验证高亮确实生效 */
+const RUST_CODE = [
+  "use std::fs;",
+  "use std::path::Path;",
+  "",
+  "/// 读取状态文件",
+  "pub fn load(path: &Path) -> Result<String, std::io::Error> {",
+  "    let raw = fs::read_to_string(path)?;",
+  "    Ok(raw)",
+  "}",
+].join("\n");
+
+/** 超过 HIGHLIGHT_MAX_CHARS（200KB）的代码：应当放弃高亮，只给等宽纯文本 */
+const BIG_CODE = RUST_CODE.repeat(Math.ceil((220 * 1024) / RUST_CODE.length));
+
 function stubSource() {
   return `(() => {
   // 收集所有未捕获异常：模块里漏 import 的调用会在这里冒出来
@@ -134,6 +149,12 @@ function stubSource() {
     { id: "b-txt", path: "C:/fixtures/run.log", title: "运行日志", author: "本地", kind: "text",
       size: 9200, pages: 0, words: 680, addedAt: now - 7000, lastOpenedAt: now - 3000, favorite: false,
       categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+    { id: "b-code", path: "C:/fixtures/text.rs", title: "text.rs", author: "本地", kind: "text",
+      size: 240, pages: 0, words: 40, addedAt: now - 6000, lastOpenedAt: now - 2000, favorite: false,
+      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+    { id: "b-big", path: "C:/fixtures/big.rs", title: "big.rs", author: "本地", kind: "text",
+      size: 235000, pages: 0, words: 0, addedAt: now - 5000, lastOpenedAt: now - 1000, favorite: false,
+      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
   ];
   const SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true,
     zen: false, split: false, linkSync: true, language: "zh", autoCheckUpdate: false };
@@ -153,6 +174,16 @@ function stubSource() {
             kind: "text", text: ${JSON.stringify(TEXT_LOG)}, encoding: "UTF-8",
             lines: ${TEXT_LOG.split("\n").length}, chars: ${TEXT_LOG.replace(/\s/g, "").length},
             eol: "LF", lang: "", mode: "code", truncated: false,
+          }));
+          if (args.id === "b-code") return Promise.resolve(clone({
+            kind: "text", text: ${JSON.stringify(RUST_CODE)}, encoding: "UTF-8",
+            lines: ${RUST_CODE.split("\n").length}, chars: ${RUST_CODE.replace(/\s/g, "").length},
+            eol: "LF", lang: "rust", mode: "code", truncated: false,
+          }));
+          if (args.id === "b-big") return Promise.resolve(clone({
+            kind: "text", text: ${JSON.stringify(BIG_CODE)}, encoding: "UTF-8",
+            lines: ${BIG_CODE.split("\n").length}, chars: ${BIG_CODE.replace(/\s/g, "").length},
+            eol: "LF", lang: "rust", mode: "code", truncated: false,
           }));
           return Promise.resolve(clone({
             kind: "markdown", html: HTML, dir: "C:/fixtures", words: 3200,
@@ -210,6 +241,21 @@ const results = [];
 function check(name, ok, detail = "") {
   results.push({ name, ok, detail });
   console.log(`  ${ok ? "ok  " : "FAIL"}  ${name}${detail ? `  — ${detail}` : ""}`);
+}
+
+/**
+ * 断言能证明「高亮生效了」，但证明不了「看起来是对的」——颜色、对齐、主题
+ * 对比度都得看。给 SHOT_DIR 时把这些关键时刻截下来，默认不产生任何文件。
+ */
+const SHOT_DIR = process.env.SMOKE_SHOT || "";
+async function shot(ws, name) {
+  if (!SHOT_DIR) return;
+  await mkdir(SHOT_DIR, { recursive: true });
+  const reply = await send(ws, "Page.captureScreenshot", { format: "png" });
+  // send() 解析出的是 CDP 的 result 本体（外层 {id,result} 已被剥掉），
+  // 所以 base64 直接挂在 reply.data 上
+  if (!reply?.data) return;
+  await writeFile(join(SHOT_DIR, `${name}.png`), Buffer.from(reply.data, "base64"));
 }
 
 /* ---------------- 主流程 ---------------- */
@@ -292,8 +338,8 @@ async function main() {
     await send(ws, "Runtime.enable");
     await send(ws, "Page.addScriptToEvaluateOnNewDocument", { source: stubSource() });
     await send(ws, "Page.navigate", { url: `${origin}/` });
-    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length >= 3", "书架渲染");
-    check("启动完成，书架渲染 3 本书", true);
+    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length >= 5", "书架渲染");
+    check("启动完成，书架渲染 5 本书", true);
 
     const pane = '[data-pane-root="0"]';
     const errors = () => evaluate(ws, "window.__errors.slice()");
@@ -422,12 +468,18 @@ async function main() {
       wrap: document.querySelector('[data-act="text-wrap"]')?.classList.contains('is-on'),
       gutterOn: document.querySelector('[data-act="text-gutter"]')?.classList.contains('is-on'),
       gutterDisabled: document.querySelector('[data-act="text-gutter"]')?.disabled,
-      gutterGone: !document.querySelector('${pane} .tx-gutter'),
+      // 行号栏现在常驻 DOM，靠 show-gutter 类显隐——检查它真的不可见，而不是被删掉
+      gutterHidden: (() => {
+        const el = document.querySelector('${pane} .tx-gutter');
+        return !el || getComputedStyle(el).display === 'none';
+      })(),
+      showGutterClass: document.querySelector('${pane} .md-doc')?.classList.contains('show-gutter'),
       wrapped: document.querySelector('${pane} .text-code')?.classList.contains('is-wrap'),
     }))()`);
     check("打开软换行自动关掉行号（避免错位）",
-      wrapInfo.wrap && !wrapInfo.gutterOn && wrapInfo.gutterGone && wrapInfo.gutterDisabled && wrapInfo.wrapped,
-      `软换行=${wrapInfo.wrap} 行号=${wrapInfo.gutterOn} 行号栏已移除=${wrapInfo.gutterGone}`);
+      wrapInfo.wrap && !wrapInfo.gutterOn && wrapInfo.gutterHidden && !wrapInfo.showGutterClass
+        && wrapInfo.gutterDisabled && wrapInfo.wrapped,
+      `软换行=${wrapInfo.wrap} 行号=${wrapInfo.gutterOn} 行号栏已隐藏=${wrapInfo.gutterHidden}`);
 
     /* 侧栏：文本类只保留「信息 / 搜索」，信息里要能看到编码 */
     const infoPanel = await evaluate(ws, `(() => {
@@ -441,6 +493,71 @@ async function main() {
       infoPanel.body.includes("UTF-8") && infoPanel.body.includes("LF") && infoPanel.rows.length >= 5,
       `行数 ${infoPanel.rows.length}`);
     check("文本阅读无未捕获异常", errs.length === 0, errs.join(" | "));
+
+    /* --- 代码高亮：异步补上，且不能破坏行号对齐 --- */
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-code"]').click()`);
+    await waitFor(ws, `!!document.querySelector('${pane} .tx-lines.hljs')`, "语法高亮");
+    const hlInfo = await evaluate(ws, `(() => {
+      const root = document.querySelector('${pane} .md-doc');
+      const body = root.querySelector('.tx-lines');
+      const gutter = root.querySelector('.tx-gutter');
+      return {
+        highlighted: body.classList.contains('hljs'),
+        keywords: body.querySelectorAll('.hljs-keyword').length,
+        comments: body.querySelectorAll('.hljs-comment').length,
+        plainText: body.querySelectorAll('.hljs-string').length,
+        bodyLines: body.textContent.split("\\n").length,
+        gutterLines: gutter ? gutter.textContent.trim().split("\\n").length : 0,
+        gutterVisible: gutter ? getComputedStyle(gutter).display !== "none" : false,
+        tabSize: getComputedStyle(body).tabSize,
+        info: [...document.querySelectorAll('#ctxBody .info-row')].map((r) => r.textContent.trim()).join(" / "),
+      };
+    })()`);
+    errs = await errors();
+    check("代码文件按语言高亮", hlInfo.highlighted && hlInfo.keywords >= 4,
+      `关键字 ${hlInfo.keywords} 个、注释 ${hlInfo.comments} 处、字符串 ${hlInfo.plainText} 处`);
+    check("高亮不破坏行号对齐",
+      hlInfo.gutterVisible && hlInfo.bodyLines === hlInfo.gutterLines && hlInfo.bodyLines === RUST_CODE.split("\n").length,
+      `行号 ${hlInfo.gutterLines} / 正文 ${hlInfo.bodyLines}（样本 ${RUST_CODE.split("\n").length} 行）`);
+    check("等宽视图制表符宽度为 4", hlInfo.tabSize === "4", `tab-size=${hlInfo.tabSize}`);
+    check("信息面板标出高亮为「开」", hlInfo.info.includes("开"), hlInfo.info);
+    // 状态栏曾经对文本类沿用 Markdown 那一行，显示成「MARKDOWN · N 字」
+    const statusText = await evaluate(ws, `document.querySelector('#statusRight')?.textContent || ""`);
+    check("状态栏按文本口径显示类型与行数",
+      statusText.includes("RS") && statusText.includes("行") && !statusText.includes("MARKDOWN"),
+      `"${statusText}"`);
+    check("代码阅读无未捕获异常", errs.length === 0, errs.join(" | "));
+    await shot(ws, "text-code-paper");
+    // 夜读主题下的 token 配色单独看一眼：深底上颜色不对是最容易漏的
+    await evaluate(ws, `document.documentElement.dataset.theme = "night"`);
+    await sleep(200);
+    await shot(ws, "text-code-night");
+    await evaluate(ws, `document.documentElement.dataset.theme = "paper"`);
+
+    /* --- 超过 200KB 的代码：放弃高亮但必须仍然可读，信息面板要说清原因 --- */
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-big"]').click()`);
+    await waitFor(ws, `!!document.querySelector('${pane} .tx-code')`, "大文件等宽渲染");
+    await sleep(700); // 留足空闲回调的机会：确认它确实“没做”，而不是“还没做完”
+    const bigInfo = await evaluate(ws, `(() => {
+      const root = document.querySelector('${pane} .md-doc');
+      const body = root.querySelector('.tx-lines');
+      const gutter = root.querySelector('.tx-gutter');
+      return {
+        highlighted: body.classList.contains('hljs'),
+        tokens: body.querySelectorAll('[class^="hljs-"]').length,
+        bodyLines: body.textContent.split("\\n").length,
+        gutterLines: gutter ? gutter.textContent.trim().split("\\n").length : 0,
+        info: [...document.querySelectorAll('#ctxBody .info-row')].map((r) => r.textContent.trim()).join(" / "),
+      };
+    })()`);
+    errs = await errors();
+    check("超 200KB 的代码不启用高亮", !bigInfo.highlighted && bigInfo.tokens === 0,
+      `highlights=${bigInfo.highlighted} token 节点 ${bigInfo.tokens}`);
+    check("超限文件仍完整渲染且行号对齐",
+      bigInfo.bodyLines === bigInfo.gutterLines && bigInfo.bodyLines === BIG_CODE.split("\n").length,
+      `行号 ${bigInfo.gutterLines} / 正文 ${bigInfo.bodyLines}（样本 ${BIG_CODE.split("\n").length} 行）`);
+    check("信息面板说明高亮被关闭", bigInfo.info.includes("200 KB"), bigInfo.info);
+    check("大文件阅读无未捕获异常", errs.length === 0, errs.join(" | "));
 
     /* --- 更新安装提示：非模态卡片，可稍后，点立即安装才走安装命令 --- */
     await evaluate(ws, `(async () => {

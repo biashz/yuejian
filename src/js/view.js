@@ -5,12 +5,12 @@ import { $, $$ } from "./core/dom.js";
 import { t, getLanguage, setLanguage, applyDom } from "./i18n.js";
 import { currentWindow } from "./api.js";
 import { state } from "./core/session.js";
-import { themeLabel } from "./core/constants.js";
+import { themeLabel, kindLabel } from "./core/constants.js";
 import { renderLibrary } from "./shelf.js";
 import { exitPresent } from "./reader/present.js";
 import { flushProgress } from "./reader/progress.js";
 import { updateDocSub } from "./reader/open.js";
-import { updatePaneHeads } from "./reader/panes.js";
+import { updatePaneHeads, activePane } from "./reader/panes.js";
 import { renderToolbar } from "./reader/toolbar.js";
 import { renderCtx } from "./reader/ctx.js";
 import { syncSettingsUI, persistSettings } from "./preferences.js";
@@ -38,13 +38,40 @@ function setView(view) {
 }
 
 /* ---------------- 状态栏 ---------------- */
+
+/**
+ * 状态栏右侧按文档类型给不同口径。
+ * 文本类不能沿用 Markdown 那一行（会显示成「MARKDOWN · N 字」），
+ * 行数才是读日志与代码时真正关心的量。
+ */
+function statusRightText(book) {
+  if (book.kind === "pdf") {
+    return t("status.page", {
+      page: state.pdfPage,
+      total: state.pdfTotal || book.pages || "…",
+      zoom: Math.round(state.pdfZoom * 100),
+    });
+  }
+  if (book.kind === "text") {
+    const doc = activePane()?.doc;
+    return t("status.text", {
+      kind: kindLabel("text", book),
+      lines: doc?.lines ?? 0,
+      chars: doc?.chars ?? 0,
+    });
+  }
+  return t("status.markdown", {
+    words: book.words || 0,
+    size: state.settings.fontSize,
+    lh: state.settings.lineHeight,
+  });
+}
+
 function updateStatus() {
   const book = state.current;
   if (state.view === "reading" && book) {
     $("#statusLeft").textContent = book.title;
-    $("#statusRight").textContent = book.kind === "pdf"
-      ? t("status.page", { page: state.pdfPage, total: state.pdfTotal || book.pages || "…", zoom: Math.round(state.pdfZoom * 100) })
-      : t("status.markdown", { words: book.words || 0, size: state.settings.fontSize, lh: state.settings.lineHeight });
+    $("#statusRight").textContent = statusRightText(book);
   } else {
     $("#statusLeft").textContent = t("status.ready");
     $("#statusRight").textContent = t("status.documents", { count: state.books.length });

@@ -7,6 +7,7 @@ import { state } from "../core/session.js";
 import { kindLabel } from "../core/constants.js";
 import { formatBytes } from "../core/format.js";
 import { activePane } from "./panes.js";
+import { canHighlight, willHighlight } from "../reader-text.js";
 
 /* 每种文档能用的侧栏视图：PDF 有缩略图，文本类没有大纲但有文件信息 */
 const TABS_BY_KIND = {
@@ -61,6 +62,17 @@ function renderCtx() {
   return renderFind();
 }
 
+/**
+ * 信息面板里「高亮」这一行只回答「开没开」，不写语言名。
+ * 语言是哪个，上面「类型」徽标（RS / JSON / YAML）已经说了；而且 hljs 的
+ * 语言名是给内部用的，`ini` 会显示成「TOML, also INI」，直接放出来更糊涂。
+ */
+function highlightLabel(doc) {
+  if (!doc.lang) return t("reader.infoLangNone");
+  if (!canHighlight(doc)) return t("reader.infoLangOff");
+  return willHighlight(doc) ? t("reader.infoLangOn") : t("reader.infoLangUnsupported");
+}
+
 /** 文本类的文件信息：编码、行数、字符数、换行符。编码是重点——探测可能不准 */
 function renderInfo() {
   const body = $("#ctxBody");
@@ -77,6 +89,7 @@ function renderInfo() {
     [t("reader.infoChars"), String(doc.chars)],
     [t("reader.infoEol"), doc.eol],
     [t("reader.infoSize"), formatBytes(pane.book?.size || 0)],
+    [t("reader.infoLang"), highlightLabel(doc)],
   ];
   body.innerHTML = `
     <dl class="info-list">

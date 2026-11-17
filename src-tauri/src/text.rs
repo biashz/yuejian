@@ -193,8 +193,12 @@ pub fn classify(ext: &str, file_name: &str) -> Option<(&'static str, &'static st
         "r" => ("code", "r"),
         "sh" | "bash" | "zsh" | "fish" | "ksh" => ("code", "bash"),
         "ps1" | "psm1" => ("code", ""),
-        "bat" | "cmd" => ("code", ""),
+        "bat" | "cmd" | "vbs" => ("code", ""),
         "sql" => ("code", "sql"),
+        "graphql" | "gql" => ("code", "graphql"),
+        // 只认 .vb（VB.NET）。.vbs 是 VBScript，语法不是一回事，用 VB.NET 的
+        // 规则去标只会标错，宁可不高亮
+        "vb" => ("code", "vbnet"),
         "diff" | "patch" => ("code", "diff"),
         "gradle" => ("code", "java"),
         "tex" => ("code", ""),
@@ -277,6 +281,10 @@ mod tests {
         assert_eq!(classify("csv", "a.csv").unwrap().0, "code");
         assert_eq!(classify("tsv", "a.tsv").unwrap().0, "code");
         assert_eq!(classify("rs", "a.rs").unwrap().1, "rust");
+        assert_eq!(classify("graphql", "a.graphql").unwrap().1, "graphql");
+        // .vbs 是 VBScript，不能被当成 VB.NET 高亮
+        assert_eq!(classify("vb", "a.vb").unwrap().1, "vbnet");
+        assert_eq!(classify("vbs", "a.vbs").unwrap().1, "");
         assert_eq!(classify("", "README").unwrap().0, "plain");
         assert_eq!(classify("", "Makefile").unwrap().0, "code");
         assert!(classify("exe", "a.exe").is_none());
