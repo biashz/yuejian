@@ -725,6 +725,14 @@ Function YueJianRemoveOldShortcuts
     !insertmacro UnpinShortcut "$DESKTOP\${PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${PRODUCTNAME}.lnk"
   ${EndIf}
+
+  ; 中文向导装完后会把快捷方式改名成「阅笺.lnk」（见 installer-hooks.nsh），
+  ; 上面按 ${PRODUCTNAME}.lnk 查找会把它们漏掉。用户主动卸载时钩子会清，
+  ; 但「卸载程序已丢失」这条残留路径上钩子根本没机会跑，所以在这里补上，
+  ; 否则会留下一枚指向已删除 exe 的空壳。
+  Delete "$DESKTOP\${U+9605}${U+7B3A}.lnk"
+  Delete "$SMPROGRAMS\${U+9605}${U+7B3A}.lnk"
+  Delete "$SMPROGRAMS\$AppStartMenuFolder\${U+9605}${U+7B3A}.lnk"
 FunctionEnd
 
 Section Install
