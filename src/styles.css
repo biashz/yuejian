@@ -1205,6 +1205,61 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
   color: var(--ink-3);
 }
 
+/* ---------------- 编码切换（信息面板） ----------------
+   编码一行是可点的：探测错了当场换一个重开，不必翻设置 */
+.info-enc {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  margin: -2px -6px -2px 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 140ms var(--ease);
+}
+.info-enc:hover { background: var(--surface-2); }
+.info-enc:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.info-enc-tag {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.info-caret { font-size: 9px; color: var(--ink-3); }
+.enc-menu {
+  margin: 0 0 6px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.enc-menu[hidden] { display: none; }
+.enc-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.enc-item:hover { background: var(--surface-2); color: var(--ink); }
+.enc-item.is-on {
+  color: var(--accent-ink);
+  background: var(--accent-weak);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 /* 阅读工具栏 */
 .read-toolbar {
   position: absolute;

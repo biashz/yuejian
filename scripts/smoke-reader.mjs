@@ -160,6 +160,8 @@ function stubSource() {
   // 收集所有未捕获异常：模块里漏 import 的调用会在这里冒出来
   window.__errors = [];
   window.__calls = [];
+  // open_book 的 encoding 参数单独记：要区分「没传（沿用书架）」与「传了空串（改回自动）」
+  window.__encCalls = [];
   addEventListener("error", (e) => window.__errors.push("error: " + (e.message || e.error)));
   addEventListener("unhandledrejection", (e) => window.__errors.push("rejection: " + (e.reason?.message || e.reason)));
 
@@ -171,30 +173,30 @@ function stubSource() {
   const BOOKS = [
     { id: "b-md", path: "C:/fixtures/demo.md", title: "示例 Markdown", author: "本地", kind: "markdown",
       size: 12800, pages: 0, words: 3200, addedAt: now - 9000, lastOpenedAt: now - 5000, favorite: false,
-      categoryId: "", progress: { ratio: 0.35, page: 1, zoom: 1 } },
+      categoryId: "", encoding: "", progress: { ratio: 0.35, page: 1, zoom: 1 } },
     { id: "b-pdf", path: "/fixtures/sample.pdf", title: "示例 PDF", author: "本地", kind: "pdf",
       size: 4000, pages: 3, words: 0, addedAt: now - 8000, lastOpenedAt: now - 4000, favorite: true,
-      categoryId: "", progress: { ratio: 0, page: 2, zoom: 1 } },
+      categoryId: "", encoding: "", progress: { ratio: 0, page: 2, zoom: 1 } },
     { id: "b-txt", path: "C:/fixtures/run.log", title: "运行日志", author: "本地", kind: "text",
       size: 9200, pages: 0, words: 680, addedAt: now - 7000, lastOpenedAt: now - 3000, favorite: false,
-      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+      categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
     { id: "b-code", path: "C:/fixtures/text.rs", title: "text.rs", author: "本地", kind: "text",
       size: 240, pages: 0, words: 40, addedAt: now - 6000, lastOpenedAt: now - 2000, favorite: false,
-      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+      categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
     { id: "b-big", path: "C:/fixtures/big.rs", title: "big.rs", author: "本地", kind: "text",
       size: 235000, pages: 0, words: 0, addedAt: now - 5000, lastOpenedAt: now - 1000, favorite: false,
-      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+      categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
     { id: "b-csv", path: "C:/fixtures/reading-log.csv", title: "reading-log.csv", author: "本地", kind: "text",
       size: 180, pages: 0, words: 0, addedAt: now - 4000, lastOpenedAt: now - 900, favorite: false,
-      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+      categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
     { id: "b-tsv", path: "C:/fixtures/reading-log.tsv", title: "reading-log.tsv", author: "本地", kind: "text",
       size: 90, pages: 0, words: 0, addedAt: now - 3000, lastOpenedAt: now - 800, favorite: false,
-      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+      categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
     // 大文件：正文由 read_text_window 按窗口现生成，不预置全文——
     // 20 万行 × 约 100 字节 ≈ 20MB，正好越过 8MB 的整篇上限
     { id: "b-huge", path: "C:/fixtures/huge.log", title: "huge.log", author: "本地", kind: "text",
       size: 20500000, pages: 0, words: 0, addedAt: now - 2500, lastOpenedAt: now - 700, favorite: false,
-      categoryId: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+      categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
   ];
   const SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true,
     zen: false, split: false, linkSync: true, language: "zh", autoCheckUpdate: false };
@@ -209,9 +211,12 @@ function stubSource() {
         if (command === "get_categories") return Promise.resolve([]);
         if (command === "app_version") return Promise.resolve("0.0.0-smoke");
         if (command === "open_book") {
+          window.__encCalls.push(args.encoding === undefined ? null : args.encoding);
           if (args.id === "b-pdf") return Promise.resolve(clone({ kind: "pdf", path: "/fixtures/sample.pdf", pages: 3, size: 4000 }));
           if (args.id === "b-txt") return Promise.resolve(clone({
-            kind: "text", text: ${JSON.stringify(TEXT_LOG)}, encoding: "UTF-8",
+            kind: "text", text: ${JSON.stringify(TEXT_LOG)},
+            // 手动指定编码时回填对应名字，用来验证「选什么就按什么解」
+            encoding: !args.encoding ? "UTF-8" : args.encoding === "gb18030" ? "GB18030" : args.encoding,
             lines: ${TEXT_LOG.split("\n").length}, chars: ${TEXT_LOG.replace(/\s/g, "").length},
             eol: "LF", lang: "", mode: "code", truncated: false,
           }));
@@ -566,6 +571,70 @@ async function main() {
       infoPanel.body.includes("UTF-8") && infoPanel.body.includes("LF") && infoPanel.rows.length >= 5,
       `行数 ${infoPanel.rows.length}`);
     check("文本阅读无未捕获异常", errs.length === 0, errs.join(" | "));
+
+    /* --- 编码手动切换：探测错了要能当场换一个重开，选择写回书架 --- */
+    const encBefore = await evaluate(ws, `(() => {
+      const btn = document.querySelector('#ctxBody [data-enc-toggle]');
+      return {
+        btnText: btn?.textContent?.trim() || "",
+        menuHidden: document.querySelector('#ctxBody #encMenu')?.hidden,
+        items: document.querySelectorAll('#ctxBody #encMenu .enc-item').length,
+        onItem: document.querySelector('#ctxBody #encMenu .enc-item.is-on')?.dataset.enc,
+      };
+    })()`);
+    errs = await errors();
+    check("编码一行可点开、默认收起",
+      !!encBefore.btnText && encBefore.menuHidden === true,
+      `按钮 "${encBefore.btnText}"，菜单 ${encBefore.menuHidden ? "收起" : "已展开"}`);
+    check("编码菜单列出常见编码并以「自动检测」为当前项",
+      encBefore.items >= 6 && encBefore.onItem === "",
+      `${encBefore.items} 项，当前 "${encBefore.onItem}"`);
+    check("未手动指定时按钮标「自动」", encBefore.btnText.includes("自动"), `"${encBefore.btnText}"`);
+
+    // 选 GB18030：应以该编码重开，按钮改标「手动」
+    await evaluate(ws, `document.querySelector('#ctxBody [data-enc-toggle]').click()`);
+    await sleep(120);
+    await shot(ws, "text-encoding-menu");
+    await evaluate(ws, `document.querySelector('#ctxBody #encMenu [data-enc="gb18030"]').click()`);
+    await waitFor(ws, `document.querySelector('#ctxBody [data-enc-toggle]')?.textContent.includes("GB18030")`, "按 GB18030 重开");
+    const encManual = await evaluate(ws, `(() => ({
+      btnText: document.querySelector('#ctxBody [data-enc-toggle]')?.textContent?.trim() || "",
+      onItem: document.querySelector('#ctxBody #encMenu .enc-item.is-on')?.dataset.enc,
+      menuHidden: document.querySelector('#ctxBody #encMenu')?.hidden,
+      encCalls: window.__encCalls.slice(),
+      bodyText: document.querySelector('${pane} .tx-lines')?.textContent?.length || 0,
+      cls: document.querySelector('${pane} .md-doc')?.className || "",
+      rows: [...document.querySelectorAll('#ctxBody .info-row')].map((r) => r.textContent.trim()).join(" / "),
+    }))()`);
+    errs = await errors();
+    check("选中项会以该编码重新打开",
+      encManual.encCalls[encManual.encCalls.length - 1] === "gb18030",
+      `调用记录 ${JSON.stringify(encManual.encCalls)}`);
+    check("切换后按钮与菜单都标为手动、GB18030",
+      encManual.btnText.includes("GB18030") && encManual.btnText.includes("手动")
+        && encManual.onItem === "gb18030",
+      `"${encManual.btnText}" / 当前项 "${encManual.onItem}"`);
+    check("选完菜单自动收起", encManual.menuHidden === true);
+    check("切换编码后正文仍在、视图选择不丢",
+      encManual.bodyText > 100 && encManual.cls.includes("is-wrap"),
+      `正文 ${encManual.bodyText} 字符，class="${encManual.cls}"`);
+
+    // 改回自动检测：传空串，按钮回到「自动」
+    await evaluate(ws, `document.querySelector('#ctxBody [data-enc-toggle]').click()`);
+    await evaluate(ws, `document.querySelector('#ctxBody #encMenu [data-enc=""]').click()`);
+    await waitFor(ws, `document.querySelector('#ctxBody [data-enc-toggle]')?.textContent.includes("自动")`, "改回自动检测");
+    const encAuto = await evaluate(ws, `(() => ({
+      btnText: document.querySelector('#ctxBody [data-enc-toggle]')?.textContent?.trim() || "",
+      onItem: document.querySelector('#ctxBody #encMenu .enc-item.is-on')?.dataset.enc,
+      encCalls: window.__encCalls.slice(),
+    }))()`);
+    errs = await errors();
+    check("改回自动检测时传空串",
+      encAuto.encCalls[encAuto.encCalls.length - 1] === "" && encAuto.onItem === "",
+      `调用记录 ${JSON.stringify(encAuto.encCalls)}`);
+    check("改回自动后按钮标「自动」", encAuto.btnText.includes("自动") && encAuto.btnText.includes("UTF-8"),
+      `"${encAuto.btnText}"`);
+    check("编码切换全程无未捕获异常", errs.length === 0, errs.join(" | "));
 
     /* --- 代码高亮：异步补上，且不能破坏行号对齐 --- */
     await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-code"]').click()`);

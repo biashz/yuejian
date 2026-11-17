@@ -6,15 +6,35 @@ import { $, $$, clamp } from "../core/dom.js";
 import { state } from "../core/session.js";
 import { SIZE_STEPS } from "../core/constants.js";
 import { scrollToHeading } from "../reader-md.js";
-import { activePane, splitMode, linkSync, setSplit, setLink } from "../reader/panes.js";
+import { activePane, splitMode, linkSync, setSplit, setLink, panes } from "../reader/panes.js";
 import { setView, updateStatus } from "../view.js";
 import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, fitPdfPage, fitPdfWidth, renderToolbar } from "../reader/toolbar.js";
 import { setCtxOpen, switchCtxTab } from "../reader/ctx.js";
-import { refreshTextView } from "../reader/open.js";
+import { refreshTextView, openBook } from "../reader/open.js";
 import { scrollToLine } from "../reader-bigtext.js";
 import { presenting, presentEntering, enterPresent, exitPresent, presentStep, handlePresentWheel, schedulePresentPaint } from "../reader/present.js";
 import { applySettings, syncSettingsUI, persistSettings, toggleZen } from "../preferences.js";
 import { toggleFavorite } from "../actions.js";
+
+/**
+ * 换一个编码重开当前文本。
+ *
+ * 走完整的 openBook 而不是就地重新解码：换编码会改变行数、字符数、是否走窗口
+ * 模式、甚至表格的列数，所有派生状态都得重算，复用打开链路最省事也最难漏。
+ */
+function switchEncoding(encoding) {
+  const pane = activePane();
+  if (!pane?.book || pane.book.kind !== "text") return;
+  // 选的就是当前项：不重开，免得白闪一下
+  if ((pane.book.encoding || "") === encoding) return;
+  const id = pane.book.id;
+  openBook(id, pane, { encoding });
+  // 分栏时另一栏若开着同一份文档，也得跟着换：否则同一个文件两栏两种解码，
+  // 一栏已经正常、另一栏还是乱码，比整体乱码更难理解
+  for (const other of panes) {
+    if (other !== pane && other.book?.id === id) openBook(id, other, { encoding });
+  }
+}
 
 export function bindReaderEvents() {
   // 文档栏
@@ -52,6 +72,21 @@ export function bindReaderEvents() {
 
   // 目录 / 缩略图 / 搜索结果跳转
   $("#ctxBody").addEventListener("click", (event) => {
+    // 编码菜单：先于跳转处理，菜单项没有 data-goto / data-hit
+    const encToggle = event.target.closest("[data-enc-toggle]");
+    if (encToggle) {
+      const menu = $("#encMenu");
+      if (menu) {
+        menu.hidden = !menu.hidden;
+        encToggle.setAttribute("aria-expanded", String(!menu.hidden));
+      }
+      return;
+    }
+    const encItem = event.target.closest("[data-enc]");
+    if (encItem) {
+      switchEncoding(encItem.dataset.enc);
+      return;
+    }
     const goto = event.target.closest("[data-goto]");
     if (goto) {
       if (goto.dataset.kind === "pdf") goPage(Number(goto.dataset.goto));

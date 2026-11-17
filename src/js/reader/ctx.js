@@ -17,6 +17,26 @@ const TABS_BY_KIND = {
   text: ["info", "find"],
 };
 
+/**
+ * 可手动指定的编码。`value` 直接作为标签传给 Rust（`encoding_rs` 认识这些别名），
+ * 空串表示交回自动检测。
+ *
+ * 不必列全部几百种编码：会来切换的场景几乎只有「中文老文件被当成西文解」，
+ * 按语种给出最常见的几种即可，列一屏反而不知道选哪个。GB18030 是 GBK / GB2312
+ * 的超集，中文三项合并成一条，用户不必再区分自己那份是哪一年的标准。
+ */
+const ENCODINGS = [
+  { value: "", key: "reader.encAuto" },
+  { value: "utf-8", key: "reader.encUtf8" },
+  { value: "gb18030", key: "reader.encGb" },
+  { value: "big5", key: "reader.encBig5" },
+  { value: "shift_jis", key: "reader.encSjis" },
+  { value: "euc-kr", key: "reader.encKr" },
+  { value: "windows-1252", key: "reader.encLatin" },
+  { value: "utf-16le", key: "reader.encUtf16le" },
+  { value: "utf-16be", key: "reader.encUtf16be" },
+];
+
 
 /* 本模块自有的可变句柄，不对外暴露 */
 let findTimer = 0;
@@ -75,6 +95,19 @@ function highlightLabel(doc) {
   return willHighlight(doc) ? t("reader.infoLangOn") : t("reader.infoLangUnsupported");
 }
 
+/**
+ * 编码下拉。当前生效的是「书架里记的手动值」，不是 `doc.encoding`——
+ * 后者是解码后回填的结果，自动检测时它也有值，分不出「用户选的」还是「猜的」。
+ */
+function encodingMenu(current) {
+  const items = ENCODINGS.map((item) => `
+    <button class="enc-item ${item.value === current ? "is-on" : ""}"
+      role="menuitemradio" aria-checked="${item.value === current}" data-enc="${item.value}">
+      ${t(item.key)}
+    </button>`).join("");
+  return `<div class="enc-menu" id="encMenu" role="menu" hidden>${items}</div>`;
+}
+
 /** 文本类的文件信息：编码、行数、字符数、换行符。编码是重点——探测可能不准 */
 function renderInfo() {
   const body = $("#ctxBody");
@@ -84,31 +117,38 @@ function renderInfo() {
     body.innerHTML = `<div class="ctx-empty">${t("reader.infoEmpty")}</div>`;
     return;
   }
-  const rows = [
-    [t("reader.infoKind"), kindLabel("text", pane.book)],
-    [t("reader.infoEncoding"), doc.encoding],
-    [t("reader.infoLines"), String(doc.lines)],
-  ];
+  const row = (key, value) => `<div class="info-row"><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`;
+  // 编码一行可点开：探测错了就在这里当场换一个重开，不必去翻设置
+  const manual = pane.book?.encoding || "";
+  const encodingRow = `
+    <div class="info-row is-action">
+      <dt>${t("reader.infoEncoding")}</dt>
+      <dd><button class="info-enc" data-enc-toggle aria-haspopup="true" aria-expanded="false"
+        aria-controls="encMenu">${escapeHtml(doc.encoding)}<span class="info-enc-tag">${
+          manual ? t("reader.encManual") : t("reader.encAutoTag")
+        }</span><span class="info-caret" aria-hidden="true">▾</span></button></dd>
+    </div>`;
+
+  const rows = [row(t("reader.infoKind"), kindLabel("text", pane.book)), encodingRow, encodingMenu(manual), row(t("reader.infoLines"), String(doc.lines))];
   // 大文件不整篇解码，字符数根本统计不出来——这一行宁可不显示，也不写 0 骗人
-  if (!doc.windowed) rows.push([t("reader.infoChars"), String(doc.chars)]);
+  if (!doc.windowed) rows.push(row(t("reader.infoChars"), String(doc.chars)));
   rows.push(
-    [t("reader.infoEol"), doc.eol],
-    [t("reader.infoSize"), formatBytes(pane.book?.size || 0)],
-    [t("reader.infoLang"), highlightLabel(doc)],
+    row(t("reader.infoEol"), doc.eol),
+    row(t("reader.infoSize"), formatBytes(pane.book?.size || 0)),
+    row(t("reader.infoLang"), highlightLabel(doc)),
   );
   // 分隔符只在表格类文档上有意义：它决定了列是怎么拆的，拆错了要能看出来
   if (doc.mode === "table" && !doc.windowed) {
     const delimiter = pane.table?.delimiter || ",";
-    rows.push([t("reader.infoDelimiter"), t(`reader.infoDelimiter.${delimiterLabel(delimiter)}`)]);
+    rows.push(row(t("reader.infoDelimiter"), t(`reader.infoDelimiter.${delimiterLabel(delimiter)}`)));
   }
   body.innerHTML = `
-    <dl class="info-list">
-      ${rows.map(([key, value]) => `<div class="info-row"><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
-    </dl>
+    <dl class="info-list">${rows.join("")}</dl>
     ${doc.windowed ? `<p class="info-note">${t("reader.infoWindowed")}</p>` : ""}
     ${doc.clipped ? `<p class="info-note">${t("reader.infoClipped")}</p>` : ""}
     ${doc.truncated ? `<p class="info-note">${t("reader.infoTruncated")}</p>` : ""}
-    ${pane.table?.clipped ? `<p class="info-note">${t("reader.infoTableClipped")}</p>` : ""}`;
+    ${pane.table?.clipped ? `<p class="info-note">${t("reader.infoTableClipped")}</p>` : ""}
+    <p class="info-note">${t("reader.infoEncodingHint")}</p>`;
 }
 
 async function renderToc() {

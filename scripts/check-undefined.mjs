@@ -1,5 +1,6 @@
 /**
  * 未声明调用检查（no-undefined-call）+ 模块路径解析检查（no-broken-import）
+ * + 界面文案一致性检查（i18n-parity）
  *
  * 针对本项目最易复发的一类缺陷：模块拆分后函数被调用却漏了 import。
  * 这类错误不会在模块链接期报错（标识符被当成全局查找），只有真正执行到那一行才抛
@@ -12,6 +13,9 @@
  * 同时校验相对导入的路径是否存在。写错一级目录（把 `./core/dom.js` 写成 `../core/dom.js`）
  * 在 `node --check` 与上面那套检查里全都通得过——`escapeHtml` 已由 import 登记为「已声明」，
  * 但浏览器会在链接期对整个模块图 404，表现为页面一秒都没启动、控制台零报错。
+ *
+ * 第三项是 i18n：中英两套字典键集必须一样，且代码与 index.html 里用到的键两边都得有。
+ * 少一条的表现是「英文界面里冒出一句中文」——不报错、不崩溃，最容易一路带到发布。
  *
  * 退出码：发现问题为 1，可直接接进 CI。
  */
@@ -238,6 +242,8 @@ async function walk(dir) {
 
 const files = await walk(SRC);
 const problems = [];
+/** 代码里用到的文案键 → 首次出现的文件，用来查「两边字典都没有」 */
+const usedKeys = new Map();
 
 /** 相对导入的路径必须真的落在磁盘上；只查静态字符串，动态 import() 不在此列 */
 async function checkImports(file, code) {
@@ -256,6 +262,10 @@ async function checkImports(file, code) {
 
 for (const file of files) {
   const raw = await readFile(file, "utf8");
+  // 文案键要在原始源码里找：带 `$` 的是模板拼接（`reader.infoDelimiter.${x}`），跳过
+  for (const match of raw.matchAll(/\bt\(\s*["']([^"'`$]+)["']/g)) {
+    if (!usedKeys.has(match[1])) usedKeys.set(match[1], relative(ROOT, file).replace(/\\/g, "/"));
+  }
   const code = blankOut(raw);
   const declared = collectDeclared(code);
   for (const call of collectCalls(code)) {
@@ -272,8 +282,43 @@ for (const file of files) {
   }
 }
 
+/* ---------------- 界面文案一致性 ----------------
+   两边键集必须相同；代码与 index.html 用到的键两边都要有。
+   没做「反向无用键」检查：常用键是由 data-i18n 属性驱动的，静态扫不全，报了也只是噪音 */
+const I18N_FILE = join(SRC, "i18n.js");
+const i18nSource = await readFile(I18N_FILE, "utf8");
+const zhAt = i18nSource.indexOf("  zh: {");
+const enAt = i18nSource.indexOf("  en: {");
+/** 字典是扁平的点号键，缩进固定 4 空格，按行取键名即可 */
+const dictKeys = (text) => new Set([...text.matchAll(/^ {4}"([^"]+)":/gm)].map((m) => m[1]));
+const zhKeys = dictKeys(i18nSource.slice(zhAt, enAt));
+const enKeys = dictKeys(i18nSource.slice(enAt));
+
+if (!zhKeys.size || !enKeys.size) {
+  problems.push({ file: "src/js/i18n.js", line: 0, name: "解析不出 zh / en 字典，检查脚本需跟着 i18n 结构调整" });
+}
+for (const key of zhKeys) {
+  if (!enKeys.has(key)) problems.push({ file: "src/js/i18n.js", line: 0, name: `en 缺少文案「${key}」` });
+}
+for (const key of enKeys) {
+  if (!zhKeys.has(key)) problems.push({ file: "src/js/i18n.js", line: 0, name: `zh 缺少文案「${key}」` });
+}
+// 静态标记里的键（index.html 的 data-i18n）
+const htmlFile = join(ROOT, "src", "index.html");
+const htmlSource = await readFile(htmlFile, "utf8");
+for (const match of htmlSource.matchAll(/data-i18n="([^"]+)"/g)) {
+  if (!usedKeys.has(match[1])) usedKeys.set(match[1], "src/index.html");
+}
+for (const [key, where] of usedKeys) {
+  if (!zhKeys.has(key) || !enKeys.has(key)) {
+    problems.push({ file: where, line: 0, name: `用到的文案「${key}」在 ${zhKeys.has(key) ? "en" : "zh"} 字典里没有` });
+  }
+}
+
 if (!problems.length) {
-  console.log(`未声明调用检查通过：${files.length} 个模块，0 处问题`);
+  console.log(
+    `静态检查通过：${files.length} 个模块，0 处问题（未声明调用 / 导入路径 / i18n ${zhKeys.size} 个键中英一致）`,
+  );
   process.exit(0);
 }
 
@@ -282,11 +327,11 @@ for (const item of problems) {
   if (!byFile.has(item.file)) byFile.set(item.file, []);
   byFile.get(item.file).push(item);
 }
-console.error(`发现 ${problems.length} 处「未声明调用 / 导入路径不存在」：\n`);
+console.error(`发现 ${problems.length} 处问题（未声明调用 / 导入路径不存在 / i18n 不一致）：\n`);
 for (const [file, items] of byFile) {
   console.error(`  ${file}`);
   for (const item of items) {
-    console.error(item.name.startsWith("import ") ? `    L${item.line}  ${item.name}` : `    L${item.line}  ${item.name}(...)`);
+    console.error(item.name.startsWith("import ") || item.line === 0 ? `    ${item.name}` : `    L${item.line}  ${item.name}(...)`);
   }
   console.error("");
 }

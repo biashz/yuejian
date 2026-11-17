@@ -20,12 +20,18 @@ import { flushPaneProgress, flushProgress, scheduleSave } from "./progress.js";
 import { visibleBooks, renderBookList, renderGrid } from "../shelf.js";
 
 /* ---------------- 打开文档 ---------------- */
-async function openBook(id, pane = activePane()) {
+/**
+ * 打开一份文档到指定栏。
+ *
+ * `options.encoding` 只在「信息」面板里手动换编码时传：空串表示改回自动检测，
+ * 其余是编码标签。传了就一定会重新解析（正是要重解），并写回书架。
+ */
+async function openBook(id, pane = activePane(), { encoding } = {}) {
   const book = state.books.find((item) => item.id === id);
   if (!book || !pane) return;
 
-  // 同栏已打开同一份文档：不重新解析，直接切回阅读视图
-  if (pane.book?.id === id && pane.doc) {
+  // 同栏已打开同一份文档：不重新解析，直接切回阅读视图。换编码时例外
+  if (encoding === undefined && pane.book?.id === id && pane.doc) {
     if (pane.index === activePaneIndex) {
       activatePane(pane.index, true);
       setView("reading");
@@ -60,7 +66,7 @@ async function openBook(id, pane = activePane()) {
 
   let doc;
   try {
-    doc = await invoke("open_book", { id });
+    doc = await invoke("open_book", { id, encoding });
   } catch (error) {
     if (token !== pane.loadToken) return;
     toast(String(error));
@@ -70,6 +76,8 @@ async function openBook(id, pane = activePane()) {
     return;
   }
   if (token !== pane.loadToken) return;  // 已被同栏更新的打开请求取代
+  // 书架的唯一真相在 Rust 侧，「信息」面板要靠这份前端副本标出当前选的是哪一项
+  if (encoding !== undefined) book.encoding = encoding;
   pane.doc = doc;
   if (wasActive) state.doc = doc;
 

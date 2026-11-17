@@ -40,6 +40,14 @@ fn remember_index(cache: &TextIndexCache, path: &str, index: Arc<text::LineIndex
     }
 }
 
+/// 丢掉某份文本的索引。换编码重开时必须先丢：索引里记着编码名，窗口读取按它解码，
+/// 留着旧索引会让新选择的编码只对第一屏生效。
+fn forget_index(cache: &TextIndexCache, path: &str) {
+    if let Ok(mut map) = cache.0.lock() {
+        map.remove(path);
+    }
+}
+
 fn lock<'a>(state: &'a State<'_, StoreState>) -> Result<std::sync::MutexGuard<'a, store::AppState>, String> {
     state.data.lock().map_err(|_| "书架状态已损坏".to_string())
 }
@@ -131,6 +139,7 @@ fn build_book(path: &Path) -> Result<Book, String> {
         last_opened_at: store::now_ms(),
         favorite: false,
         category_id: String::new(),
+        encoding: String::new(),
         progress: Progress::default(),
     })
 }
@@ -224,6 +233,9 @@ pub async fn open_book(
     state: State<'_, StoreState>,
     cache: State<'_, TextIndexCache>,
     id: String,
+    // 用户手动指定的编码标签（`gbk` / `big5`…）。不传表示沿用书架里记的，
+    // 传空串表示改回自动检测。只有显式传入才会写回书架。
+    encoding: Option<String>,
 ) -> Result<OpenDoc, String> {
     // 锁只在快照阶段持有，避免把阻塞 IO 放在同步命令里卡住界面线程
     let book = {
@@ -232,6 +244,17 @@ pub async fn open_book(
             return Err("书架中找不到这本书".into());
         };
         book.last_opened_at = store::now_ms();
+        // 手动选编码要跨会话有效：用户是为了「这份文件一直乱码」才来切的，
+        // 重启后又回到自动检测，等于每次启动都让他重切一遍。
+        // 先校验再落盘——存下一个解不出来的标签，这份文件以后每次打开都会失败，
+        // 而改回来的入口（信息面板）要有正文才存在，会变成死路
+        if let Some(label) = encoding.as_deref() {
+            let label = label.trim();
+            if !label.is_empty() && text::encoding_of(label).is_none() {
+                return Err(format!("不认识的编码：{label}"));
+            }
+            book.encoding = label.to_string();
+        }
         let snapshot = book.clone();
         let _ = store::persist(&data, &state.dir);
         snapshot
@@ -260,13 +283,20 @@ pub async fn open_book(
             .unwrap_or_default();
         let (mode, lang) = text::classify(&ext, &file_name).unwrap_or(("plain", ""));
 
+        // 书架里记着的编码（用户手动选过的）优先于自动检测；空串 = 自动
+        let forced = if book.encoding.is_empty() { None } else { Some(book.encoding.clone()) };
+
         // 解码与建索引都是 CPU / IO 活，几十 MB 足够卡住一帧界面，放到阻塞线程池
         let open = tauri::async_runtime::spawn_blocking(move || {
-            read_text_doc(&path, meta.len(), lang, mode)
+            read_text_doc(&path, meta.len(), lang, mode, forced.as_deref())
         })
         .await
         .map_err(|err| err.to_string())??;
 
+        // 换了编码就必须丢掉旧索引：索引里记着编码名，窗口读取按它解码
+        if encoding.is_some() {
+            forget_index(&cache, &book.path);
+        }
         if let Some(index) = open.index {
             remember_index(&cache, &book.path, index);
         }
@@ -314,7 +344,17 @@ struct TextOpen {
 ///    内存占用与文件大小脱钩；
 /// 3. 其余（UTF-16、行数太少、行数超索引上限）→ 退回读前 8MB 截断。
 ///    截断是**显式**的：`truncated` 会传到界面上弹提示。
-fn read_text_doc(path: &Path, size: u64, lang: &str, mode: &str) -> Result<TextOpen, String> {
+///
+/// `forced` 是用户手动指定的编码。指定了就跳过一切自动判定——不做 BOM 优先、
+/// 不做二进制检测；用户点了「GBK」却被告知「这看起来不是文本文件」，是最没道理的
+/// 一种失败。
+fn read_text_doc(
+    path: &Path,
+    size: u64,
+    lang: &str,
+    mode: &str,
+    forced: Option<&str>,
+) -> Result<TextOpen, String> {
     let small = size <= text::MAX_VIEW_BYTES;
     // 小文件直接读全文；大文件只读开头 8KB 用来判二进制与编码
     let sniff = if small { size } else { text::SNIFF_BYTES as u64 };
@@ -326,13 +366,26 @@ fn read_text_doc(path: &Path, size: u64, lang: &str, mode: &str) -> Result<TextO
         .read_to_end(&mut head)
         .map_err(|err| format!("读取文本失败：{err}"))?;
 
-    if text::looks_binary(&head) {
-        return Err("这看起来不是文本文件（检测到二进制内容）".to_string());
-    }
-    let (decoded, encoding) = text::decode(&head);
-    let encoding = encoding.name().to_string();
+    // 自动判定那条路顺手留下已解码的正文，小文件不必再解一遍
+    let (auto_text, encoding) = match forced {
+        Some(label) => {
+            let enc = text::encoding_of(label).ok_or_else(|| format!("不认识的编码：{label}"))?;
+            (None, enc.name().to_string())
+        }
+        None => {
+            if text::looks_binary(&head) {
+                return Err("这看起来不是文本文件（检测到二进制内容）".to_string());
+            }
+            let (decoded, enc) = text::decode(&head);
+            (Some(decoded), enc.name().to_string())
+        }
+    };
 
     if small {
+        let decoded = match auto_text {
+            Some(decoded) => decoded,
+            None => text::decode_with(&head, &encoding),
+        };
         return Ok(TextOpen {
             doc: text::build(decoded, &encoding, lang, mode, false),
             index: None,
@@ -369,25 +422,46 @@ fn read_text_doc(path: &Path, size: u64, lang: &str, mode: &str) -> Result<TextO
 }
 
 /// 取（必要时先建）某份文本的行索引。
+///
+/// 缓存未命中时会重建，此时编码必须与打开时一致：索引里记的编码名决定了窗口
+/// 按什么解码。所以先查书架里记着的手动编码，没有再重新嗅探——否则用户手动选的
+/// 编码会在缓存被清掉之后悄悄失效。
 async fn ensure_index(
     cache: &State<'_, TextIndexCache>,
+    store_state: &State<'_, StoreState>,
     path: &str,
 ) -> Result<Arc<text::LineIndex>, String> {
     if let Some(index) = cached_index(cache, path) {
         return Ok(index);
     }
 
+    let forced = {
+        let data = lock(store_state)?;
+        data.books
+            .iter()
+            .find(|b| b.path == path)
+            .map(|b| b.encoding.clone())
+            .filter(|label| !label.is_empty())
+    };
+
     let file_path = PathBuf::from(path);
     let meta = fs::metadata(&file_path).map_err(|err| format!("读取文本失败：{err}"))?;
     let size = meta.len();
     let index = tauri::async_runtime::spawn_blocking(move || -> Result<text::LineIndex, String> {
-        let mut file = fs::File::open(&file_path).map_err(|err| format!("读取文本失败：{err}"))?;
-        let mut head = vec![0u8; text::SNIFF_BYTES];
-        let read = file.read(&mut head).map_err(|err| format!("读取文本失败：{err}"))?;
-        head.truncate(read);
-        let (_, encoding) = text::decode(&head);
-        text::build_index(&file_path, encoding.name(), size)
-            .map_err(|err| format!("读取文本失败：{err}"))
+        let encoding = match forced {
+            Some(label) => text::encoding_of(&label)
+                .ok_or_else(|| format!("不认识的编码：{label}"))?
+                .name()
+                .to_string(),
+            None => {
+                let mut file = fs::File::open(&file_path).map_err(|err| format!("读取文本失败：{err}"))?;
+                let mut head = vec![0u8; text::SNIFF_BYTES];
+                let read = file.read(&mut head).map_err(|err| format!("读取文本失败：{err}"))?;
+                head.truncate(read);
+                text::decode(&head).1.name().to_string()
+            }
+        };
+        text::build_index(&file_path, &encoding, size).map_err(|err| format!("读取文本失败：{err}"))
     })
     .await
     .map_err(|err| err.to_string())??;
@@ -405,11 +479,12 @@ async fn ensure_index(
 #[tauri::command]
 pub async fn read_text_window(
     cache: State<'_, TextIndexCache>,
+    store_state: State<'_, StoreState>,
     path: String,
     start: u32,
     count: u32,
 ) -> Result<tauri::ipc::Response, String> {
-    let index = ensure_index(&cache, &path).await?;
+    let index = ensure_index(&cache, &store_state, &path).await?;
     let read_path = PathBuf::from(&path);
     // 一次要几万行的请求没有意义：窗口是按可视区算出来的，几百到几千行
     let count = count.clamp(1, 20_000);
@@ -444,6 +519,7 @@ pub struct TextHit {
 #[tauri::command]
 pub async fn search_text(
     cache: State<'_, TextIndexCache>,
+    store_state: State<'_, StoreState>,
     path: String,
     query: String,
     limit: Option<usize>,
@@ -452,7 +528,7 @@ pub async fn search_text(
     if query.is_empty() {
         return Ok(Vec::new());
     }
-    let index = ensure_index(&cache, &path).await?;
+    let index = ensure_index(&cache, &store_state, &path).await?;
     let limit = limit.unwrap_or(60).clamp(1, 500);
     let read_path = PathBuf::from(&path);
 

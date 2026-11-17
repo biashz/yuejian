@@ -55,6 +55,12 @@ pub struct Book {
     /// 字段级 default 让旧版 state.json（无该字段）可直接读取，无需迁移代码。
     #[serde(default)]
     pub category_id: String,
+    /// 用户手动指定的编码标签（如 `gbk`）；空串表示自动检测。
+    ///
+    /// 存的是**用户选的标签**而不是探测出来的编码名：自动检测每次打开都能重跑，
+    /// 而用户的选择一旦丢了（比如重启后回到自动），乱码就又会回来。
+    #[serde(default)]
+    pub encoding: String,
     pub progress: Progress,
 }
 

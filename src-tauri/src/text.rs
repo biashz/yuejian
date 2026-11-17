@@ -11,7 +11,10 @@
 //!
 //! 编码识别不是 100% 准确的（短文件尤甚），因此 `encoding` 会回传给界面，
 //! 由「信息」面板显示出来——用户遇到乱码时，至少能据此判断是文件本身有问题
-//! 还是判定错了。手动切换编码留到后续阶段，此处不做。
+//! 还是判定错了。判错了就在同一个面板里换一个编码重开：`encoding_of` 负责把
+//! 界面传来的标签归一化成 `encoding_rs` 的说法，选择写回书架，下次打开沿用。
+//! 指定编码时**跳过所有自动判定**，包括二进制检测——「看起来不像文本」也是
+//! 一种判定，用户既然明确说了是什么，就不该被它挡住。
 //!
 //! 大文件（> `MAX_VIEW_BYTES`）不整篇解码，而是先建一份**行索引**（每行的起始
 //! 字节偏移），由前端按可视区窗口取用。索引只存偏移不存内容，100MB 日志约
@@ -87,7 +90,13 @@ pub const MAX_WINDOW_BYTES: u64 = 8 * 1024 * 1024;
 
 /// 前 8KB 里出现 NUL 字节即判定「不是文本」。图片、压缩包被改名成 `.txt` 时，
 /// 与其渲染满屏乱码，不如明确告诉用户这不是文本文件。
+///
+/// 有 BOM 时直接判为文本：UTF-16 正文里每个 ASCII 字符都跟着一个 0x00，
+/// 拿 NUL 当二进制证据会把整类 UTF-16 文件挡在门外，而 BOM 是比 NUL 更硬的证据。
 pub fn looks_binary(bytes: &[u8]) -> bool {
+    if sniff_bom(bytes).is_some() {
+        return false;
+    }
     bytes.iter().take(SNIFF_BYTES).any(|b| *b == 0)
 }
 
@@ -106,6 +115,14 @@ pub fn decode(bytes: &[u8]) -> (String, &'static Encoding) {
     let guessed = detector.guess(None, true);
     let (text, actual, _) = guessed.decode(bytes);
     (text.into_owned(), actual)
+}
+
+/// 把界面传来的编码标签归一化成 `encoding_rs` 的编码表项。
+///
+/// 返回 `None` 表示这个标签不认识——此时宁可报错让用户重选，也不要静默按
+/// UTF-8 解，否则「我明明选了 GBK 还是乱码」会变成更难查的问题。
+pub fn encoding_of(label: &str) -> Option<&'static Encoding> {
+    Encoding::for_label(label.trim().as_bytes())
 }
 
 fn sniff_bom(bytes: &[u8]) -> Option<&'static Encoding> {
@@ -603,5 +620,36 @@ mod tests {
         assert!(line_safe("GB18030"));
         assert!(!line_safe("UTF-16LE"));
         assert!(!line_safe("utf-16be"));
+    }
+
+    /// 界面传来的标签五花八门（大小写、别名），归一化交给 encoding_rs；
+    /// 不认识的必须回 None，不能兜底成 UTF-8
+    #[test]
+    fn encoding_label_normalization() {
+        assert_eq!(encoding_of("utf-8").unwrap().name(), "UTF-8");
+        assert_eq!(encoding_of(" UTF-8 ").unwrap().name(), "UTF-8");
+        // gb2312 是 GBK 的别名；GB18030 在 encoding_rs 里是另一个更宽的编码，
+        // 且规范名按 WHATWG 是小写（`name()` 的大小写并不统一，别拿它当显示名比大小）
+        assert_eq!(encoding_of("gbk").unwrap().name(), "GBK");
+        assert_eq!(encoding_of("gb2312").unwrap().name(), "GBK");
+        assert_eq!(encoding_of("gb18030").unwrap().name(), "gb18030");
+        assert_eq!(encoding_of("big5").unwrap().name(), "Big5");
+        assert_eq!(encoding_of("shift_jis").unwrap().name(), "Shift_JIS");
+        assert_eq!(encoding_of("utf-16le").unwrap().name(), "UTF-16LE");
+        assert!(encoding_of("auto").is_none());
+        assert!(encoding_of("").is_none());
+    }
+
+    /// BOM 是硬证据：带 BOM 的 UTF-16 正文里全是 NUL，不能被二进制检测挡住
+    #[test]
+    fn bom_wins_over_nul_heuristic() {
+        let utf16le = [0xFF, 0xFE, b'h', 0x00, b'i', 0x00];
+        let (text, encoding) = decode(&utf16le);
+        assert_eq!(text, "hi");
+        assert_eq!(encoding.name(), "UTF-16LE");
+        assert!(!looks_binary(&utf16le));
+
+        // 没有 BOM 的 NUL 仍然判为二进制
+        assert!(looks_binary(b"abc\0def"));
     }
 }
