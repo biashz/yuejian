@@ -238,8 +238,9 @@ export class PdfReader {
     const base = first.getViewport({ scale: 1 });
     this.aspect = base.height / base.width;
 
-    this.fitMode = zoom == null ? "page" : null;
-    this.zoom = this.fitMode ? this.fitPageZoom() : this.clampZoom(zoom);
+    // 默认「适合宽度」：页宽撑满可视区，读正文时字够大，纵向滚动看余下部分
+    this.fitMode = zoom == null ? "width" : null;
+    this.zoom = this.fitMode ? this.fitWidthZoom() : this.clampZoom(zoom);
     this.lastHeight = this.scrollArea.clientHeight;
 
     this.buildPlaceholders();

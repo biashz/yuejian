@@ -39,7 +39,7 @@ async function openBook(id, pane = activePane()) {
 
   pane.book = book;
   pane.page = clamp(book.progress.page || 1, 1, Math.max(1, book.pages || 1));
-  // 每次打开都从「适合页面」开始，不恢复上次的缩放比例
+  // 每次打开都从「适合宽度」开始，不恢复上次的缩放比例
   pane.zoom = 1;
   pane.ratio = clamp(book.progress.ratio || 0, 0, 1);
   pane.total = book.pages || 0;
@@ -111,7 +111,7 @@ async function openPdf(doc, pane) {
   }
 
   try {
-    // 不传 zoom：由阅读器按可视区计算出「适合页面」的比例
+    // 不传 zoom：由阅读器按可视区计算出「适合宽度」的比例
     await reader.open(doc.path, { startPage: pane.page, size: doc.size || 0 });
   } catch (error) {
     pane.pdfStack.innerHTML = `<div class="pdf-error">${t("reader.pdfErrorTitle")}<br><small>${escapeHtml(error?.message || error)}</small></div>`;

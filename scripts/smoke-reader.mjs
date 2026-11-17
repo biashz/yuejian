@@ -296,9 +296,24 @@ async function main() {
     check("打开 PDF 无未捕获异常", errs.length === 0, errs.join(" | "));
     check("工具栏页码已渲染（updateToolbarPage 生效）", /^\d+$/.test(pageStart), `页码 "${pageStart}"`);
 
+    /* --- 默认适配模式：适合宽度（菜单里对应的项打勾） --- */
+    const fitInfo = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const reader = mod.activeReader();
+      return {
+        fitMode: reader?.fitMode || null,
+        zoom: reader?.zoom || 0,
+        menuChecked: document.querySelector('.zoom-menu [data-fit-width]')?.getAttribute("aria-checked"),
+      };
+    })()`);
+    check("PDF 默认按适合宽度打开",
+      fitInfo.fitMode === "width" && fitInfo.menuChecked === "true",
+      `fitMode=${fitInfo.fitMode} 缩放=${Math.round(fitInfo.zoom * 100)}% 菜单打勾=${fitInfo.menuChecked}`);
+
     /* --- 翻页与缩放：覆盖 onPageChange / onZoom --- */
     await evaluate(ws, `document.querySelector('[data-act="next"]')?.click()`);
-    await sleep(400);
+    // 适合宽度下页面更高、平滑滚动距离更长，等页码真正前进，别用固定 sleep 赌时间
+    await waitFor(ws, `Number(document.querySelector('#pageInput')?.value || 0) > ${Number(pageStart)}`, "页码前进");
     const pageNext = await evaluate(ws, "document.querySelector('#pageInput')?.value || ''");
     await evaluate(ws, `document.querySelector('[data-act="zoom-in"]')?.click()`);
     await sleep(300);
