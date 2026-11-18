@@ -110,6 +110,18 @@ pub struct Settings {
     pub auto_check_update: bool,
     /// 电子书是否双页显示（窗口过窄时由前端自动降级为单页，不改这个值）
     pub ebook_spread: bool,
+    /// 电子书正文字号（px）；与 PDF/文本的 `font_size` 分开，两者可用的取值范围不同
+    pub ebook_font_size: u32,
+    /// 电子书行高倍数
+    pub ebook_line_height: f64,
+    /// 电子书页边距（px），映射到分页器的 `--_margin`
+    pub ebook_margin: u32,
+    /// 电子书字体：serif | sans | kai
+    pub ebook_family: String,
+    /// 电子书对齐：left | justify
+    pub ebook_align: String,
+    /// 强制覆盖书内样式：书自带的字体/行高/对齐/配色一律让位给上面的设置
+    pub ebook_override: bool,
 }
 
 impl Default for Settings {
@@ -126,6 +138,12 @@ impl Default for Settings {
             language: "zh".into(),
             auto_check_update: true,
             ebook_spread: true,
+            ebook_font_size: 18,
+            ebook_line_height: 1.8,
+            ebook_margin: 48,
+            ebook_family: "serif".into(),
+            ebook_align: "justify".into(),
+            ebook_override: false,
         }
     }
 }

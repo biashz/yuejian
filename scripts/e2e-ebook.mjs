@@ -231,6 +231,21 @@ try {
 
   /* ---- P2：书签 / 搜索 / 脚注，走的是真 Rust 命令与真 WebView ---- */
 
+  // `target/release/data` 会留着上一轮的书签（这是有意的，不主动清用户数据）。
+  // 不清干净的话，第二遍跑点「加书签」其实是「取消书签」，断言只会在这里失败、
+  // 而且看起来像是写入坏了。经真后端清一遍，断言才是「从 0 到 1」。
+  const cleared = await evaluate(ws, `(async () => {
+    const mod = await import("/js/reader/panes.js");
+    const pane = mod.activePane();
+    const marks = [...(pane?.book?.bookmarks || [])];
+    for (const mark of marks) {
+      const updated = await window.__TAURI__.core.invoke("set_bookmark",
+        { id: pane.book.id, cfi: mark.cfi, label: "", on: false });
+      Object.assign(pane.book, updated);
+    }
+    return marks.length;
+  })()`);
+
   const marked = await evaluate(ws, `(async () => {
     document.querySelector('[data-act="ebook-mark"]').click();
     await new Promise((r) => setTimeout(r, 700));
@@ -240,12 +255,13 @@ try {
       on: Boolean(document.querySelector('[data-act="ebook-mark"]')?.classList.contains("is-on")),
     };
   })()`);
-  check("书签经真后端写入并点亮按钮", marked.count === 1 && marked.on, `${marked.count} 条，按钮 ${marked.on}`);
+  check("书签经真后端写入并点亮按钮", marked.count === 1 && marked.on,
+    `清掉旧书签 ${cleared} 条后新增 ${marked.count} 条，按钮 ${marked.on}`);
 
   const persisted = await evaluate(ws, `(async () => {
     const books = await window.__TAURI__.core.invoke("get_library");
-    const mine = (books || []).find((book) => book.kind === "ebook" && (book.bookmarks || []).length);
-    return mine ? mine.bookmarks.length : 0;
+    const mine = (books || []).find((book) => book.id === ${JSON.stringify(imported)});
+    return mine ? (mine.bookmarks || []).length : -1;
   })()`);
   check("书签已落盘（重读书架仍在）", persisted === 1, `${persisted} 条`);
 

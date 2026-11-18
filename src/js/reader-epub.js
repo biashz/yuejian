@@ -19,6 +19,7 @@ import { formatBytes } from "./core/format.js";
 import { stripActiveContent } from "./reader/ebook-sanitize.js";
 import { searchBook } from "./reader/ebook-search.js";
 import { resolveFootnote } from "./reader/ebook-note.js";
+import { flattenToc, countChapters } from "./reader/ebook-toc.js";
 
 /** 超过这个体积就不读了：整份进内存，再大只会把进程拖死 */
 const MAX_BYTES = 512 * 1024 * 1024;
@@ -50,6 +51,9 @@ export class EbookReader {
     this.onLink = onLink;
     /* 用户选的版式；真正的列数写在 renderer 的 max-column-count 上 */
     this.spread = spread;
+    /* 注入给章节文档的版式 CSS 与页边距，换书后由 `open()` 再贴一次 */
+    this.css = "";
+    this.margin = null;
     this.view = null;
     this.book = null;
     this.path = "";
@@ -113,6 +117,8 @@ export class EbookReader {
     // 列数只能在首帧之后再改：`attributeChangedCallback` 会去写 `#top` 的样式变量，
     // 而 `#top` 是第一次 render 才建出来的，早设一步就是空引用
     this.setSpread(this.spread);
+    // 版式同理：`setStyles` 要写当前文档的 `<style>`，而那张表是 `afterLoad` 才建的
+    if (this.css) this.applyTypography(this.css, this.margin);
   }
 
   /**
@@ -147,6 +153,23 @@ export class EbookReader {
     const renderer = this.view?.renderer;
     if (!renderer) return;
     renderer.setAttribute("max-column-count", this.spread ? "2" : "1");
+    renderer.render?.();
+  }
+
+  /**
+   * 版式设置：字号 / 行高 / 字体 / 对齐走章节文档里追加的那张样式表，
+   * 页边距走分页器自己的 `--_margin` 变量——它只参与算版心，不下发给书里的 DOM。
+   *
+   * 两样都记在实例上：换书会重建 `<foliate-view>`，重开之后要能原样贴回去。
+   * 改动会改变每页容下多少字，所以最后必须重排一次，否则页码还按旧版式算。
+   */
+  applyTypography(css, margin) {
+    this.css = css;
+    this.margin = margin;
+    const renderer = this.view?.renderer;
+    if (!renderer) return;
+    if (Number.isFinite(margin)) renderer.style.setProperty("--_margin", `${margin}px`);
+    if (css) renderer.setStyles?.(css);
     renderer.render?.();
   }
 
@@ -269,25 +292,4 @@ export class EbookReader {
   }
 }
 
-/** 目录项总数（含子项）；`book.toc` 是嵌套结构 */
-function countChapters(items, depth = 0) {
-  if (!Array.isArray(items) || depth > 8) return 0;
-  return items.reduce((sum, item) => sum + 1 + countChapters(item.subitems, depth + 1), 0);
-}
-
-/**
- * 把嵌套目录拍平成侧栏能用的列表。
- *
- * 层级用 `level` 带出去而不是嵌套 DOM：缩进、高亮、键盘导航都按一个数组处理，
- * 与 PDF 大纲、Markdown 标题那两套渲染共用同一份样式。
- */
-function flattenToc(items, depth = 0, out = []) {
-  if (!Array.isArray(items) || depth > 8) return out;
-  for (const item of items) {
-    if (item?.label && item?.href) out.push({ label: item.label, href: item.href, level: depth });
-    if (item?.subitems?.length) flattenToc(item.subitems, depth + 1, out);
-  }
-  return out;
-}
-
-export { flattenToc, stripActiveContent, MAX_BYTES };
+export { stripActiveContent, MAX_BYTES };

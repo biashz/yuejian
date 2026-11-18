@@ -98,8 +98,17 @@ function zipStored(entries) {
 export function buildEpub({ script = false, title = "冒烟样本", creator = "测试" } = {}) {
   const para = (marker) => `<p>${marker}　` + "这是一段用来撑满页面的正文，重复出现以便分页。".repeat(6) + "</p>";
   const chapter = (heading, marker, extra = "", tail = "") => `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>${heading}</title></head>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>${heading}</title>
+<link rel="stylesheet" type="text/css" href="style.css"/></head>
 <body><h1>${heading}</h1>${extra}${para(marker).repeat(12)}${tail}</body></html>`;
+
+  // 自带样式表：真实电子书几乎都有，而「阅读设置能不能压过书内样式」
+  // 只有书自己写了规则才测得出来（无样式的书默认就跟着根元素走）
+  const css = `body { font-family: serif; font-size: 100%; line-height: 1.5;
+  color: #333333; background-color: #ffffff; text-align: left; }
+p { margin: 0 0 0.8em; text-indent: 2em; font-size: 1em; line-height: 1.5; }
+h1 { font-size: 1.6em; text-align: center; }
+a { color: #0000ee; text-decoration: underline; }`;
 
   const container = `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -117,6 +126,7 @@ export function buildEpub({ script = false, title = "冒烟样本", creator = "�
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="css" href="style.css" media-type="text/css"/>
     <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
     <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
     <item id="ch3" href="ch3.xhtml" media-type="application/xhtml+xml"/>
@@ -145,6 +155,7 @@ export function buildEpub({ script = false, title = "冒烟样本", creator = "�
     { name: "META-INF/container.xml", data: container },
     { name: "OEBPS/content.opf", data: opf },
     { name: "OEBPS/nav.xhtml", data: nav },
+    { name: "OEBPS/style.css", data: css },
     { name: "OEBPS/ch1.xhtml", data: chapter("第一章 起点", "①", payload, note + noteBody) },
     // 第二章放一个全书只出现一次的词，搜索断言才有确定答案
     { name: "OEBPS/ch2.xhtml", data: chapter("第二章 展开", "②", "", "<p>檐下听雨，石阶生苔。</p>") },

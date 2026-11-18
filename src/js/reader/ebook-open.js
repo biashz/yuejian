@@ -8,14 +8,15 @@
  * 状态写入的规矩和别处一样：位置变化只往 `pane` 与 `state` 写，
  * 落盘交给 `progress.scheduleSave()`（节流），谁都不在这里直接 invoke 存进度。
  */
-import { activePane, activePaneIndex, maybeSync, updatePaneHeads } from "./panes.js";
+import { activePane, activePaneIndex, maybeSync, updatePaneHeads, panes } from "./panes.js";
 import { state } from "../core/session.js";
 import { t } from "../i18n.js";
 import { toast } from "../core/feedback.js";
-import { escapeHtml } from "../core/dom.js";
+import { clamp, escapeHtml } from "../core/dom.js";
 import { updateStatus } from "../view.js";
 import { persistSettings } from "../preferences.js";
-import { EbookReader, flattenToc } from "../reader-epub.js";
+import { EbookReader } from "../reader-epub.js";
+import { flattenToc } from "./ebook-toc.js";
 import { renderToolbar, updateToolbarPage } from "./toolbar.js";
 import { renderCtx, markTocActive } from "./ctx.js";
 import { scheduleSave } from "./progress.js";
@@ -23,6 +24,15 @@ import { updateDocSub } from "./open.js";
 import { bindEbookGestures } from "./ebook-gesture.js";
 import { showFootnote, hideFootnote } from "./footnote.js";
 import { isBookmarked } from "./bookmarks.js";
+import { buildEbookStyles } from "./ebook-style.js";
+
+/** 字号/行高/字体/对齐折成 CSS，页边距单独给分页器（它不参与书内 DOM 的样式） */
+function typography() {
+  return {
+    css: buildEbookStyles(state.settings),
+    margin: clamp(Number(state.settings.ebookMargin) || 48, 8, 160),
+  };
+}
 
 function ensureEbookReader(pane) {
   if (pane.ebook) return pane.ebook;
@@ -35,9 +45,21 @@ function ensureEbookReader(pane) {
     onEdge: (edge) => toast(t(edge === "end" ? "reader.ebookAtEnd" : "reader.ebookAtStart")),
     onLink: (detail) => followLink(pane, detail),
   });
+  // 先存进实例：此刻还没有 `<foliate-view>`，等 `open()` 起完首帧再贴
+  const { css, margin } = typography();
+  pane.ebook.applyTypography(css, margin);
   // 正文 iframe 之外的留白也要能点、能滚
   bindEbookGestures(pane.ebookStack, handlers(pane));
   return pane.ebook;
+}
+
+/**
+ * 版式改动落到所有已打开的书上：左右两栏各有一份实例，谁都不该被落下。
+ * 设置面板与主题切换都走这一个入口。
+ */
+function refreshEbookStyles() {
+  const { css, margin } = typography();
+  for (const pane of panes) pane.ebook?.applyTypography(css, margin);
 }
 
 /** 手势动作统一走这里：主文档与 iframe 内用的是同一套 */
@@ -191,4 +213,4 @@ function toggleEbookSpread() {
   toast(t(spread ? "reader.ebookSpreadOn" : "reader.ebookSpreadOff"));
 }
 
-export { openEbook, ebookStep, ebookSeek, ebookChapter, toggleEbookSpread };
+export { openEbook, ebookStep, ebookSeek, ebookChapter, toggleEbookSpread, refreshEbookStyles };

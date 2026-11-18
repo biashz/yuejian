@@ -369,6 +369,56 @@
       </section>
 
       <section class="setting-group">
+        <h3 data-i18n="settings.ebook">电子书</h3>
+        <p class="setting-note" data-i18n="settings.ebookNote">以下几项只作用于 EPUB，与上面 PDF / 文本的排版互不影响。</p>
+        <div class="setting-row">
+          <label data-i18n="settings.fontSize">正文字号</label>
+          <div class="segmented" id="ebookSizeSeg">
+            <button data-esize="16">16</button>
+            <button data-esize="18" class="is-on">18</button>
+            <button data-esize="20">20</button>
+            <button data-esize="22">22</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label data-i18n="settings.lineHeight">行高</label>
+          <div class="segmented" id="ebookLhSeg">
+            <button data-elh="1.6" data-i18n="settings.compact">紧凑</button>
+            <button data-elh="1.8" class="is-on" data-i18n="settings.standard">标准</button>
+            <button data-elh="2.1" data-i18n="settings.loose">宽松</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label data-i18n="settings.ebookMargin">页边距</label>
+          <div class="segmented" id="ebookMarginSeg">
+            <button data-emargin="24" data-i18n="settings.narrow">窄</button>
+            <button data-emargin="48" class="is-on" data-i18n="settings.standard">标准</button>
+            <button data-emargin="72" data-i18n="settings.wide">宽</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label data-i18n="settings.ebookFamily">字体</label>
+          <div class="segmented" id="ebookFamilySeg">
+            <button data-efamily="serif" data-i18n="settings.ebookSerif">宋体</button>
+            <button data-efamily="sans" data-i18n="settings.ebookSans">黑体</button>
+            <button data-efamily="kai" data-i18n="settings.ebookKai">楷体</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label data-i18n="settings.ebookAlign">对齐</label>
+          <div class="segmented" id="ebookAlignSeg">
+            <button data-ealign="left" data-i18n="settings.ebookLeft">左对齐</button>
+            <button data-ealign="justify" data-i18n="settings.ebookJustify">两端对齐</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label data-i18n="settings.ebookOverride">强制覆盖书内样式</label>
+          <button class="switch" id="switchEbookOverride" role="switch" aria-checked="false"><span></span></button>
+        </div>
+        <p class="setting-note" data-i18n="settings.ebookOverrideNote">开启后，书里自带的字体、字号与配色都会让位给上面的设置；夜读模式下白底书页也会一并压成深色。</p>
+      </section>
+
+      <section class="setting-group">
         <h3 data-i18n="settings.interface">界面</h3>
         <div class="setting-row">
           <label data-i18n="settings.showCtx">打开文档时显示目录</label>

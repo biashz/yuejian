@@ -24,6 +24,9 @@ function setTheme(theme, silent = false) {
   $("#statusMid").textContent = themeLabel(theme);
   $$(".theme-swatch").forEach((item) => item.classList.toggle("is-on", item.dataset.themeValue === theme));
   persistSettings();
+  // 电子书「强制覆盖」时的字色/底色取自主题变量，换主题要重贴一遍。
+  // 动态 import 是为了不让偏好模块反向依赖阅读器（静态引就是循环）
+  import("./reader/ebook-open.js").then((mod) => mod.refreshEbookStyles()).catch(() => {});
   if (!silent) toast(t("theme.switched", { theme: themeLabel(theme) }));
 }
 
@@ -64,6 +67,15 @@ function syncSettingsUI() {
   $$("#fontSizeSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.size) === settings.fontSize));
   $$("#lineHeightSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.lh) === settings.lineHeight));
   $$("#measureSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.measure) === settings.measure));
+  /* 电子书一组：字号是数字，字体与对齐是字符串，比较方式不同 */
+  $$("#ebookSizeSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.esize) === Number(settings.ebookFontSize)));
+  $$("#ebookLhSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.elh) === Number(settings.ebookLineHeight)));
+  $$("#ebookMarginSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.emargin) === Number(settings.ebookMargin)));
+  $$("#ebookFamilySeg button").forEach((button) => button.classList.toggle("is-on", button.dataset.efamily === (settings.ebookFamily || "serif")));
+  $$("#ebookAlignSeg button").forEach((button) => button.classList.toggle("is-on", button.dataset.ealign === (settings.ebookAlign || "justify")));
+  const override = Boolean(settings.ebookOverride);
+  $("#switchEbookOverride").classList.toggle("is-on", override);
+  $("#switchEbookOverride").setAttribute("aria-checked", String(override));
   $$("#langSeg button").forEach((button) => button.classList.toggle("is-on", button.dataset.lang === getLanguage()));
   $("#switchCtx").classList.toggle("is-on", settings.showCtx);
   $("#switchCtx").setAttribute("aria-checked", String(settings.showCtx));

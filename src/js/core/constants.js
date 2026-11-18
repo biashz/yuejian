@@ -32,6 +32,15 @@ const DEFAULT_SETTINGS = {
   theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720,
   showCtx: true, zen: false, linkSync: true, language: "zh",
   autoCheckUpdate: true, ebookSpread: true,
+  /* 电子书专属：字号/行高/边距/字体/对齐/覆盖，与 PDF 的排版档位互不影响 */
+  ebookFontSize: 18, ebookLineHeight: 1.8, ebookMargin: 48,
+  ebookFamily: "serif", ebookAlign: "justify", ebookOverride: false,
+};
+/* 电子书字体的可选值与字体栈：值存盘，栈只在这里出现一次 */
+const EBOOK_FONTS = {
+  serif: '"Songti SC", "SimSun", "Source Han Serif SC", "Noto Serif CJK SC", Georgia, serif',
+  sans: '"PingFang SC", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", system-ui, sans-serif',
+  kai: '"Kaiti SC", "KaiTi", "STKaiti", "Source Han Serif SC", Georgia, serif',
 };
 
-export { THEME_ORDER, KIND_LABEL, KIND_CLASS, themeLabel, kindLabel, TINTS, SIZE_STEPS, ZOOM_STEPS, ZOOM_PRESETS, DEFAULT_SETTINGS, CATEGORY_COLORS, MAX_CATEGORIES, MAX_CATEGORY_NAME };
+export { THEME_ORDER, KIND_LABEL, KIND_CLASS, themeLabel, kindLabel, TINTS, SIZE_STEPS, ZOOM_STEPS, ZOOM_PRESETS, DEFAULT_SETTINGS, EBOOK_FONTS, CATEGORY_COLORS, MAX_CATEGORIES, MAX_CATEGORY_NAME };

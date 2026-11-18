@@ -205,7 +205,9 @@ function stubSource() {
       categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
   ];
   const SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true,
-    zen: false, split: false, linkSync: true, language: "zh", autoCheckUpdate: false, ebookSpread: true };
+    zen: false, split: false, linkSync: true, language: "zh", autoCheckUpdate: false, ebookSpread: true,
+    ebookFontSize: 18, ebookLineHeight: 1.8, ebookMargin: 48,
+    ebookFamily: "serif", ebookAlign: "justify", ebookOverride: false };
   const HTML = ${JSON.stringify(MD_HTML)};
 
   window.__TAURI__ = {
@@ -213,6 +215,11 @@ function stubSource() {
       invoke(command, args) {
         window.__calls.push(command);
         if (command === "get_settings") return Promise.resolve(clone(SETTINGS));
+        // 偏好落盘：记下最后一次提交的整份设置，用来验证「改了会存」
+        if (command === "save_settings") {
+          window.__saved = args.settings;
+          return Promise.resolve(null);
+        }
         if (command === "get_library") return Promise.resolve(clone(BOOKS));
         if (command === "get_categories") return Promise.resolve([]);
         if (command === "app_version") return Promise.resolve("0.0.0-smoke");
@@ -1358,6 +1365,127 @@ async function main() {
     check("关掉重开回到原位（CFI 续读）",
       reopened.cfi === beforeReopen.cfi || reopened.label === beforeReopen.label,
       `期望「${beforeReopen.label}」，实际「${reopened.label}」`);
+
+    /* --- 电子书阅读设置：六项都要即时落到章节文档上，而不是等下次打开 --- */
+    frameCtx = await blobFrameContext(ws);
+    // 书自带 style.css（serif / 16px 底色 #fff / 左对齐 / 行高 1.5），
+    // 所以「设置胜出」这件事才有对象可比
+    const typoOf = `(() => {
+      const html = getComputedStyle(document.documentElement);
+      const body = getComputedStyle(document.body);
+      const p = document.querySelector("p");
+      const ps = p ? getComputedStyle(p) : null;
+      return { htmlSize: parseFloat(html.fontSize), bodySize: parseFloat(body.fontSize),
+        ratio: parseFloat(body.lineHeight) / parseFloat(body.fontSize),
+        family: body.fontFamily, align: body.textAlign, pAlign: ps ? ps.textAlign : "",
+        color: body.color, bg: body.backgroundColor };
+    })()`;
+    const baseTypo = await evaluate(ws, typoOf, frameCtx);
+    check("默认版式已是偏好的值（18px / 1.8 / 宋体 / 两端对齐）",
+      Math.round(baseTypo.htmlSize) === 18 && Math.round(baseTypo.bodySize) === 18
+        && Math.abs(baseTypo.ratio - 1.8) < 0.02 && /SimSun|Songti/i.test(baseTypo.family) && baseTypo.pAlign === "justify",
+      `${baseTypo.bodySize}px / ${baseTypo.ratio.toFixed(2)} / ${baseTypo.family.slice(0, 24)} / ${baseTypo.pAlign}`);
+
+    const panel = await evaluate(ws, `(async () => {
+      const prefs = await import("/js/preferences.js");
+      prefs.openSettings();
+      const group = [...document.querySelectorAll("#settingsOverlay .setting-group")]
+        .find((el) => el.querySelector("#ebookSizeSeg"));
+      const ids = ["#ebookSizeSeg", "#ebookLhSeg", "#ebookMarginSeg", "#ebookFamilySeg", "#ebookAlignSeg", "#switchEbookOverride"];
+      const sheet = document.querySelector("#settingsOverlay .sheet");
+      const body = sheet.querySelector(".sheet-body");
+      const foot = sheet.querySelector(".sheet-foot");
+      return { title: group?.querySelector("h3")?.textContent || "",
+        on: ids.filter((id) => group?.querySelector(id)).length,
+        sheetH: Math.round(sheet.getBoundingClientRect().height),
+        winH: window.innerHeight,
+        footInside: foot.getBoundingClientRect().bottom <= window.innerHeight + 1,
+        scrolls: body.scrollHeight > body.clientHeight + 1 };
+    })()`);
+    check("设置面板有「电子书」分组与六项设置",
+      panel.on === 6 && panel.title === "电子书", `${panel.title} · ${panel.on}/6`);
+    // 多了第六组之后面板明显变长：正文要能自己滚，而「完成」按钮必须还在窗口里
+    check("面板变长后仍整屏收住（正文滚动、按钮可见）",
+      panel.footInside && panel.scrolls && panel.sheetH <= panel.winH + 1,
+      `面板 ${panel.sheetH}px / 窗口 ${panel.winH}px，按钮在窗口内 ${panel.footInside}，正文可滚 ${panel.scrolls}`);
+
+    await evaluate(ws, `(() => {
+      document.querySelector('#ebookSizeSeg [data-esize="22"]').click();
+      document.querySelector('#ebookLhSeg [data-elh="2.1"]').click();
+      document.querySelector('#ebookFamilySeg [data-efamily="kai"]').click();
+      document.querySelector('#ebookAlignSeg [data-ealign="left"]').click();
+      document.querySelector('#ebookMarginSeg [data-emargin="72"]').click();
+      return true;
+    })()`);
+    await sleep(1200);
+    frameCtx = await blobFrameContext(ws);
+    const nextTypo = await evaluate(ws, typoOf, frameCtx);
+    check("字号 / 行高 / 字体 / 对齐即时生效（压过书内样式表）",
+      Math.round(nextTypo.htmlSize) === 22 && Math.round(nextTypo.bodySize) === 22
+        && Math.abs(nextTypo.ratio - 2.1) < 0.02 && /KaiTi|Kaiti/i.test(nextTypo.family)
+        && nextTypo.pAlign === "left",
+      `${nextTypo.bodySize}px / ${nextTypo.ratio.toFixed(2)} / ${nextTypo.family.slice(0, 24)} / ${nextTypo.pAlign}`);
+
+    // 高亮跟着值走：`syncSettingsUI` 靠比较按钮上的 dataset，写错字段就会出现
+    // 「点了 22、亮的却是 20」这种只在界面上才看得见的偏差
+    const marks = await evaluate(ws, `(() => {
+      const on = (sel) => [...document.querySelectorAll(sel + " button.is-on")]
+        .map((button) => button.dataset[Object.keys(button.dataset)[0]]);
+      return { size: on("#ebookSizeSeg"), lh: on("#ebookLhSeg"), margin: on("#ebookMarginSeg"),
+        family: on("#ebookFamilySeg"), align: on("#ebookAlignSeg"),
+        override: document.querySelector("#switchEbookOverride").classList.contains("is-on") };
+    })()`);
+    const picked = [marks.size.join(), marks.lh.join(), marks.margin.join(), marks.family.join(), marks.align.join()];
+    check("分段按钮的高亮跟着值走（各亮一个且是对的）",
+      JSON.stringify(picked) === JSON.stringify(["22", "2.1", "72", "kai", "left"]) && marks.override === false,
+      `${picked.join(" / ")}，覆盖 ${marks.override}`);
+
+    const marginApplied = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const renderer = mod.activePane()?.ebook?.view?.renderer;
+      return renderer?.style.getPropertyValue("--_margin") || "";
+    })()`);
+    check("页边距落到分页器（--_margin 72px）", marginApplied === "72px", marginApplied || "未设置");
+
+    // 强制覆盖：书里写死了 #333 字色与白底，开关打开后要让位给主题色
+    await evaluate(ws, `document.querySelector("#switchEbookOverride").click()`);
+    await sleep(1200);
+    frameCtx = await blobFrameContext(ws);
+    const forced = await evaluate(ws, typoOf, frameCtx);
+    const appInk = await evaluate(ws, `getComputedStyle(document.body).color`);
+    check("强制覆盖把书内配色压成主题色",
+      forced.color === appInk && forced.bg === "rgba(0, 0, 0, 0)",
+      `字色 ${forced.color}（应用 ${appInk}）/ 底色 ${forced.bg}`);
+
+    await sleep(400);
+    // 面板比窗口长，截图前把「电子书」这一组滚到中间，否则拍到的还是上面几组
+    await evaluate(ws, `(() => {
+      const group = [...document.querySelectorAll("#settingsOverlay .setting-group")]
+        .find((el) => el.querySelector("#ebookSizeSeg"));
+      group.scrollIntoView({ block: "center" });
+      return true;
+    })()`);
+    await shot(ws, "ebook-settings");
+    const saved = await evaluate(ws, `window.__saved || null`);
+    check("六项设置写进偏好并落盘",
+      Boolean(saved) && saved.ebookFontSize === 22 && saved.ebookLineHeight === 2.1
+        && saved.ebookMargin === 72 && saved.ebookFamily === "kai"
+        && saved.ebookAlign === "left" && saved.ebookOverride === true,
+      saved ? `字号 ${saved.ebookFontSize} 行高 ${saved.ebookLineHeight} 边距 ${saved.ebookMargin} ${saved.ebookFamily}/${saved.ebookAlign}/覆盖 ${saved.ebookOverride}` : "未调用 save_settings");
+
+    // 旧 state.json 里没有这六个字段，容器级 serde(default) 靠前端这份默认值兜底：
+    // 少一个键，升级后第一次打开电子书就会把 undefined 写进样式
+    const defaults = await evaluate(ws, `(async () => {
+      const mod = await import("/js/core/constants.js");
+      const keys = ["ebookFontSize", "ebookLineHeight", "ebookMargin", "ebookFamily", "ebookAlign", "ebookOverride"];
+      const missing = keys.filter((key) => mod.DEFAULT_SETTINGS[key] === undefined);
+      await (await import("/js/preferences.js")).closeSettings();
+      return { missing, count: keys.length - missing.length };
+    })()`);
+    check("默认设置补齐六项（旧配置升级不受影响）",
+      defaults.missing.length === 0 && defaults.count === 6,
+      defaults.missing.length ? `缺 ${defaults.missing.join(",")}` : "6/6");
+
     errs = await errors();
     check("电子书阅读无未捕获异常", errs.length === 0, errs.join(" | "));
 
