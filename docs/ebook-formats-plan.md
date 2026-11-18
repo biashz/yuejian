@@ -33,7 +33,7 @@
 | **P1 EPUB 打通** | vendoring、CSP、类型判定与导入、打开与渲染、目录、CFI 进度、状态栏 | 一本中文 EPUB3 能打开、翻页、目录跳转、关掉重开回到原位 | 已完成（v0.1.32） |
 | **P2 阅读交互** | 单/双页、点击与键盘与滚轮翻页、进度条可拖、书签、全书搜索、脚注弹层 | 键盘翻完一本不掉位置；搜索命中能跳过去 | 已完成（v0.1.33） |
 | **P3 阅读设置** | 字号 / 行高 / 页边距 / 字体 / 对齐 / 主题 / 强制覆盖书内样式 | 六个设置项都即时生效，且每本书记住 | 已完成（v0.1.34） |
-| **P4 其余格式** | FB2、CBZ 固定版面、MOBI / AZW3、DRM 识别与提示、加密字体 | 五种格式各打开一本，DRM 文件给出人话提示 | 待开始 |
+| **P4 其余格式** | FB2、CBZ 固定版面、MOBI / AZW3、DRM 识别与提示、加密字体 | 五种格式各打开一本，DRM 文件给出人话提示 | 已完成（v0.1.35） |
 | **P5 收口** | 性能与空态、i18n、文档、冒烟断言、（可选）划线批注 | `npm run check` + `smoke` 全绿 | 待开始 |
 
 每期独立可发布，P1 就能解决「打不开 epub」。
@@ -89,10 +89,32 @@
 - 样本 EPUB 新增 `OEBPS/style.css`（serif / `#fff` 底 / 左对齐 / 行高 1.5）：
   书里没有样式规则，「设置压过书内样式」就无从验证。
 
-**P4**
-- 格式分派交给 `makeBook` 的魔术字节判断，我们只负责「扩展名 → 是否允许导入」
-- DRM 识别：EPUB 读 `META-INF/encryption.xml`；MOBI 读 PalmDOC 头 encryption 字段
-- 加密字体：确认 Tauri 自定义协议是否 secure context，否则注入纯 JS SHA-1
+**P4**（完成于 v0.1.35）
+- 后端 `detect_kind` 放行 `epub / fb2 / fbz / cbz / mobi / azw / azw3`，外加
+  `zip` 但文件名以 `.fb2.zip` 结尾的那种（扩展名只有 `zip`，只能按整名判断）。
+  格式分派仍然全在 `makeBook` 里按魔术字节做，后端只回答「让不让进书架」。
+- 角标按真实格式显示（`EBOOK_BADGE`）：书架上同时摆着 EPUB 与 CBZ 时，
+  「都写 EPUB」等于没标；`.fb2.zip` 得按整名判断。
+- 固定版面（`rendition.layout === 'pre-paginated'`，CBZ 与杂志）：
+  `foliate-fxl` 没有 `setStyles` / `max-column-count`，所以单双页与版式设置
+  在 `EbookReader` 里按 `this.fixed` 短路；工具栏不再显示单双页按钮；
+  副标题数「页」而不是「章」。**CBZ 还得补一句 `rendition.spread = 'none'`**——
+  `makeComicBook` 不声明，固定版面渲染器把「没说」当成「可以左右对开」，
+  结果是每屏只看到右半边一张图。
+- `src/js/reader/ebook-drm.js`（新）：打开前先探一次 DRM，`encryption.xml` 里
+  只有 IDPF / Adobe 两种**字体**混淆算法不算 DRM（那两种库自己会解），
+  其余一律拦下并报出方案名。MOBI 读 PalmDOC 头第 12 字节的 encryption type。
+  不解密，只把「文件坏了」翻译成「这本书带 DRM」。
+- `src/js/reader/ebook-harden.js`（新）：FB2 / MOBI 没有 `transformTarget` 这个
+  资源钩子，而 MOBI 的正文**来自文件自身**——里面写 `<script>` 就会在章节 iframe
+  里执行，那个 iframe 为了 WebKit 事件 bug 开着 `allow-same-origin`，
+  等于能摸到 `window.parent` 上的 Tauri 接口。所以自己调 `makeBook`，
+  在 `view.open` 之前包一层 `section.load`：读回 blob 文本、洗一遍、换新 URL。
+- 加密字体不需要额外工作：`epub.js` 里已有 IDPF / Adobe 两种解混淆（WebCrypto SHA-1）。
+- 样本：`scripts/lib/make-books.mjs`（FB2 是纯 XML；CBZ 用 `zlib` 现画 600×900 PNG，
+  图多大页就多大，2×2 的占位图测不出真东西；MOBI 手写 PalmDB + PalmDOC + MOBI 头，
+  目录的 `filepos` 是**字节**偏移，先用等长占位号排版再原地替换）。
+  `buildEpub({ encryption })` 可生成「正文加密」与「只混淆字体」两种样本。
 
 **P5**
 - 空态与错误态：文件损坏、ZIP 不完整、章节加载失败、超大文件
@@ -123,7 +145,7 @@
 | 书签 | 加/删/列表，点书签回到原位 | P2 |
 | 全书搜索 | 侧栏输入，结果带章节名与上下文，点击跳转并高亮 | P2 |
 | 脚注 | 点击书内脚注链接弹小窗，不整页跳走 | P2（可延后） |
-| 图片放大 | 点击图片全屏查看 | P3 |
+| 图片放大 | 点击图片全屏查看 | 后续 |
 | 划线批注 | foliate `overlayer`，选中文字出菜单 | 可选（P5 之后） |
 
 ### 4.3 视图与版式

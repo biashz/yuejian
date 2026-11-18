@@ -10,6 +10,7 @@ import { isWindowed, mountWindowed } from "../reader-bigtext.js";
 import { $, clamp, escapeHtml } from "../core/dom.js";
 import { t } from "../i18n.js";
 import { state } from "../core/session.js";
+import { kindLabel } from "../core/constants.js";
 import { toast } from "../core/feedback.js";
 import { formatBytes } from "../core/format.js";
 import { panes, activePaneIndex, splitMode, activePane, activatePane, closePaneDoc, updatePaneHeads, syncToActivePane, maybeSync, scrollPaneToRatio } from "./panes.js";
@@ -129,8 +130,12 @@ function updateDocSub() {
   }
   if (book.kind === "ebook") {
     const pane = activePane();
-    const chapters = pane?.ebook?.chapters || pane?.ebookToc?.length || book.pages || 0;
-    sub.textContent = t("reader.docSubEbook", { chapters, size: formatBytes(book.size) });
+    const format = kindLabel("ebook", book);
+    const count = pane?.ebook?.chapters || pane?.ebookToc?.length || book.pages || 0;
+    // 固定版面（漫画）数的是页不是章：一张图一页，叫它「章」只会让人以为目录没读对
+    sub.textContent = pane?.ebook?.fixed
+      ? t("reader.docSubComic", { format, pages: count, size: formatBytes(book.size) })
+      : t("reader.docSubEbook", { format, chapters: count, size: formatBytes(book.size) });
     return;
   }
   sub.textContent = t("reader.docSubMd", { words: book.words || 0, size: formatBytes(book.size) });

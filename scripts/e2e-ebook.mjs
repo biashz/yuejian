@@ -16,9 +16,10 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { buildEpub } from "./lib/make-epub.mjs";
+import { buildFb2 } from "./lib/make-books.mjs";
 
 const EXE = process.argv[2] || "src-tauri/target/release/yuejian.exe";
 const PORT = 9222;
@@ -42,10 +43,13 @@ function resolveSample() {
   mkdirSync(dir, { recursive: true });
   // 不带 <script>：真机上 CSP 是第一道防线，混入两重原因会让失败定位变难
   writeFileSync(file, buildEpub({ title: "真机样本", creator: "e2e" }));
+  // 同一目录再放一本 FB2：用来验证后端「按扩展名放行」与前端格式判定在真机上也成立
+  writeFileSync(join(dir, "sample.fb2"), buildFb2({ title: "真机 FB2", creator: "e2e" }));
   return file;
 }
 
 const EPUB = resolveSample();
+const FB2 = join(dirname(EPUB), "sample.fb2");
 console.log(`样本：${EPUB}`);
 
 if (!existsSync(EXE)) {
@@ -153,7 +157,7 @@ try {
   // 注意 `import_files` 返回的是**整库**（Rust 里 `Ok(data.books.clone())`），不是本次导入的
   // 那几本；而 `target/release/data` 会跨轮次保留，里面可能还躺着上次导入的书。
   // 按 kind 取第一个会在这种机器上悄悄打开旧书——所以必须按路径精确认领。
-  const books = await evaluate(ws, `window.__TAURI__.core.invoke("import_files", { paths: [${JSON.stringify(EPUB)}] })`);
+  const books = await evaluate(ws, `window.__TAURI__.core.invoke("import_files", { paths: [${JSON.stringify(EPUB)}, ${JSON.stringify(FB2)}] })`);
   const norm = (value) => String(value || "").replace(/^\\\\\?\\/, "").replace(/\\/g, "/").toLowerCase();
   const mine = (books || []).find((book) => book.kind === "ebook" && norm(book.path) === norm(EPUB));
   const imported = mine?.id || "";
@@ -228,6 +232,46 @@ try {
     return mod.activePane()?.ebook?.location?.cfi || "";
   })()`);
   check("键盘翻页在真机上生效", after !== before, `${before} → ${after}`);
+
+  /* ---- P4：FB2 在真机上也要能开（后端按扩展名放行 → 前端按格式分派） ---- */
+
+  const fb2 = await evaluate(ws, `(async () => {
+    const books = await window.__TAURI__.core.invoke("get_library");
+    const target = (books || []).find((book) => /sample\\.fb2$/i.test(book.path || ""));
+    return target ? { id: target.id, kind: target.kind } : null;
+  })()`);
+  check("FB2 被识别为 ebook 并入架", Boolean(fb2?.id) && fb2?.kind === "ebook", JSON.stringify(fb2));
+  if (fb2?.id) {
+    // 重载要单独发一次：和取库放在同一个求值里，页面先被换掉，返回值就拿不到了
+    await evaluate(ws, "location.reload()");
+    await sleep(1200);
+    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length > 0", "重载后的书架");
+    await evaluate(ws, `document.querySelector('[data-book="${fb2.id}"]').click()`);
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.format === "fb2";
+    })()`, "FB2 打开", 20000);
+    await sleep(800);
+    const state2 = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      return { format: pane?.ebook?.format || "", chapters: pane?.ebook?.chapters || 0,
+        title: pane?.book?.title || "", sub: document.querySelector("#docSub")?.textContent || "" };
+    })()`);
+    check("真机里 FB2 打开：书名、目录、格式角标都对",
+      state2.format === "fb2" && state2.chapters === 2 && state2.title === "真机 FB2"
+        && /^FB2 · 2 章/.test(state2.sub),
+      `${state2.format} · ${state2.chapters} 章 · 「${state2.title}」· ${state2.sub}`);
+    // 回到 EPUB：后面的书签 / 搜索 / 脚注都在这本书上做
+    await evaluate(ws, `document.querySelector("#backBtn").click()`);
+    await sleep(500);
+    await evaluate(ws, `document.querySelector('[data-book="${imported}"]').click()`);
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.format === "epub" && Boolean(mod.activePane()?.ebook?.location?.cfi);
+    })()`, "回到 EPUB", 20000);
+    await sleep(600);
+  }
 
   /* ---- P2：书签 / 搜索 / 脚注，走的是真 Rust 命令与真 WebView ---- */
 

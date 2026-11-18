@@ -20,6 +20,9 @@ import { stripActiveContent } from "./reader/ebook-sanitize.js";
 import { searchBook } from "./reader/ebook-search.js";
 import { resolveFootnote } from "./reader/ebook-note.js";
 import { flattenToc, countChapters } from "./reader/ebook-toc.js";
+import { detectDrm } from "./reader/ebook-drm.js";
+import { hardenBook } from "./reader/ebook-harden.js";
+import { ebookFormat } from "./core/constants.js";
 
 /** 超过这个体积就不读了：整份进内存，再大只会把进程拖死 */
 const MAX_BYTES = 512 * 1024 * 1024;
@@ -59,6 +62,10 @@ export class EbookReader {
     this.path = "";
     this.location = null;
     this.chapters = 0;
+    /* 真实格式（epub / fb2 / fbz / cbz / mobi / azw3）：角标与副标题按它显示 */
+    this.format = "epub";
+    /* 固定版面（漫画、杂志）：分页器不分栏、不吃字号与页边距，相关能力全部关掉 */
+    this.fixed = false;
     /* 拍平后的目录：章跳转与「当前在第几章」都按它算 */
     this.toc = [];
     /* 章节文档缓存（脚注解析用）——key 是 spine 下标 */
@@ -76,7 +83,8 @@ export class EbookReader {
       throw new Error(t("reader.ebookTooBig", { size: formatBytes(MAX_BYTES) }));
     }
 
-    const { View } = await importFoliate();
+    const mod = await importFoliate();
+    const { View } = mod;
     const view = document.createElement("foliate-view");
     view.className = "ebook-view";
     this.stack.append(view);
@@ -90,8 +98,21 @@ export class EbookReader {
     if (!response.ok) throw new Error(t("reader.ebookReadFailed", { code: response.status }));
     const blob = await response.blob();
     const file = new File([blob], name || path.split(/[\\/]/).pop() || "book.epub");
+    this.format = ebookFormat(file.name) || "epub";
 
-    await view.open(file);
+    // 加密的书一律不打开：库会以「解析失败」告终，用户只会以为文件坏了
+    const drm = await detectDrm(file, this.format);
+    if (drm) throw new Error(t("reader.ebookDrm", { scheme: drm }));
+
+    // 自己调 `makeBook` 而不是交给 `view.open(file)`：中间要包一层 `hardenBook`，
+    // 把 FB2 / MOBI 现拼出来的章节 HTML 也洗一遍（EPUB 走 transformTarget，不需要）
+    const book = await mod.makeBook(file);
+    this.fixed = book.rendition?.layout === "pre-paginated";
+    // 漫画一张图就是一页。`makeComicBook` 没有声明 `rendition.spread`，而固定版面
+    // 渲染器会把「没说」当成「可以左右对开」——结果是每屏只看到右半边一张图、
+    // 左边空着，还得横向翻。这里补一句「一页一屏」，杂志类 EPUB 会自己声明，不动。
+    if (this.fixed && this.format === "cbz" && book.rendition) book.rendition.spread = "none";
+    await view.open(hardenBook(book));
     this.book = view.book;
     this.chapters = countChapters(this.book?.toc);
     this.toc = flattenToc(this.book?.toc);
@@ -147,9 +168,13 @@ export class EbookReader {
    *
    * 窄窗口不必在这里判断：分页器自带 `@container (orientation: portrait)`
    * 规则，竖长的时候自己就降成一页了。
+   *
+   * 固定版面（CBZ）没有「栏数」这回事：它是整页缩放，左右页由书里的
+   * `page-spread` 属性决定，去动 `foliate-fxl` 上的 `max-column-count` 只会白设一个属性。
    */
   setSpread(spread) {
     this.spread = Boolean(spread);
+    if (this.fixed) return;
     const renderer = this.view?.renderer;
     if (!renderer) return;
     renderer.setAttribute("max-column-count", this.spread ? "2" : "1");
@@ -162,10 +187,14 @@ export class EbookReader {
    *
    * 两样都记在实例上：换书会重建 `<foliate-view>`，重开之后要能原样贴回去。
    * 改动会改变每页容下多少字，所以最后必须重排一次，否则页码还按旧版式算。
+   *
+   * 固定版面不吃这套：书页尺寸与排版是出版方定的，改字号只会把图放大，
+   * 所以照存不照做（换成回流体裁的书再贴上去）。
    */
   applyTypography(css, margin) {
     this.css = css;
     this.margin = margin;
+    if (this.fixed) return;
     const renderer = this.view?.renderer;
     if (!renderer) return;
     if (Number.isFinite(margin)) renderer.style.setProperty("--_margin", `${margin}px`);
@@ -237,6 +266,8 @@ export class EbookReader {
    * 免得调用方（侧栏）得知道 foliate 的事件形状。
    */
   search(query, options) {
+    // 固定版面的书（漫画）只有图没有字，搜也没得搜——直接回空表，别让侧栏一直转
+    if (this.fixed) return Promise.resolve([]);
     return searchBook(this, query, options);
   }
 
@@ -269,8 +300,21 @@ export class EbookReader {
     return this.view?.goTo(target);
   }
 
+  /**
+   * 按比例跳转。
+   *
+   * 回流的书交给库（`#sectionProgress` 把字符位置折算成节内锚点）。固定版面
+   * 没有字符位置可折算——那本书的「比例」就是一页占多少，直接按节数取整，
+   * 别去碰库里的私有进度表（漫画能走 `goToFraction`，KF8 固定版面不一定）。
+   */
   goToFraction(fraction) {
-    return this.view?.goToFraction(clamp(fraction, 0, 1));
+    const ratio = clamp(fraction, 0, 1);
+    if (this.fixed) {
+      const total = this.book?.sections?.length || 0;
+      if (!total) return undefined;
+      return this.view?.goTo(Math.min(total - 1, Math.round(ratio * (total - 1))));
+    }
+    return this.view?.goToFraction(ratio);
   }
 
   destroy() {
@@ -286,6 +330,8 @@ export class EbookReader {
     this.location = null;
     this.chapters = 0;
     this.toc = [];
+    this.format = "epub";
+    this.fixed = false;
     this.docs.clear();
     this.stack.hidden = true;
     this.stack.innerHTML = "";

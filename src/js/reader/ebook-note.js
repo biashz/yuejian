@@ -25,6 +25,8 @@ export async function resolveFootnote(reader, href) {
     return null;
   }
   if (!resolved || resolved.index == null || resolved.index < 0) return null;
+  // 漫画这类书的 `resolveHref` 只回节下标，没有「按 id 取节点」这一步
+  if (typeof resolved.anchor !== "function") return null;
 
   const doc = await reader.sectionDoc(resolved.index);
   if (!doc) return null;

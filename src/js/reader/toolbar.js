@@ -130,6 +130,9 @@ function renderToolbar() {
     const fraction = state.ebookFraction || 0;
     const pct = Math.round(fraction * 100);
     const spread = state.settings.ebookSpread !== false;
+    // 固定版面（漫画）没有单双页可言：左右页由书里的 page-spread 说了算，
+    // 按钮留在那儿只会点了没反应
+    const fixed = Boolean(activePane()?.ebook?.fixed);
     bar.innerHTML = `
       <div class="tool-group">
         <button class="tool-btn" data-act="ebook-prev" title="${t("reader.prev")}"><svg class="ic"><use href="#i-chevron-left"/></svg></button>
@@ -140,7 +143,8 @@ function renderToolbar() {
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">
-        <button class="tool-btn ${spread ? "is-on" : ""}" data-act="ebook-spread" title="${t("reader.ebookSpread")}">
+        <button class="tool-btn ${spread ? "is-on" : ""}" data-act="ebook-spread"
+          ${fixed ? "hidden" : ""} title="${t("reader.ebookSpread")}">
           <svg class="ic"><use href="#i-book-spread"/></svg>
         </button>
         <button class="tool-btn ${state.ebookMarked ? "is-on" : ""}" data-act="ebook-mark" title="${t("reader.ebookMark")}">

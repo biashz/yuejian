@@ -92,7 +92,11 @@ fn detect_kind(path: &Path) -> Option<&'static str> {
     match ext.as_str() {
         "pdf" => Some("pdf"),
         "md" | "markdown" | "mdown" => Some("markdown"),
-        "epub" => Some("ebook"),
+        // 电子书：epub / fb2（纯 XML）/ fbz 与 fb2.zip（打包的 fb2）/ cbz（图片漫画）
+        // / mobi 与 azw、azw3（Kindle）。`.fb2.zip` 的扩展名只有 `zip`，
+        // 所以放行条件看的是整个文件名，否则会把普通压缩包也当书收进来
+        "epub" | "fb2" | "fbz" | "cbz" | "mobi" | "azw" | "azw3" => Some("ebook"),
+        "zip" if name.to_lowercase().ends_with(".fb2.zip") => Some("ebook"),
         _ => text::is_text(&ext, &name).then_some("text"),
     }
 }
@@ -174,7 +178,8 @@ pub fn save_settings(state: State<'_, StoreState>, settings: Settings) -> Result
 /// 只影响「默认看得见哪些」：用户仍可用「所有文件」选任意文件，
 /// 不支持的会在导入时被跳过（前端会提示跳过了几个）。
 const PICK_EXTS: &[&str] = &[
-    "pdf", "epub", "md", "markdown", "mdown", "txt", "text", "log", "nfo", "csv", "tsv", "json",
+    "pdf", "epub", "fb2", "fbz", "cbz", "mobi", "azw", "azw3", "md", "markdown", "mdown",
+    "txt", "text", "log", "nfo", "csv", "tsv", "json",
     "yml", "yaml", "toml", "ini", "conf", "xml", "html", "css", "js", "ts", "rs", "go", "py",
     "java", "c", "h", "cpp", "cs", "php", "rb", "sh", "sql", "diff",
 ];

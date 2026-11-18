@@ -25,14 +25,14 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-function crc32(buf) {
+export function crc32(buf) {
   let c = 0xffffffff;
   for (const byte of buf) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
 /** 手写 ZIP：mimetype 必须第一个条目且不压缩，其余 deflate */
-function zipStored(entries) {
+export function zipStored(entries) {
   const chunks = [];
   const central = [];
   let offset = 0;
@@ -93,9 +93,12 @@ function zipStored(entries) {
  *   因为真机上 CSP 才是第一道防线，留着反而让失败原因变得含混。
  * @param {string} [options.title="冒烟样本"] OPF 里的书名，用于验证回填
  * @param {string} [options.creator="测试"] OPF 里的作者
+ * @param {"" | "drm" | "font"} [options.encryption=""]
+ *   往 `META-INF/encryption.xml` 里写一条加密记录：`drm` 是正文加密（真 DRM，
+ *   应当被拒并给出人话提示），`font` 是只混淆内嵌字体（合法，应当照常打开）。
  * @returns {Buffer} 完整的 .epub 字节
  */
-export function buildEpub({ script = false, title = "冒烟样本", creator = "测试" } = {}) {
+export function buildEpub({ script = false, title = "冒烟样本", creator = "测试", encryption = "" } = {}) {
   const para = (marker) => `<p>${marker}　` + "这是一段用来撑满页面的正文，重复出现以便分页。".repeat(6) + "</p>";
   const chapter = (heading, marker, extra = "", tail = "") => `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>${heading}</title>
@@ -150,9 +153,23 @@ a { color: #0000ee; text-decoration: underline; }`;
   const note = `<p>正文末尾有一个注号<a href="#fn1" epub:type="noteref">1</a>。</p>`;
   const noteBody = `<aside id="fn1" epub:type="footnote"><p>这是一条脚注：青苔生于石阶背阴处，雨后可采。</p></aside>`;
 
+  // 加密记录只放一条，算法按需切换：正文加密与「只混淆字体」在 EPUB 规范里
+  // 是同一份文件的两种取值，判定逻辑必须能分开这两种情况
+  const encryptionXml = encryption ? `<?xml version="1.0" encoding="UTF-8"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+  xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+  <enc:EncryptedData>
+    <enc:EncryptionMethod Algorithm="${encryption === "font"
+      ? "http://www.idpf.org/2008/embedding"
+      : "http://ns.adobe.com/adept"}"/>
+    <enc:CipherData><enc:CipherReference URI="OEBPS/ch1.xhtml"/></enc:CipherData>
+  </enc:EncryptedData>
+</encryption>` : "";
+
   return zipStored([
     { name: "mimetype", data: "application/epub+zip", store: true },
     { name: "META-INF/container.xml", data: container },
+    ...(encryptionXml ? [{ name: "META-INF/encryption.xml", data: encryptionXml }] : []),
     { name: "OEBPS/content.opf", data: opf },
     { name: "OEBPS/nav.xhtml", data: nav },
     { name: "OEBPS/style.css", data: css },

@@ -22,6 +22,7 @@ import { join, extname, dirname, resolve } from "node:path";
 import { tmpdir, platform } from "node:os";
 import { fileURLToPath } from "node:url";
 import { buildEpub } from "./lib/make-epub.mjs";
+import { buildFb2, buildCbz, buildMobi } from "./lib/make-books.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const WORK = join(tmpdir(), "yuejian-smoke");
@@ -198,6 +199,19 @@ function stubSource() {
     { id: "b-epub", path: "/fixtures/sample.epub", title: "冒烟样本", author: "本地", kind: "ebook",
       size: 4096, pages: 0, words: 0, addedAt: now - 2800, lastOpenedAt: now - 750, favorite: false,
       categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
+    // 其余电子书格式：FB2（单文件 XML）、CBZ（图片漫画）、带 DRM 的 EPUB
+    { id: "b-fb2", path: "/fixtures/sample.fb2", title: "sample.fb2", author: "本地", kind: "ebook",
+      size: 5200, pages: 0, words: 0, addedAt: now - 2750, lastOpenedAt: now - 740, favorite: false,
+      categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
+    { id: "b-mobi", path: "/fixtures/sample.mobi", title: "sample.mobi", author: "本地", kind: "ebook",
+      size: 9500, pages: 0, words: 0, addedAt: now - 2745, lastOpenedAt: now - 735, favorite: false,
+      categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
+    { id: "b-cbz", path: "/fixtures/sample.cbz", title: "sample.cbz", author: "本地", kind: "ebook",
+      size: 900, pages: 0, words: 0, addedAt: now - 2740, lastOpenedAt: now - 730, favorite: false,
+      categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
+    { id: "b-drm", path: "/fixtures/drm.epub", title: "加密样本", author: "本地", kind: "ebook",
+      size: 3600, pages: 0, words: 0, addedAt: now - 2730, lastOpenedAt: now - 720, favorite: false,
+      categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
     // 大文件：正文由 read_text_window 按窗口现生成，不预置全文——
     // 20 万行 × 约 100 字节 ≈ 20MB，正好越过 8MB 的整篇上限
     { id: "b-huge", path: "C:/fixtures/huge.log", title: "huge.log", author: "本地", kind: "text",
@@ -228,6 +242,10 @@ function stubSource() {
           if (args.id === "b-pdf") return Promise.resolve(clone({ kind: "pdf", path: "/fixtures/sample.pdf", pages: 3, size: 4000 }));
           if (args.id === "b-epub") return Promise.resolve(clone({
             kind: "ebook", path: "/fixtures/sample.epub", size: 4096,
+          }));
+          const fixtures = { "b-fb2": "sample.fb2", "b-cbz": "sample.cbz", "b-mobi": "sample.mobi", "b-drm": "drm.epub" };
+          if (fixtures[args.id]) return Promise.resolve(clone({
+            kind: "ebook", path: "/fixtures/" + fixtures[args.id], size: 5000,
           }));
           if (args.id === "b-txt") return Promise.resolve(clone({
             kind: "text", text: ${JSON.stringify(TEXT_LOG)},
@@ -397,6 +415,12 @@ async function main() {
   await writeFile(join(WORK, "sample.pdf"), buildPdf(["第一页", "第二页", "第三页"]));
   // script: true —— 第一章带一段 <script>，用来证明清洗生效（见 make-epub.mjs）
   await writeFile(join(WORK, "sample.epub"), buildEpub({ script: true }));
+  await writeFile(join(WORK, "sample.fb2"), buildFb2());
+  await writeFile(join(WORK, "sample.cbz"), buildCbz());
+  // script: true —— MOBI 没有 EPUB 的资源钩子，正文里的脚本要靠 hardenBook 在读回后洗掉
+  await writeFile(join(WORK, "sample.mobi"), buildMobi({ script: true }));
+  // 正文加密的 EPUB：打开时应被拦下并说明是哪一种 DRM，而不是报「文件损坏」
+  await writeFile(join(WORK, "drm.epub"), buildEpub({ title: "加密样本", encryption: "drm" }));
   await writeFile(join(WORK, "demo.md"), "# 第一章\n\n正文\n");
 
   // 端口交给系统分配：并行跑多个实例不会撞车
@@ -1485,6 +1509,134 @@ async function main() {
     check("默认设置补齐六项（旧配置升级不受影响）",
       defaults.missing.length === 0 && defaults.count === 6,
       defaults.missing.length ? `缺 ${defaults.missing.join(",")}` : "6/6");
+
+    /* --- P4：FB2 / CBZ（固定版面）/ 带 DRM 的 EPUB --- */
+    // 设置面板前面留在打开状态，先关掉，否则遮罩挡住书架的点击
+    await evaluate(ws, `(async () => { (await import("/js/preferences.js")).closeSettings(); })()`);
+
+    const switchBook = async (id) => {
+      await evaluate(ws, `document.querySelector("#backBtn").click()`);
+      await sleep(400);
+      await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="${id}"]').click()`);
+    };
+
+    await switchBook("b-fb2");
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.format === "fb2" && Boolean(mod.activePane()?.ebook?.location?.cfi);
+    })()`, "FB2 打开", 20000);
+    await sleep(600);
+    const fb2 = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      return { format: pane?.ebook?.format || "", fixed: Boolean(pane?.ebook?.fixed),
+        chapters: pane?.ebook?.chapters || 0, title: pane?.book?.title || "",
+        toc: (pane?.ebookToc || []).map((item) => item.label),
+        sub: document.querySelector("#docSub")?.textContent || "" };
+    })()`);
+    check("FB2 打开：目录两章、角标写 FB2、书名读自 XML",
+      fb2.format === "fb2" && fb2.chapters === 2 && fb2.title === "冒烟 FB2"
+        && fb2.toc[0] === "第一章 起点" && /^FB2 · 2 章/.test(fb2.sub),
+      `${fb2.format} · ${fb2.chapters} 章 · 「${fb2.title}」· ${fb2.sub}`);
+
+    frameCtx = await blobFrameContext(ws);
+    const fb2Body = await evaluate(ws, `(() => ({
+      text: document.body.innerText.replace(/\\s+/g, "").slice(0, 40),
+      scripts: document.querySelectorAll("script").length,
+    }))()`, frameCtx);
+    check("FB2 正文渲染出来且不带脚本",
+      /第一章起点/.test(fb2Body.text) && fb2Body.scripts === 0,
+      `${fb2Body.text.slice(0, 16)}… · script ${fb2Body.scripts}`);
+
+    // MOBI：正文来自文件本身，且第一章里塞了 <script>，靠 hardenBook 在读回后洗掉
+    await switchBook("b-mobi");
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.format === "mobi" && Boolean(mod.activePane()?.ebook?.location?.cfi);
+    })()`, "MOBI 打开", 20000);
+    await sleep(700);
+    const mobi = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      return { format: pane?.ebook?.format || "", chapters: pane?.ebook?.chapters || 0,
+        title: pane?.book?.title || "",
+        toc: (pane?.ebookToc || []).map((item) => item.label),
+        sub: document.querySelector("#docSub")?.textContent || "" };
+    })()`);
+    check("MOBI 打开：书名与目录都读自 PalmDB/MOBI 头",
+      mobi.format === "mobi" && mobi.title === "冒烟 MOBI" && mobi.toc.length === 2
+        && mobi.toc[0] === "第一章 起点" && /^MOBI · 2 章/.test(mobi.sub),
+      `${mobi.format} · 「${mobi.title}」· ${mobi.toc.join("/")} · ${mobi.sub}`);
+
+    // 首屏是目录页，先跳到第一章，正文与「脚本没执行」才有对象可验
+    await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      const first = (pane?.ebookToc || [])[0];
+      if (first) await pane.ebook.goTo(first.href);
+    })()`);
+    await sleep(1200);
+    frameCtx = await blobFrameContext(ws);
+    const mobiBody = await evaluate(ws, `(() => ({
+      // 那句唯一的正文在章末，取整段来看；截断只用在这条断言的说明文字上
+      text: document.body.innerText.replace(/\\s+/g, ""),
+      scripts: document.querySelectorAll("script").length,
+    }))()`, frameCtx);
+    const mobiPwned = await evaluate(ws, `window.__mobiPwned ?? null`);
+    check("MOBI 正文渲染出来，书内脚本没被执行",
+      mobiBody.text.includes("檐下听雨") && mobiBody.scripts === 0 && mobiPwned === null,
+      `${mobiBody.text.slice(0, 20)}… script ${mobiBody.scripts} · __mobiPwned ${String(mobiPwned)}`);
+
+    // CBZ：固定版面，页序按文件名里的数字走
+    await switchBook("b-cbz");
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.format === "cbz" && Boolean(mod.activePane()?.ebook?.location?.cfi);
+    })()`, "CBZ 打开", 20000);
+    await sleep(600);
+    const cbz = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      const spread = document.querySelector('[data-act="ebook-spread"]');
+      return { format: pane?.ebook?.format || "", fixed: Boolean(pane?.ebook?.fixed),
+        pages: pane?.ebook?.chapters || 0, sub: document.querySelector("#docSub")?.textContent || "",
+        spreadHidden: spread ? spread.hidden : null };
+    })()`);
+    check("CBZ 按固定版面打开，副标题数页而不是章",
+      cbz.fixed && cbz.pages === 3 && /^CBZ · 3 页/.test(cbz.sub),
+      `${cbz.format} · 固定 ${cbz.fixed} · ${cbz.pages} 页 · ${cbz.sub}`);
+    check("固定版面下不显示单双页按钮", cbz.spreadHidden === true, String(cbz.spreadHidden));
+
+    frameCtx = await blobFrameContext(ws);
+    const cbzPage = await evaluate(ws, `(() => {
+      const img = document.querySelector("img");
+      const rect = img?.getBoundingClientRect();
+      return { images: document.querySelectorAll("img").length,
+        // 图片解码出 600×900，页面按固有尺寸排版，画在屏上的宽度应当接近阅读区宽度
+        natural: img ? [img.naturalWidth, img.naturalHeight] : [0, 0],
+        width: Math.round(rect?.width || 0), height: Math.round(rect?.height || 0) };
+    })()`, frameCtx);
+    await shot(ws, "ebook-cbz");
+    check("漫画页在 iframe 里按整页画出图片",
+      cbzPage.images === 1 && cbzPage.natural[0] === 600 && cbzPage.width > 200
+        && cbzPage.height / cbzPage.width > 1.3,
+      `${cbzPage.images} 张，源 ${cbzPage.natural.join("×")}，画在 ${cbzPage.width}×${cbzPage.height}`);
+
+    // DRM：拦下并说清是哪一种方案
+    await switchBook("b-drm");
+    await sleep(1600);
+    const drm = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      // 错误卡片就画在阅读区里（ebookOpen 的 catch 分支），没有挂上 foliate-view
+      const card = document.querySelector(".ebook-stack .pdf-error");
+      return { message: card?.textContent || "", mounted: Boolean(pane?.ebook?.book),
+        views: document.querySelectorAll(".ebook-stack foliate-view").length };
+    })()`);
+    await shot(ws, "ebook-drm");
+    check("带 DRM 的 EPUB 被拦下并说明方案",
+      /DRM/.test(drm.message) && /ADEPT/.test(drm.message) && !drm.mounted && drm.views === 0,
+      drm.message.replace(/\s+/g, " ").slice(0, 60) || "没有提示");
 
     errs = await errors();
     check("电子书阅读无未捕获异常", errs.length === 0, errs.join(" | "));
