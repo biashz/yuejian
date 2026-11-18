@@ -209,6 +209,16 @@ function stubSource() {
     { id: "b-cbz", path: "/fixtures/sample.cbz", title: "sample.cbz", author: "本地", kind: "ebook",
       size: 900, pages: 0, words: 0, addedAt: now - 2740, lastOpenedAt: now - 730, favorite: false,
       categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
+    // 坏文件与大文件：验证两种「打不开」的错误态
+    { id: "b-broken", path: "/fixtures/broken.epub", title: "broken.epub", author: "本地", kind: "ebook",
+      size: 2048, pages: 0, words: 0, addedAt: now - 2720, lastOpenedAt: now - 715, favorite: false,
+      categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
+    { id: "b-notzip", path: "/fixtures/notzip.epub", title: "notzip.epub", author: "本地", kind: "ebook",
+      size: 900, pages: 0, words: 0, addedAt: now - 2715, lastOpenedAt: now - 712, favorite: false,
+      categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
+    { id: "b-bigebook", path: "/fixtures/big.epub", title: "big.epub", author: "本地", kind: "ebook",
+      size: 629145600, pages: 0, words: 0, addedAt: now - 2710, lastOpenedAt: now - 710, favorite: false,
+      categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
     { id: "b-drm", path: "/fixtures/drm.epub", title: "加密样本", author: "本地", kind: "ebook",
       size: 3600, pages: 0, words: 0, addedAt: now - 2730, lastOpenedAt: now - 720, favorite: false,
       categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
@@ -246,6 +256,16 @@ function stubSource() {
           const fixtures = { "b-fb2": "sample.fb2", "b-cbz": "sample.cbz", "b-mobi": "sample.mobi", "b-drm": "drm.epub" };
           if (fixtures[args.id]) return Promise.resolve(clone({
             kind: "ebook", path: "/fixtures/" + fixtures[args.id], size: 5000,
+          }));
+          // 坏文件：内容根本不是 zip；大文件：只报体积，前端在读取前就该拦下
+          if (args.id === "b-broken") return Promise.resolve(clone({
+            kind: "ebook", path: "/fixtures/broken.epub", size: 2048,
+          }));
+          if (args.id === "b-notzip") return Promise.resolve(clone({
+            kind: "ebook", path: "/fixtures/notzip.epub", size: 900,
+          }));
+          if (args.id === "b-bigebook") return Promise.resolve(clone({
+            kind: "ebook", path: "/fixtures/big.epub", size: 629145600,
           }));
           if (args.id === "b-txt") return Promise.resolve(clone({
             kind: "text", text: ${JSON.stringify(TEXT_LOG)},
@@ -367,6 +387,21 @@ async function blobFrameContext(ws) {
   return world.executionContextId;
 }
 
+/**
+ * 数当前挂着几个 blob 章节 iframe。换章会新建一个，旧的必须被回收——
+ * 不回收的话读一晚上，进程里就攒着整本书清洗过的 DOM。
+ */
+async function blobFrameCount(ws) {
+  const tree = await send(ws, "Page.getFrameTree");
+  let count = 0;
+  const walk = (node) => {
+    if ((node.frame?.url || "").startsWith("blob:")) count += 1;
+    (node.childFrames || []).forEach(walk);
+  };
+  walk(tree.frameTree);
+  return count;
+}
+
 async function waitFor(ws, expression, label, timeout = 10000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
@@ -421,6 +456,12 @@ async function main() {
   await writeFile(join(WORK, "sample.mobi"), buildMobi({ script: true }));
   // 正文加密的 EPUB：打开时应被拦下并说明是哪一种 DRM，而不是报「文件损坏」
   await writeFile(join(WORK, "drm.epub"), buildEpub({ title: "加密样本", encryption: "drm" }));
+  // 真 EPUB 截掉后半段：zip 头还在、中央目录没了，属于「文件不完整」
+  await writeFile(join(WORK, "broken.epub"), buildEpub({ title: "截断样本" }).subarray(0, 1200));
+  // 另一种「打不开」：内容是纯文本，只是后缀改成了 .epub —— 连 zip 都不是
+  await writeFile(join(WORK, "notzip.epub"), Buffer.from("这不是一个 zip，只是把后缀改成了 .epub"));
+  // 大文件只需要存在：前端在 fetch 之前就按 size 拦下，不会真读
+  await writeFile(join(WORK, "big.epub"), Buffer.from("placeholder"));
   await writeFile(join(WORK, "demo.md"), "# 第一章\n\n正文\n");
 
   // 端口交给系统分配：并行跑多个实例不会撞车
@@ -1367,6 +1408,10 @@ async function main() {
     const noteClosed = await evaluate(ws, `document.querySelector(".ebook-note")?.hidden ?? true`);
     check("脚注小窗可以关掉", noteClosed === true, String(noteClosed));
 
+    // 到此已经翻过好几章（目录跳转、搜索命中、脚注来回）——章节 iframe 该只剩当前这本
+    const frames = await blobFrameCount(ws);
+    check("换章后没有留下废弃的章节 iframe", frames <= 2, `${frames} 个 blob 帧`);
+
     // 续读：回书架再打开，位置要回到第三章
     const beforeReopen = await evaluate(ws, `(async () => {
       const mod = await import("/js/reader/panes.js");
@@ -1607,6 +1652,15 @@ async function main() {
       `${cbz.format} · 固定 ${cbz.fixed} · ${cbz.pages} 页 · ${cbz.sub}`);
     check("固定版面下不显示单双页按钮", cbz.spreadHidden === true, String(cbz.spreadHidden));
 
+    // 漫画的目录条目原本是图片文件名，界面上应当是人读的页码
+    const cbzToc = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return (mod.activePane()?.ebookToc || []).map((item) => item.label);
+    })()`);
+    check("漫画目录显示页码而不是图片文件名",
+      cbzToc.length === 3 && cbzToc[0] === "第 1 页" && cbzToc[2] === "第 3 页",
+      cbzToc.join(" / ") || "空");
+
     frameCtx = await blobFrameContext(ws);
     const cbzPage = await evaluate(ws, `(() => {
       const img = document.querySelector("img");
@@ -1630,13 +1684,53 @@ async function main() {
       const pane = mod.activePane();
       // 错误卡片就画在阅读区里（ebookOpen 的 catch 分支），没有挂上 foliate-view
       const card = document.querySelector(".ebook-stack .pdf-error");
+      // 打不开的书没有页可翻：翻页/进度条/书签都不该占着位置
+      const acts = [...document.querySelectorAll("#readToolbar [data-act]")].map((el) => el.dataset.act);
       return { message: card?.textContent || "", mounted: Boolean(pane?.ebook?.book),
-        views: document.querySelectorAll(".ebook-stack foliate-view").length };
+        views: document.querySelectorAll(".ebook-stack foliate-view").length,
+        acts, slider: Boolean(document.querySelector("#ebookSlider")),
+        empty: (document.querySelector("#ctxBody .ctx-empty")?.textContent || "").replace(/\s+/g, " ") };
     })()`);
     await shot(ws, "ebook-drm");
     check("带 DRM 的 EPUB 被拦下并说明方案",
       /DRM/.test(drm.message) && /ADEPT/.test(drm.message) && !drm.mounted && drm.views === 0,
       drm.message.replace(/\s+/g, " ").slice(0, 60) || "没有提示");
+    check("打不开的书不摆翻页与书签按钮",
+      !drm.slider && !drm.acts.some((act) => /^ebook-(prev|next|mark|spread)$/.test(act))
+        && drm.acts.includes("ctx"),
+      `剩 ${drm.acts.join("/") || "空工具栏"}${drm.slider ? "，还有进度条" : ""}`);
+    check("打不开的书侧栏也不说「用方向键翻页」",
+      /没能打开/.test(drm.empty) && !/方向键/.test(drm.empty), drm.empty || "空态没出现");
+
+    // 坏文件：扩展名对、内容不对，要说「损坏」而不是甩一段 zip.js 的英文
+    await switchBook("b-broken");
+    await sleep(1400);
+    const broken = await evaluate(ws, `(() => ({
+      message: (document.querySelector(".ebook-stack .pdf-error")?.textContent || "").replace(/\s+/g, " "),
+      views: document.querySelectorAll(".ebook-stack foliate-view").length,
+    }))()`);
+    check("截断的 EPUB 说成「文件不完整」而不是解析器原话",
+      /损坏|不完整/.test(broken.message) && broken.views === 0, broken.message.slice(0, 60) || "没有提示");
+
+    // 改后缀的假书：连 zip 都不是，说法要落到「不是能读的格式」
+    await switchBook("b-notzip");
+    await sleep(1400);
+    const notzip = await evaluate(ws, `(() => ({
+      message: (document.querySelector(".ebook-stack .pdf-error")?.textContent || "").replace(/\s+/g, " "),
+      views: document.querySelectorAll(".ebook-stack foliate-view").length,
+    }))()`);
+    check("改了后缀的假书说成「不是能读的格式」",
+      /不是能读的 EPUB/.test(notzip.message) && notzip.views === 0, notzip.message.slice(0, 60) || "没有提示");
+
+    // 大文件：读取之前就按体积拦下
+    await switchBook("b-bigebook");
+    await sleep(1200);
+    const tooBig = await evaluate(ws, `(() => ({
+      message: (document.querySelector(".ebook-stack .pdf-error")?.textContent || "").replace(/\s+/g, " "),
+      views: document.querySelectorAll(".ebook-stack foliate-view").length,
+    }))()`);
+    check("超过体积上限的书在读取前就被拦下",
+      /512(\.0)? MB/.test(tooBig.message) && tooBig.views === 0, tooBig.message.slice(0, 60) || "没有提示");
 
     errs = await errors();
     check("电子书阅读无未捕获异常", errs.length === 0, errs.join(" | "));

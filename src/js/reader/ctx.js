@@ -214,11 +214,13 @@ async function renderToc() {
     return;
   }
 
-  // 电子书的目录是书自带的 NAV/NCX，可能是空的一本（只有正文没有目录）
+  // 电子书的目录是书自带的 NAV/NCX，可能是空的一本（只有正文没有目录）。
+  // 打不开的书也没有目录，但它不是「翻页就行」——照空态说「用方向键翻页」是假话
   if (book.kind === "ebook") {
     const items = pane.ebookToc || [];
     if (!items.length) {
-      body.innerHTML = `<div class="ctx-empty">${t("reader.tocEbookEmpty")}</div>`;
+      const key = pane.ebook?.book ? "reader.tocEbookEmpty" : "reader.tocEbookDead";
+      body.innerHTML = `<div class="ctx-empty">${t(key)}</div>`;
       return;
     }
     body.innerHTML = items.map((item) => `

@@ -25,6 +25,7 @@ import { bindEbookGestures } from "./ebook-gesture.js";
 import { showFootnote, hideFootnote } from "./footnote.js";
 import { isBookmarked } from "./bookmarks.js";
 import { buildEbookStyles } from "./ebook-style.js";
+import { explainEbookError } from "./ebook-error.js";
 
 /** 字号/行高/字体/对齐折成 CSS，页边距单独给分页器（它不参与书内 DOM 的样式） */
 function typography() {
@@ -134,13 +135,20 @@ async function openEbook(doc, pane) {
       cfi,
       name: pane.book?.path?.split(/[\\/]/).pop() || "",
     });
-    pane.ebookToc = flattenToc(reader.book?.toc);
+    // 漫画的目录条目就是图片文件名（page-1.png），换成人读的页码
+    pane.ebookToc = flattenToc(reader.book?.toc).map((item, index, all) => (
+      reader.format === "cbz" && all.length === (reader.book?.sections?.length || 0)
+        ? { ...item, label: t("reader.ebookPage", { n: index + 1 }) }
+        : item
+    ));
     // 书里的元数据比文件名可靠：书名、作者都在 OPF 里，书架当初只拿到了文件名
     const meta = reader.book?.metadata;
     if (meta?.title && pane.book) pane.book.title = String(meta.title);
     if (meta?.author && pane.book && meta.author !== "本地文档") pane.book.author = String(meta.author);
   } catch (error) {
-    pane.ebookStack.innerHTML = `<div class="pdf-error">${t("reader.ebookErrorTitle")}<br><small>${escapeHtml(error?.message || error)}</small></div>`;
+    // 解析器的原话是给开发者看的（英文 + 类名），这里折成「不支持 / 文件不完整」两句
+    const reason = explainEbookError(error, pane.ebook?.format, t);
+    pane.ebookStack.innerHTML = `<div class="pdf-error">${t("reader.ebookErrorTitle")}<br><small>${escapeHtml(reason)}</small></div>`;
     pane.ebookStack.hidden = false;
     toast(t("reader.ebookErrorToast"));
   }

@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { buildEpub } from "./lib/make-epub.mjs";
-import { buildFb2 } from "./lib/make-books.mjs";
+import { buildFb2, buildCbz } from "./lib/make-books.mjs";
 
 const EXE = process.argv[2] || "src-tauri/target/release/yuejian.exe";
 const PORT = 9222;
@@ -45,11 +45,16 @@ function resolveSample() {
   writeFileSync(file, buildEpub({ title: "真机样本", creator: "e2e" }));
   // 同一目录再放一本 FB2：用来验证后端「按扩展名放行」与前端格式判定在真机上也成立
   writeFileSync(join(dir, "sample.fb2"), buildFb2({ title: "真机 FB2", creator: "e2e" }));
+  // 固定版面（漫画）与加密书：前者验 fxl 渲染器，后者验「拦下并说清方案」
+  writeFileSync(join(dir, "sample.cbz"), buildCbz());
+  writeFileSync(join(dir, "sample-drm.epub"), buildEpub({ title: "真机加密样本", encryption: "drm" }));
   return file;
 }
 
 const EPUB = resolveSample();
 const FB2 = join(dirname(EPUB), "sample.fb2");
+const CBZ = join(dirname(EPUB), "sample.cbz");
+const DRM = join(dirname(EPUB), "sample-drm.epub");
 console.log(`样本：${EPUB}`);
 
 if (!existsSync(EXE)) {
@@ -356,6 +361,73 @@ try {
   check("真机点脚注弹出小窗且不跳页",
     Boolean(clicked) && note.open && /青苔生于石阶/.test(note.text) && note.cfi === noteCfi,
     note.open ? `注文「${note.text.slice(0, 14)}…」` : "未弹出");
+
+  /* ---- P5：固定版面与打不开的书，这两条最容易「模拟环境通过、真机不通过」 ---- */
+
+  const more = await evaluate(ws,
+    `window.__TAURI__.core.invoke("import_files", { paths: [${JSON.stringify(CBZ)}, ${JSON.stringify(DRM)}] })`);
+  const cbzId = (more || []).find((book) => norm(book.path) === norm(CBZ))?.id || "";
+  const drmId = (more || []).find((book) => norm(book.path) === norm(DRM))?.id || "";
+  check("CBZ 与加密 EPUB 都入架", Boolean(cbzId && drmId), `${cbzId || "-"} / ${drmId || "-"}`);
+
+  if (cbzId && drmId) {
+    await evaluate(ws, "location.reload()");
+    await sleep(1200);
+    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length > 0", "重载后的书架");
+    await evaluate(ws, `document.querySelector('[data-book="${cbzId}"]').click()`);
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane()?.ebook;
+      return pane?.format === "cbz" && pane?.fixed === true;
+    })()`, "CBZ 打开", 20000);
+    await sleep(1000);
+    const comic = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      return {
+        fixed: Boolean(pane?.ebook?.fixed),
+        toc: (pane?.ebookToc || []).map((item) => item.label),
+        sub: document.querySelector("#docSub")?.textContent || "",
+        spreadHidden: document.querySelector('[data-act="ebook-spread"]')?.hidden ?? null,
+      };
+    })()`);
+    // 漫画页是画在 iframe 里的 <img>：尺寸由出版方定，真机上必须按原尺寸铺满
+    const comicWorld = await blobWorld(ws);
+    const page = comicWorld ? await evaluate(ws, `(() => {
+      const img = document.querySelector("img");
+      return { images: document.querySelectorAll("img").length,
+        width: img?.naturalWidth || 0, drawn: Math.round(img?.getBoundingClientRect().width || 0) };
+    })()`, comicWorld) : null;
+    check("真机 CBZ 按固定版面打开：一页一屏、目录是页码",
+      comic.fixed && comic.toc.join("/") === "第 1 页/第 2 页/第 3 页" && /^CBZ · 3 页/.test(comic.sub)
+        && comic.spreadHidden === true,
+      `${comic.toc.length} 条 · ${comic.sub}`);
+    check("真机漫画页画出整页图片而不是左半个空页",
+      Boolean(page && page.images === 1 && page.width === 600 && page.drawn > 200),
+      page ? `${page.images} 张，源宽 ${page.width}，画在 ${page.drawn}px` : "没有 iframe");
+
+    await evaluate(ws, `document.querySelector("#backBtn").click()`);
+    await sleep(500);
+    await evaluate(ws, `document.querySelector('[data-book="${drmId}"]').click()`);
+    await sleep(1800);
+    const dead = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      return {
+        message: (document.querySelector(".ebook-stack .pdf-error")?.textContent || "").replace(/\s+/g, " "),
+        views: document.querySelectorAll(".ebook-stack foliate-view").length,
+        book: Boolean(pane?.ebook?.book),
+        acts: [...document.querySelectorAll("#readToolbar [data-act]")].map((el) => el.dataset.act),
+      };
+    })()`);
+    check("真机拦下 DRM 书并说明方案",
+      /DRM/.test(dead.message) && /ADEPT/.test(dead.message) && dead.views === 0 && !dead.book,
+      dead.message || "没有提示");
+    check("真机里打不开的书只剩侧栏开关",
+      !dead.acts.some((act) => /^ebook-(prev|next|mark|spread)$/.test(act)) && dead.acts.includes("ctx"),
+      `剩 ${dead.acts.join("/") || "空工具栏"}`);
+  }
+
   check("真机全程无未捕获异常", pageErrors.length === 0, pageErrors.slice(0, 2).join(" | "));
 } catch (error) {
   console.error("E2E 中断：", error.message);

@@ -132,10 +132,12 @@ function updateDocSub() {
     const pane = activePane();
     const format = kindLabel("ebook", book);
     const count = pane?.ebook?.chapters || pane?.ebookToc?.length || book.pages || 0;
-    // 固定版面（漫画）数的是页不是章：一张图一页，叫它「章」只会让人以为目录没读对
-    sub.textContent = pane?.ebook?.fixed
-      ? t("reader.docSubComic", { format, pages: count, size: formatBytes(book.size) })
-      : t("reader.docSubEbook", { format, chapters: count, size: formatBytes(book.size) });
+    // 固定版面（漫画）数的是页不是章：一张图一页，叫它「章」只会让人以为目录没读对。
+    // 目录为空的书（没有 NAV 的 MOBI）不写「0 章」——那不是信息，只是噪音
+    const size = formatBytes(book.size);
+    if (!count) sub.textContent = t("reader.docSubEbookPlain", { format, size });
+    else if (pane?.ebook?.fixed) sub.textContent = t("reader.docSubComic", { format, pages: count, size });
+    else sub.textContent = t("reader.docSubEbook", { format, chapters: count, size });
     return;
   }
   sub.textContent = t("reader.docSubMd", { words: book.words || 0, size: formatBytes(book.size) });
