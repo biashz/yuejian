@@ -99,6 +99,9 @@ yuejian/
 ├── site/                    # Static marketing site (Vercel source)
 ├── scripts/
 │   ├── dev.mjs              # Unified dev / build / bundle entry
+│   ├── smoke-reader.mjs     # Real-browser smoke: open / page / zoom / hotkeys
+│   ├── e2e-ebook.mjs        # On-device E2E: launch the release build, read an EPUB in WebView2
+│   ├── lib/make-epub.mjs    # Generates the EPUB sample on the spot (one byte source for smoke + E2E)
 │   └── vendor-assets.mjs    # Extracts pdf.js and friends from node_modules
 ├── docs/                    # Product, design, development, and usage docs
 ├── .github/workflows/build.yml   # Three-platform build + release upload
@@ -125,6 +128,8 @@ In debug builds the data directory is `.data/` at the project root, so `src-taur
 | `npm run build` | Compile a release binary without an installer (`tauri build --no-bundle`) |
 | `npm run bundle` | Build an installer for the current platform |
 | `npm run vendor` | Sync offline frontend assets into `src/vendor`: pdf.js from `node_modules`, highlight.js from the official browser build, foliate-js fetched file-by-file at a pinned commit |
+| `npm run smoke` | Headless real-browser smoke via local Chrome (open Markdown / PDF / EPUB / text / CSV, paging, zoom, three view modes, syntax highlighting, sticky table headers, Ctrl+B, CSP enforced); passes only with zero uncaught exceptions — skipped when Chrome is absent |
+| `npm run e2e` | After `npm run build`: launch the release binary and read a freshly generated EPUB in the real WebView2 — checks that CSP does not block Tauri's bootstrap, `asset:` URLs, ACL, TOC and CFI, and that in-book scripts are stripped; Windows only |
 | `npm run version:bump` | Bump the version manually (patch by default; supports `--minor` / `--major` / `--set 1.2.3`) |
 | `npm run tauri -- <args>` | Pass any arguments through to the Tauri CLI |
 
