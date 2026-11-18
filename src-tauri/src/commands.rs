@@ -1,5 +1,5 @@
 use crate::markdown;
-use crate::store::{self, Book, Category, Progress, Settings, StoreState};
+use crate::store::{self, Book, Bookmark, Category, Progress, Settings, StoreState};
 use crate::text;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -18,6 +18,8 @@ const MAX_PDF_BYTES: u64 = 128 * 1024 * 1024;
 /// 单次 range 读取的安全上限：正常页面对象远小于该值，
 /// 一旦超过说明 PDF 结构异常（例如 pdf.js 退化成整份读取），此时报错而不是让进程崩掉
 const MAX_RANGE_BYTES: u64 = 256 * 1024 * 1024;
+/// 一本书的书签上限：超出来不再是「书签」而是笔记系统，那是另一件事
+const MAX_BOOKMARKS: usize = 200;
 
 /// 大文件的行索引缓存。
 ///
@@ -145,6 +147,7 @@ fn build_book(path: &Path) -> Result<Book, String> {
         favorite: false,
         category_id: String::new(),
         encoding: String::new(),
+        bookmarks: Vec::new(),
         progress: Progress::default(),
     })
 }
@@ -621,6 +624,45 @@ pub fn save_progress(
         book.last_opened_at = store::now_ms();
     }
     store::persist(&data, &state.dir)
+}
+
+/// 加 / 删书签。幂等：同一个 CFI 反复加只留一条，删不存在的也不报错。
+///
+/// 用一个命令带 `on` 开关，而不是 add / remove 两个：前端本来就只有一个「切换」动作，
+/// 拆成两个命令会让「点了两下」这种情形在并发下产生两条重复记录。
+#[tauri::command]
+pub fn set_bookmark(
+    state: State<'_, StoreState>,
+    id: String,
+    cfi: String,
+    label: String,
+    on: bool,
+) -> Result<Book, String> {
+    let mut data = lock(&state)?;
+    let Some(book) = data.books.iter_mut().find(|b| b.id == id) else {
+        return Err("书架中找不到这本书".into());
+    };
+    if cfi.trim().is_empty() {
+        // 没定位到位置就加书签，等于把书签加在第 0 页：宁可拒绝，也不写脏数据
+        return Err("当前页还没有定位信息，稍后再试".into());
+    }
+    if on {
+        if !book.bookmarks.iter().any(|m| m.cfi == cfi) {
+            if book.bookmarks.len() >= MAX_BOOKMARKS {
+                return Err(format!("一本书最多 {MAX_BOOKMARKS} 个书签，先删几个"));
+            }
+            book.bookmarks.push(Bookmark {
+                cfi,
+                label,
+                created_at: store::now_ms(),
+            });
+        }
+    } else {
+        book.bookmarks.retain(|m| m.cfi != cfi);
+    }
+    let updated = book.clone();
+    store::persist(&data, &state.dir)?;
+    Ok(updated)
 }
 
 #[tauri::command]

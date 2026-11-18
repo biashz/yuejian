@@ -13,6 +13,8 @@ import { flushPaneProgress, scheduleSave } from "./progress.js";
 import { renderToolbar, zoomByStep } from "./toolbar.js";
 import { unmountWindowed } from "../reader-bigtext.js";
 import { renderCtx, setCtxOpen, setCtxTabActive, markTocActive } from "./ctx.js";
+import { isBookmarked } from "./bookmarks.js";
+import { hideFootnote } from "./footnote.js";
 import { updateStatus } from "../view.js";
 import { persistSettings } from "../preferences.js";
 
@@ -51,6 +53,7 @@ function mirrorPane(pane) {
   state.ebookLabel = pane.ebookLabel || "";
   state.ebookHref = pane.ebook?.location?.href || "";
   state.ebookFraction = pane.ebook?.location?.fraction || 0;
+  state.ebookMarked = isBookmarked(pane);
 }
 
 function initPanes() {
@@ -231,6 +234,8 @@ function closePaneDoc(pane) {
   unmountWindowed(pane);
   pane.reader?.destroy();
   pane.ebook?.destroy();
+  // 脚注窗是全局单例，换文档/合并分栏时不能留在屏幕上
+  hideFootnote();
   pane.doc = null;
   pane.book = null;
   pane.outline = null;

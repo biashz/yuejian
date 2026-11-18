@@ -197,7 +197,7 @@ function stubSource() {
     // 电子书：路径指向测试服务器上的 /fixtures/sample.epub（现场生成，不进仓库）
     { id: "b-epub", path: "/fixtures/sample.epub", title: "冒烟样本", author: "本地", kind: "ebook",
       size: 4096, pages: 0, words: 0, addedAt: now - 2800, lastOpenedAt: now - 750, favorite: false,
-      categoryId: "", encoding: "", progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
+      categoryId: "", encoding: "", bookmarks: [], progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
     // 大文件：正文由 read_text_window 按窗口现生成，不预置全文——
     // 20 万行 × 约 100 字节 ≈ 20MB，正好越过 8MB 的整篇上限
     { id: "b-huge", path: "C:/fixtures/huge.log", title: "huge.log", author: "本地", kind: "text",
@@ -205,7 +205,7 @@ function stubSource() {
       categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
   ];
   const SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true,
-    zen: false, split: false, linkSync: true, language: "zh", autoCheckUpdate: false };
+    zen: false, split: false, linkSync: true, language: "zh", autoCheckUpdate: false, ebookSpread: true };
   const HTML = ${JSON.stringify(MD_HTML)};
 
   window.__TAURI__ = {
@@ -267,6 +267,20 @@ function stubSource() {
           for (let n = args.start; n < end; n += 1) out += hugeLine(n + 1) + "\\n";
           // Tauri 的 ipc::Response 到前端就是 ArrayBuffer，这里照实返回
           return Promise.resolve(new TextEncoder().encode(out).buffer);
+        }
+        if (command === "set_bookmark") {
+          // 桩要模仿真实语义：幂等、返回整本书（前端据此回填书签列表）
+          const book = BOOKS.find((item) => item.id === args.id);
+          if (!book) return Promise.reject("书架中找不到这本书");
+          book.bookmarks = book.bookmarks || [];
+          if (args.on) {
+            if (!book.bookmarks.some((mark) => mark.cfi === args.cfi)) {
+              book.bookmarks.push({ cfi: args.cfi, label: args.label, createdAt: Date.now() });
+            }
+          } else {
+            book.bookmarks = book.bookmarks.filter((mark) => mark.cfi !== args.cfi);
+          }
+          return Promise.resolve(clone(book));
         }
         if (command === "search_text") {
           window.__calls.push("search_text");
@@ -1120,6 +1134,207 @@ async function main() {
       jumpedEbook.label === "第三章 收束" && /第三章/.test(jumpedEbook.active),
       `章节「${jumpedEbook.label}」，高亮「${jumpedEbook.active}」`);
     await shot(ws, "ebook-epub");
+
+    /* --- P2：滑杆 / 单双页 / 点击与滚轮 / 书签 / 全书搜索 / 脚注 --- */
+    const bar = await evaluate(ws, `(() => ({
+      slider: Boolean(document.querySelector("#ebookSlider")),
+      spread: Boolean(document.querySelector('[data-act="ebook-spread"]')),
+      mark: Boolean(document.querySelector('[data-act="ebook-mark"]')),
+    }))()`);
+    check("工具栏给出进度滑杆、单双页与书签按钮",
+      bar.slider && bar.spread && bar.mark, JSON.stringify(bar));
+
+    // 回到第一章开头，后面的翻页手势才有确定的方向可走
+    await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      await mod.activePane()?.ebook?.goTo("OEBPS/ch1.xhtml");
+    })()`);
+    await sleep(900);
+
+    // 点击 / 滚轮都在章节 iframe 里派发：正是为了证明手势真的挂到了章节文档上
+    frameCtx = await blobFrameContext(ws);
+    const cfiOf = async () => evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.location?.cfi || "";
+    })()`);
+
+    const beforeClick = await cfiOf();
+    await evaluate(ws, `(() => {
+      document.body.dispatchEvent(new MouseEvent("click", {
+        bubbles: true, clientX: window.innerWidth * 0.9, clientY: window.innerHeight / 2,
+      }));
+      return true;
+    })()`, frameCtx);
+    await sleep(800);
+    const afterClick = await cfiOf();
+    check("点击右半屏翻到下一页", afterClick !== beforeClick, `...${beforeClick.slice(-18)} → ...${afterClick.slice(-18)}`);
+
+    await evaluate(ws, `(() => {
+      document.body.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 }));
+      return true;
+    })()`, frameCtx);
+    await sleep(900);
+    const afterWheel = await cfiOf();
+    check("滚轮下滑再翻一页", afterWheel !== afterClick, `...${afterClick.slice(-18)} → ...${afterWheel.slice(-18)}`);
+
+    // 拖到 80%：滑杆只认 change（松手），拖动过程不跳
+    const seek = await evaluate(ws, `(async () => {
+      const slider = document.querySelector("#ebookSlider");
+      slider.value = "800";
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      const during = document.querySelector(".ebook-pct")?.textContent;
+      slider.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 1000));
+      const mod = await import("/js/reader/panes.js");
+      return {
+        during,
+        fraction: mod.activePane()?.ebook?.location?.fraction ?? -1,
+        label: mod.activePane()?.ebook?.location?.label || "",
+        pct: document.querySelector(".ebook-pct")?.textContent || "",
+        value: document.querySelector("#ebookSlider")?.value || "",
+        fill: document.querySelector("#ebookSlider")?.style.getPropertyValue("--_fill") || "",
+      };
+    })()`);
+    check("拖动进度条跳到目标位置",
+      seek.fraction > 0.65 && /^\d+%$/.test(seek.pct) && Math.abs(Number(seek.value) - seek.fraction * 1000) < 60,
+      `拖到 ${seek.during} → 实际 ${(seek.fraction * 100).toFixed(0)}%（${seek.label}，工具栏 ${seek.pct}，滑杆 ${seek.value} / 填充 ${seek.fill}）`);
+
+    const spread = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const columns = () => mod.activePane()?.ebook?.view?.renderer?.getAttribute("max-column-count");
+      const before = columns();
+      document.querySelector('[data-act="ebook-spread"]').click();
+      await new Promise((r) => setTimeout(r, 600));
+      const single = columns();
+      document.querySelector('[data-act="ebook-spread"]').click();
+      await new Promise((r) => setTimeout(r, 600));
+      return { before, single, back: columns() };
+    })()`);
+    check("单页 / 双页切换改到分页器列数",
+      spread.before === "2" && spread.single === "1" && spread.back === "2",
+      `${spread.before} → ${spread.single} → ${spread.back}`);
+
+    // 书签：加 → 侧栏列出 → 删
+    const mark = await evaluate(ws, `(async () => {
+      document.querySelector('[data-act="ebook-mark"]').click();
+      await new Promise((r) => setTimeout(r, 500));
+      const mod = await import("/js/reader/panes.js");
+      const stateMod = await import("/js/core/session.js");
+      const ctx = await import("/js/reader/ctx.js");
+      document.querySelector('#ctxTabs [data-ctx="marks"]').click();
+      ctx.renderCtx();
+      const rows = document.querySelectorAll("#ctxBody .mark-row").length;
+      const label = document.querySelector("#ctxBody .mark-main .hit-page")?.textContent || "";
+      return {
+        count: (mod.activePane()?.book?.bookmarks || []).length,
+        on: Boolean(document.querySelector('[data-act="ebook-mark"]')?.classList.contains("is-on")),
+        marked: stateMod.state.ebookMarked,
+        rows, label,
+      };
+    })()`);
+    check("加书签后按钮点亮、侧栏列出",
+      mark.count === 1 && mark.on && mark.marked && mark.rows === 1,
+      `${mark.count} 条，行数 ${mark.rows}，章节「${mark.label}」`);
+    await shot(ws, "ebook-marks");
+
+    const removed = await evaluate(ws, `(async () => {
+      document.querySelector("#ctxBody .mark-del").click();
+      await new Promise((r) => setTimeout(r, 500));
+      const mod = await import("/js/reader/panes.js");
+      return { count: (mod.activePane()?.book?.bookmarks || []).length,
+        rows: document.querySelectorAll("#ctxBody .mark-row").length,
+        empty: document.querySelector("#ctxBody .ctx-empty")?.textContent || "" };
+    })()`);
+    check("删书签后列表清空并给出空态",
+      removed.count === 0 && removed.rows === 0 && removed.empty.length > 0,
+      `${removed.count} 条，空态「${removed.empty.slice(0, 12)}」`);
+
+    // 全书搜索：第二章那个只出现一次的词
+    const find = await evaluate(ws, `(async () => {
+      document.querySelector('#ctxTabs [data-ctx="find"]').click();
+      const input = document.querySelector("#findInput");
+      input.value = "石阶生苔";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const started = Date.now();
+      while (Date.now() - started < 8000) {
+        await new Promise((r) => setTimeout(r, 200));
+        if (document.querySelector("#findHits .find-hit")) break;
+      }
+      return {
+        summary: document.querySelector("#findSummary")?.textContent || "",
+        groups: [...document.querySelectorAll("#ctxBody .find-group-head")].map((el) => el.textContent),
+        hits: document.querySelectorAll("#findHits .find-hit").length,
+        excerpt: document.querySelector("#findHits .find-hit")?.textContent || "",
+      };
+    })()`);
+    check("全书搜索命中并标出所属章节",
+      find.hits >= 1 && find.groups.includes("第二章 展开") && /石阶生苔/.test(find.excerpt),
+      `${find.summary} · 分组 ${find.groups.join("/")} · 首条「${find.excerpt.slice(0, 20)}」`);
+
+    const findJump = await evaluate(ws, `(async () => {
+      document.querySelector("#findHits .find-hit").click();
+      await new Promise((r) => setTimeout(r, 1000));
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.location?.label || "";
+    })()`);
+    check("点搜索结果跳到命中章节", findJump === "第二章 展开", findJump);
+
+    // 脚注：点正文里的注号，弹小窗而不是整页跳走。注号只在第一章
+    await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      await mod.activePane()?.ebook?.goTo("OEBPS/ch1.xhtml");
+    })()`);
+    await sleep(1000);
+    frameCtx = await blobFrameContext(ws);
+    const noteBefore = await cfiOf();
+    const noteDiag = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const reader = mod.activePane()?.ebook;
+      const href = "OEBPS/ch1.xhtml#fn1";
+      let resolved = null;
+      let error = "";
+      try { resolved = reader?.book?.resolveHref?.(href); } catch (e) { error = String(e); }
+      let tag = "";
+      if (resolved) {
+        const doc = await reader.sectionDoc(resolved.index);
+        const el = doc ? resolved.anchor(doc) : null;
+        tag = el ? String(el.tagName) : "no-el";
+      }
+      const note = await reader?.footnote?.(href);
+      return { index: resolved?.index ?? null, tag, error, noteText: note?.text || "" };
+    })()`);
+    const noteClick = await evaluate(ws, `(() => {
+      const link = document.querySelector('a[href="#fn1"]');
+      if (!link) return { found: false, text: document.body.innerText.slice(0, 80) };
+      link.click();
+      return { found: true };
+    })()`, frameCtx);
+    await sleep(1200);
+    const note = await evaluate(ws, `(() => {
+      const card = document.querySelector(".ebook-note");
+      const bar = document.querySelector("#readToolbar");
+      const rect = card && !card.hidden ? card.getBoundingClientRect() : null;
+      const barRect = bar?.getBoundingClientRect();
+      // 卡片不能压住浮动工具栏：两者都是阅读区上的浮层，压上去等于把翻页按钮挡掉
+      const overlapsBar = Boolean(rect && barRect && rect.bottom > barRect.top && rect.top < barRect.bottom);
+      return {
+        open: Boolean(card && !card.hidden),
+        text: card?.querySelector(".ebook-note-text")?.textContent || "",
+        label: card?.querySelector(".ebook-note-label")?.textContent || "",
+        overlapsBar,
+        inPane: Boolean(rect && rect.left >= 0 && rect.right <= window.innerWidth),
+      };
+    })()`);
+    check("点脚注弹出小窗而不是跳页",
+      noteClick.found && note.open && /青苔生于石阶/.test(note.text) && (await cfiOf()) === noteBefore,
+      note.open ? `注文「${note.text.slice(0, 16)}…」（章节「${note.label}」）` : `未弹出：${JSON.stringify(noteClick)} 诊断 ${JSON.stringify(noteDiag)}`);
+    check("脚注小窗不压工具栏、不越出窗口",
+      note.open && !note.overlapsBar && note.inPane,
+      `压工具栏 ${note.overlapsBar}，在窗口内 ${note.inPane}`);
+    await shot(ws, "ebook-note");
+    await evaluate(ws, `document.querySelector(".ebook-note-close")?.click()`);
+    const noteClosed = await evaluate(ws, `document.querySelector(".ebook-note")?.hidden ?? true`);
+    check("脚注小窗可以关掉", noteClosed === true, String(noteClosed));
 
     // 续读：回书架再打开，位置要回到第三章
     const beforeReopen = await evaluate(ws, `(async () => {

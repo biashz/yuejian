@@ -9,8 +9,10 @@ import { scrollToHeading } from "../reader-md.js";
 import { activePane, splitMode, linkSync, setSplit, setLink, panes } from "../reader/panes.js";
 import { setView, updateStatus } from "../view.js";
 import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, fitPdfPage, fitPdfWidth, renderToolbar } from "../reader/toolbar.js";
-import { setCtxOpen, switchCtxTab } from "../reader/ctx.js";
-import { refreshTextView, openBook, ebookStep } from "../reader/open.js";
+import { setCtxOpen, switchCtxTab, renderCtx } from "../reader/ctx.js";
+import { refreshTextView, openBook } from "../reader/open.js";
+import { ebookStep, ebookSeek, toggleEbookSpread } from "../reader/ebook-open.js";
+import { toggleBookmark, removeBookmark } from "../reader/bookmarks.js";
 import { scrollToLine } from "../reader-bigtext.js";
 import { presenting, presentEntering, enterPresent, exitPresent, presentStep, handlePresentWheel, schedulePresentPaint } from "../reader/present.js";
 import { applySettings, syncSettingsUI, persistSettings, toggleZen } from "../preferences.js";
@@ -94,10 +96,30 @@ export function bindReaderEvents() {
       else if (activePane()) scrollToHeading(activePane().scrollArea, goto.dataset.goto);
       return;
     }
+    // 书签：跳过去 / 删掉。两者是兄弟节点，先判删除，免得被上一条抢走
+    const unmark = event.target.closest("[data-unmark]");
+    if (unmark) {
+      const pane = activePane();
+      const mark = pane?.book?.bookmarks?.[Number(unmark.dataset.unmark)];
+      if (mark) removeBookmark(pane, mark.cfi).then(() => renderCtx()).catch(() => {});
+      return;
+    }
+    const markHit = event.target.closest("[data-mark-hit]");
+    if (markHit) {
+      const pane = activePane();
+      const mark = pane?.book?.bookmarks?.[Number(markHit.dataset.markHit)];
+      if (mark) pane?.ebook?.goTo(mark.cfi);
+      return;
+    }
     const hit = event.target.closest("[data-hit]");
     if (hit) {
       if (hit.dataset.kind === "pdf") goPage(Number(hit.dataset.page));
-      else if (hit.dataset.kind === "line") {
+      else if (hit.dataset.kind === "ebook") {
+        // 电子书的命中带的是 CFI：按它跳过去，位置与排版无关
+        const pane = activePane();
+        const item = pane?.hits[Number(hit.dataset.hit)];
+        if (item?.cfi) pane?.ebook?.goTo(item.cfi);
+      } else if (hit.dataset.kind === "line") {
         // 大文件的命中只有行号，没有 DOM 节点可量，直接按行高算位置
         const pane = activePane();
         const item = pane?.hits[Number(hit.dataset.hit)];
@@ -141,6 +163,16 @@ export function bindReaderEvents() {
     if (act === "next") goPage(state.pdfPage + 1);
     if (act === "ebook-prev") ebookStep(-1);
     if (act === "ebook-next") ebookStep(1);
+    if (act === "ebook-spread") toggleEbookSpread();
+    if (act === "ebook-mark") {
+      const pane = activePane();
+      toggleBookmark(pane).then((marked) => {
+        state.ebookMarked = marked;
+        renderToolbar();
+        // 侧栏正开着书签列表时要立刻反映出来
+        if (state.ctxTab === "marks") renderCtx();
+      }).catch(() => {});
+    }
     if (act === "zoom-in") zoomByStep(1);
     if (act === "zoom-out") zoomByStep(-1);
     if (act === "zoom-menu") setZoomMenu(!zoomMenuOpen);
@@ -205,6 +237,17 @@ export function bindReaderEvents() {
 
   $("#readToolbar").addEventListener("change", (event) => {
     if (event.target.id === "pageInput") goPage(Number(event.target.value) || 1);
+    // 滑杆只在松手时跳：拖动过程中连续 goToFraction 会让分页器反复重排，卡得没法用
+    if (event.target.id === "ebookSlider") ebookSeek(Number(event.target.value) / 1000);
+  });
+
+  // 拖动时先只更新数字，让人看得见落点在哪
+  $("#readToolbar").addEventListener("input", (event) => {
+    if (event.target.id !== "ebookSlider") return;
+    const percent = $(".ebook-pct");
+    const value = Number(event.target.value);
+    if (percent) percent.textContent = `${Math.round(value / 10)}%`;
+    event.target.style.setProperty("--_fill", `${Math.round(value / 10)}%`);
   });
 
   // 点工具栏以外的地方收起缩放比例菜单

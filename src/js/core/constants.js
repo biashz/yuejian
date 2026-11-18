@@ -31,7 +31,7 @@ const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 const DEFAULT_SETTINGS = {
   theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720,
   showCtx: true, zen: false, linkSync: true, language: "zh",
-  autoCheckUpdate: true,
+  autoCheckUpdate: true, ebookSpread: true,
 };
 
 export { THEME_ORDER, KIND_LABEL, KIND_CLASS, themeLabel, kindLabel, TINTS, SIZE_STEPS, ZOOM_STEPS, ZOOM_PRESETS, DEFAULT_SETTINGS, CATEGORY_COLORS, MAX_CATEGORIES, MAX_CATEGORY_NAME };

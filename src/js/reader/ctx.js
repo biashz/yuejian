@@ -16,7 +16,7 @@ import { delimiterLabel } from "../reader-csv.js";
 const TABS_BY_KIND = {
   pdf: ["toc", "thumbs", "find"],
   text: ["info", "find"],
-  ebook: ["toc", "info"],
+  ebook: ["toc", "marks", "find", "info"],
 };
 
 /**
@@ -43,6 +43,8 @@ const ENCODINGS = [
 /* 本模块自有的可变句柄，不对外暴露 */
 let findTimer = 0;
 let findToken = 0;
+/* 电子书搜索的取消开关：库的异步生成器没法从外面中断，只能每轮看它一眼 */
+let findAbort = { cancelled: true };
 let thumbObserver = null;
 /* ---------------- 目录 / 缩略图 / 搜索 ---------------- */
 function setCtxOpen(open) {
@@ -82,6 +84,7 @@ function renderCtx() {
   syncCtxTabs(book);
   if (state.ctxTab === "info") return renderInfo();
   if (state.ctxTab === "toc") return renderToc();
+  if (state.ctxTab === "marks") return renderMarks();
   if (state.ctxTab === "thumbs") return renderThumbs();
   return renderFind();
 }
@@ -270,6 +273,41 @@ function markTocActive(id) {
   items.forEach((item, index) => item.classList.toggle("is-active", index === activeIndex));
 }
 
+/**
+ * 书签列表。
+ *
+ * 顺序按加入时间，不按阅读位置：CFI 的先后关系要解析才能比，而书签本来就少，
+ * 「最近加的在哪」比「在书里哪一处」更有用。
+ *
+ * 每条右侧带删除按钮——书签是随手加的，删不掉的话很快就变成一堆没用的定位点。
+ */
+function renderMarks() {
+  const body = $("#ctxBody");
+  const pane = activePane();
+  const marks = pane?.book?.bookmarks || [];
+  if (!marks.length) {
+    body.innerHTML = `<div class="ctx-empty">${t("reader.marksEmpty")}</div>`;
+    return;
+  }
+  body.innerHTML = `
+    <div class="mark-count">${t("reader.markCount", { count: marks.length })}</div>
+    ${marks.map((mark, index) => `
+      <div class="mark-row">
+        <button class="find-hit mark-main" data-mark-hit="${index}">
+          <span class="hit-page">${escapeHtml(mark.label || t("reader.ebookNoChapter"))}</span>
+          ${escapeHtml(markAt(mark))}
+        </button>
+        <button class="mark-del" data-unmark="${index}" title="${t("reader.markRemove")}" aria-label="${t("reader.markRemove")}">×</button>
+      </div>`).join("")}`;
+}
+
+/** 书签的时刻：只到分钟，够区分「今天读的两段」 */
+function markAt(mark) {
+  const date = new Date(Number(mark.createdAt) || 0);
+  if (Number.isNaN(date.getTime()) || !mark.createdAt) return "";
+  return date.toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function renderThumbs() {
   const body = $("#ctxBody");
   const pane = activePane();
@@ -341,6 +379,9 @@ async function runFind() {
   const hitsWrap = $("#findHits");
   if (!summary || !hitsWrap) return;
   if (!query) {
+    findAbort.cancelled = true;
+    // 清空关键词时把正文里的高亮一并撤掉：留着上一次的黄色标记会让人以为还搜着
+    activePane()?.ebook?.clearSearch?.();
     summary.textContent = t("reader.findHint");
     hitsWrap.innerHTML = "";
     return;
@@ -368,6 +409,56 @@ async function runFind() {
         <span class="hit-page">${t("reader.pageN", { page: hit.page })}</span>${mark(hit.text)}
       </button>`).join("");
     pane.hits = [];
+    return;
+  }
+
+  // 电子书：交给 foliate 跨章扫，命中带章节名与上下文片段。
+  // 搜完库会自己给命中处加一层高亮（overlayer），所以不必在正文里再画一遍
+  if (book?.kind === "ebook") {
+    const reader = pane.ebook;
+    if (!reader) {
+      summary.textContent = t("reader.findNone");
+      hitsWrap.innerHTML = "";
+      return;
+    }
+    // 上一次还没跑完的先叫停：生成器只能靠这个开关退出
+    findAbort.cancelled = true;
+    const abort = { cancelled: false };
+    findAbort = abort;
+    let groups = [];
+    try {
+      groups = await reader.search(query, {
+        token: abort,
+        onProgress: (fraction) => {
+          if (findAbort !== abort || token !== findToken) return;
+          summary.textContent = t("reader.findEbookProgress", { percent: Math.round(fraction * 100) });
+        },
+      });
+    } catch (error) {
+      if (findAbort !== abort || token !== findToken) return;
+      summary.textContent = String(error);
+      return;
+    }
+    if (findAbort !== abort || token !== findToken || activePane() !== pane) return;
+    const flat = groups.flatMap((group) => group.hits.map((hit) => ({ ...hit, label: group.label })));
+    pane.hits = flat;
+    summary.textContent = flat.length
+      ? `${t("reader.findMatches", { count: flat.length })}${flat.length >= 300 ? t("reader.findMatchesTrunc") : ""}`
+      : t("reader.findNone");
+    // 按章节分组显示：一本书里同一个词往往集中在几章，平铺一长串看不出结构。
+    // 序号按 groups 顺序连续递增，与上面 flatMap 出来的 pane.hits 一一对应
+    let offset = 0;
+    hitsWrap.innerHTML = groups.map((group) => `
+      <div class="find-group">
+        <div class="find-group-head">${escapeHtml(group.label || t("reader.ebookNoChapter"))}</div>
+        ${group.hits.map((hit) => {
+          const index = offset;
+          offset += 1;
+          // 命中词单独包 <mark>：上下文是库切好的三段，不必再用正则找一遍
+          return `<button class="find-hit" data-hit="${index}" data-kind="ebook">${
+            escapeHtml(hit.pre)}<mark>${escapeHtml(hit.match)}</mark>${escapeHtml(hit.post)}</button>`;
+        }).join("")}
+      </div>`).join("");
     return;
   }
 
@@ -408,4 +499,4 @@ async function runFind() {
   }).join("");
 }
 
-export { setCtxOpen, setCtxTabActive, switchCtxTab, renderCtx, renderToc, markTocActive, renderThumbs, markThumbActive, renderFind, runFind };
+export { setCtxOpen, setCtxTabActive, switchCtxTab, renderCtx, renderToc, renderMarks, markTocActive, renderThumbs, markThumbActive, renderFind, runFind };

@@ -97,9 +97,9 @@ function zipStored(entries) {
  */
 export function buildEpub({ script = false, title = "冒烟样本", creator = "测试" } = {}) {
   const para = (marker) => `<p>${marker}　` + "这是一段用来撑满页面的正文，重复出现以便分页。".repeat(6) + "</p>";
-  const chapter = (heading, marker, extra = "") => `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${heading}</title></head>
-<body><h1>${heading}</h1>${extra}${para(marker).repeat(12)}</body></html>`;
+  const chapter = (heading, marker, extra = "", tail = "") => `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>${heading}</title></head>
+<body><h1>${heading}</h1>${extra}${para(marker).repeat(12)}${tail}</body></html>`;
 
   const container = `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -135,13 +135,19 @@ export function buildEpub({ script = false, title = "冒烟样本", creator = "�
 
   const payload = script ? "<script>window.parent.__pwned = 1;</script>" : "";
 
+  // 第一章带一个脚注：正文里的注号指向章末的 aside，用来验「点注号弹小窗」。
+  // aside 用 epub:type 与 id 双重标注——真实电子书里两者各有用例
+  const note = `<p>正文末尾有一个注号<a href="#fn1" epub:type="noteref">1</a>。</p>`;
+  const noteBody = `<aside id="fn1" epub:type="footnote"><p>这是一条脚注：青苔生于石阶背阴处，雨后可采。</p></aside>`;
+
   return zipStored([
     { name: "mimetype", data: "application/epub+zip", store: true },
     { name: "META-INF/container.xml", data: container },
     { name: "OEBPS/content.opf", data: opf },
     { name: "OEBPS/nav.xhtml", data: nav },
-    { name: "OEBPS/ch1.xhtml", data: chapter("第一章 起点", "①", payload) },
-    { name: "OEBPS/ch2.xhtml", data: chapter("第二章 展开", "②") },
+    { name: "OEBPS/ch1.xhtml", data: chapter("第一章 起点", "①", payload, note + noteBody) },
+    // 第二章放一个全书只出现一次的词，搜索断言才有确定答案
+    { name: "OEBPS/ch2.xhtml", data: chapter("第二章 展开", "②", "", "<p>檐下听雨，石阶生苔。</p>") },
     { name: "OEBPS/ch3.xhtml", data: chapter("第三章 收束", "③") },
   ]);
 }

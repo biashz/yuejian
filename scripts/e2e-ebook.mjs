@@ -86,6 +86,21 @@ const check = (name, ok, detail = "") => {
   console.log(`  ${ok ? "ok  " : "FAIL"}  ${name}${detail ? `  — ${detail}` : ""}`);
 };
 
+/**
+ * 章节正文在 blob iframe 里，`Page.Frame` 的字段是 `id`（不是 frameId），
+ * `createIsolatedWorld` 才用 `frameId`。返回隔离世界的执行上下文 id。
+ */
+async function blobWorld(ws) {
+  const tree = await send(ws, "Page.getFrameTree");
+  const frames = [];
+  const walk = (node) => { frames.push(node.frame); (node.childFrames || []).forEach(walk); };
+  walk(tree.frameTree);
+  const frame = frames.find((item) => (item.url || "").startsWith("blob:"));
+  if (!frame) return null;
+  const world = await send(ws, "Page.createIsolatedWorld", { frameId: frame.id, worldName: "e2e" });
+  return world.executionContextId;
+}
+
 const app = spawn(EXE, [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` },
   stdio: "ignore",
@@ -213,6 +228,74 @@ try {
     return mod.activePane()?.ebook?.location?.cfi || "";
   })()`);
   check("键盘翻页在真机上生效", after !== before, `${before} → ${after}`);
+
+  /* ---- P2：书签 / 搜索 / 脚注，走的是真 Rust 命令与真 WebView ---- */
+
+  const marked = await evaluate(ws, `(async () => {
+    document.querySelector('[data-act="ebook-mark"]').click();
+    await new Promise((r) => setTimeout(r, 700));
+    const mod = await import("/js/reader/panes.js");
+    return {
+      count: (mod.activePane()?.book?.bookmarks || []).length,
+      on: Boolean(document.querySelector('[data-act="ebook-mark"]')?.classList.contains("is-on")),
+    };
+  })()`);
+  check("书签经真后端写入并点亮按钮", marked.count === 1 && marked.on, `${marked.count} 条，按钮 ${marked.on}`);
+
+  const persisted = await evaluate(ws, `(async () => {
+    const books = await window.__TAURI__.core.invoke("get_library");
+    const mine = (books || []).find((book) => book.kind === "ebook" && (book.bookmarks || []).length);
+    return mine ? mine.bookmarks.length : 0;
+  })()`);
+  check("书签已落盘（重读书架仍在）", persisted === 1, `${persisted} 条`);
+
+  const found = await evaluate(ws, `(async () => {
+    document.querySelector('#ctxTabs [data-ctx="find"]').click();
+    const input = document.querySelector("#findInput");
+    input.value = "石阶生苔";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    const started = Date.now();
+    while (Date.now() - started < 20000) {
+      await new Promise((r) => setTimeout(r, 250));
+      if (document.querySelector("#findHits .find-hit")) break;
+    }
+    return {
+      hits: document.querySelectorAll("#findHits .find-hit").length,
+      group: document.querySelector(".find-group-head")?.textContent || "",
+    };
+  })()`);
+  check("真机全书搜索命中并分组", found.hits >= 1, `${found.hits} 条 · ${found.group}`);
+
+  // 脚注只在第一章，先跳回去；点注号应弹小窗而不是整页跳走
+  await evaluate(ws, `(async () => {
+    const mod = await import("/js/reader/panes.js");
+    await mod.activePane()?.ebook?.goTo("OEBPS/ch1.xhtml");
+  })()`);
+  await sleep(1400);
+  const noteWorld = await blobWorld(ws);
+  const noteCfi = await evaluate(ws, `(async () => {
+    const mod = await import("/js/reader/panes.js");
+    return mod.activePane()?.ebook?.location?.cfi || "";
+  })()`);
+  const clicked = noteWorld ? await evaluate(ws, `(() => {
+    const link = document.querySelector('a[href="#fn1"]');
+    if (!link) return false;
+    link.click();
+    return true;
+  })()`, noteWorld) : false;
+  await sleep(1200);
+  const note = await evaluate(ws, `(async () => {
+    const card = document.querySelector(".ebook-note");
+    const mod = await import("/js/reader/panes.js");
+    return {
+      open: Boolean(card && !card.hidden),
+      text: card?.querySelector(".ebook-note-text")?.textContent || "",
+      cfi: mod.activePane()?.ebook?.location?.cfi || "",
+    };
+  })()`);
+  check("真机点脚注弹出小窗且不跳页",
+    Boolean(clicked) && note.open && /青苔生于石阶/.test(note.text) && note.cfi === noteCfi,
+    note.open ? `注文「${note.text.slice(0, 14)}…」` : "未弹出");
   check("真机全程无未捕获异常", pageErrors.length === 0, pageErrors.slice(0, 2).join(" | "));
 } catch (error) {
   console.error("E2E 中断：", error.message);

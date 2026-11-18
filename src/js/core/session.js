@@ -29,6 +29,8 @@ const state = {
   ebookLabel: "",
   ebookHref: "",
   ebookFraction: 0,
+  /* 当前页是否已加书签：工具栏按钮的亮灭读它，写入只发生在 bookmarks.js 与 relocate */
+  ebookMarked: false,
   findQuery: "",
   paletteIndex: 0,
 };

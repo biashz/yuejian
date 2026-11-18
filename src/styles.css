@@ -954,6 +954,100 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
 
+/* 进度滑杆：细、无轨道高光，和工具栏的克制风格一致。
+   拇指用 accent，hover 时才微亮一点——它得看得出来可以拖 */
+.ebook-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 132px; height: 18px;
+  margin: 0 2px;
+  background: transparent;
+  cursor: pointer;
+  --_fill: 0%;
+}
+.ebook-slider::-webkit-slider-runnable-track {
+  height: 3px; border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--_fill), var(--line) var(--_fill));
+}
+.ebook-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px; height: 11px; margin-top: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: transform 140ms var(--ease);
+}
+.ebook-slider:hover::-webkit-slider-thumb { transform: scale(1.15); }
+.ebook-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-pill); }
+
+/* 脚注弹层：贴着注号浮起来，不挡正文 */
+.ebook-note {
+  position: fixed;
+  z-index: 40;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(46vh, 320px);
+  overflow: auto;
+  padding: 14px 16px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  animation: pop 160ms var(--ease) both;
+}
+.ebook-note[hidden] { display: none; }
+.ebook-note-label {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ebook-note-text {
+  margin: 0;
+  font-family: var(--font-read);
+  font-size: 13px; line-height: 1.72;
+  color: var(--ink);
+}
+.ebook-note-close {
+  position: absolute; top: 6px; right: 8px;
+  width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  color: var(--ink-3); font-size: 14px; line-height: 1;
+}
+.ebook-note-close:hover { background: var(--surface-2); color: var(--ink); }
+
+/* 书签列表：一行一个，右侧删除按钮常态半透明，hover 才明显 */
+.mark-count {
+  padding: 10px 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 9.5px; letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+.mark-row { position: relative; display: flex; align-items: stretch; }
+.mark-row .mark-main { flex: 1; min-width: 0; }
+.mark-del {
+  width: 24px;
+  color: var(--ink-3);
+  font-size: 13px; line-height: 1;
+  /* 常显一点点：完全不显示的话，鼠标用户不知道这里能删 */
+  opacity: 0.4;
+  transition: opacity 140ms var(--ease), color 140ms var(--ease);
+}
+.mark-row:hover .mark-del { opacity: 1; }
+.mark-del:hover { color: var(--accent); }
+
+/* 搜索结果的章节分组标题 */
+.find-group + .find-group { margin-top: 8px; }
+.find-group-head {
+  padding: 8px 2px 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px; letter-spacing: 0.12em;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+
 /* Markdown */
 .md-doc {
   max-width: var(--measure);

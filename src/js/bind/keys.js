@@ -4,16 +4,17 @@
  */
 import { $ } from "../core/dom.js";
 import { state } from "../core/session.js";
-import { activeReader, splitMode, setSplit } from "../reader/panes.js";
+import { activePane, activeReader, splitMode, setSplit } from "../reader/panes.js";
 import { setView } from "../view.js";
 import { closeSettings, toggleZen } from "../preferences.js";
 import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, renderToolbar } from "../reader/toolbar.js";
-import { setCtxOpen } from "../reader/ctx.js";
+import { setCtxOpen, renderCtx } from "../reader/ctx.js";
 import { presenting, enterPresent, exitPresent, presentStep } from "../reader/present.js";
 import { importDocuments } from "../actions.js";
 import { openPalette, closePalette, paletteItems, renderPalette, runPalette } from "../palette.js";
 import { flushProgress } from "../reader/progress.js";
-import { ebookStep } from "../reader/open.js";
+import { ebookStep, ebookChapter } from "../reader/ebook-open.js";
+import { toggleBookmark } from "../reader/bookmarks.js";
 
 export function bindKeyEvents() {
   // 键盘
@@ -95,6 +96,28 @@ export function bindKeyEvents() {
         ebookStep(nextKey ? 1 : -1);
         return;
       }
+      // Ctrl+←/→ 跳章、Home/End 到书首书尾：与常见阅读器一致
+      if (modifier && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        ebookChapter(event.key === "ArrowRight" ? 1 : -1);
+        return;
+      }
+      if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        activePane()?.ebook?.[event.key === "Home" ? "goTo" : "goToFraction"](event.key === "Home" ? 0 : 1);
+        return;
+      }
+    }
+    // Ctrl+M：给当前页加 / 删书签（M 记 bookmark 不好记，但 B 已经被目录面板占了）
+    if (modifier && event.key.toLowerCase() === "m" && state.current?.kind === "ebook") {
+      event.preventDefault();
+      const pane = activePane();
+      toggleBookmark(pane).then((marked) => {
+        state.ebookMarked = marked;
+        renderToolbar();
+        if (state.ctxTab === "marks") renderCtx();
+      }).catch(() => {});
+      return;
     }
     // 缩放：Ctrl +/- 按档位步进，Ctrl+0 回到 100%；不带修饰键的 +/- 同样可用
     if (modifier && (event.key === "+" || event.key === "=" || event.key === "-")) {

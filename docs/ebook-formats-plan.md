@@ -31,7 +31,7 @@
 | 期 | 内容 | 交付判定 | 状态 |
 | --- | --- | --- | --- |
 | **P1 EPUB 打通** | vendoring、CSP、类型判定与导入、打开与渲染、目录、CFI 进度、状态栏 | 一本中文 EPUB3 能打开、翻页、目录跳转、关掉重开回到原位 | 已完成（v0.1.32） |
-| **P2 阅读交互** | 单/双页、点击与键盘与滚轮翻页、进度条可拖、书签、全书搜索、脚注弹层 | 键盘翻完一本不掉位置；搜索命中能跳过去 | 待开始 |
+| **P2 阅读交互** | 单/双页、点击与键盘与滚轮翻页、进度条可拖、书签、全书搜索、脚注弹层 | 键盘翻完一本不掉位置；搜索命中能跳过去 | 已完成（v0.1.33） |
 | **P3 阅读设置** | 字号 / 行高 / 页边距 / 字体 / 对齐 / 主题 / 强制覆盖书内样式 | 六个设置项都即时生效，且每本书记住 | 待开始 |
 | **P4 其余格式** | FB2、CBZ 固定版面、MOBI / AZW3、DRM 识别与提示、加密字体 | 五种格式各打开一本，DRM 文件给出人话提示 | 待开始 |
 | **P5 收口** | 性能与空态、i18n、文档、冒烟断言、（可选）划线批注 | `npm run check` + `smoke` 全绿 | 待开始 |
@@ -54,11 +54,20 @@
 - `src/js/view.js`：状态栏「第 3 章 · 27%」
 - 侧栏 `TABS_BY_KIND`：`ebook: ["toc", "find"]`，目录用书本 TOC（不是标题扫描）
 
-**P2**
-- 翻页手势层（`src/js/reader/ebook-gesture.js` 或并入 reader-epub）
-- 工具栏：单/双页、进度滑杆、书签、目录、搜索
-- 书签存储：新增 `Book.bookmarks: Vec<Bookmark{ cfi, label, created_at }>`
-- 搜索：foliate 的 `search.js`，侧栏结果列表复用现有 `find-hit` 样式
+**P2**（完成于 v0.1.33）
+- `src/js/reader/ebook-gesture.js`（新）：点击左右 35% 半屏、滚轮 / 触控板、翻页键、`Ctrl+←/→`、`Home/End`。
+  同一份逻辑要挂两处——外层容器与**每个章节文档**（iframe 内的键盘与点击不会冒泡到主文档）。
+- `src/js/reader/ebook-note.js`（新）＋`footnote.js`（新）：脚注按 `book.resolveHref` 定位，
+  `epub:type` / `fn1` 这类 id / 类名三重判定；判成「注」才弹小窗，其余照常跳转。
+  卡片位置锚在注号上方，注号不在当前页时退回阅读区底部并让开浮动工具栏。
+- `src/js/reader/ebook-search.js`（新）：把 `view.search()` 的异步生成器收敛成按章分组的结果，
+  进度回调给侧栏；`excerpt` 是 `{pre, match, post}` 三段，`<mark>` 直接按它渲染。
+- `src/js/reader/bookmarks.js`（新）：加 / 删书签，就地合并回 `state.books` 与 `state.current`。
+- `src/js/reader/ebook-open.js`（新）：从 `open.js` 拆出的电子书打开与动作（打开、续读、翻页、跳章、版式）。
+- `src/js/reader/ebook-sanitize.js`（新）：从 `reader-epub.js` 拆出的章节清洗。
+- `src-tauri/src/store.rs`：`Bookmark { cfi, label, created_at }`、`Book.bookmarks`、`Settings.ebook_spread`。
+- `src-tauri/src/commands.rs`：`set_bookmark(id, cfi, label, on)`，幂等，一本书上限 200 条。
+- 进度条：`change` 才跳（拖动中连续 `goToFraction` 会让分页器反复重排），拖动时只更新数字。
 
 **P3**
 - `Settings` 增加电子书专属字段（字号 / 行高 / 边距 / 字体 / 对齐 / 强制覆盖），

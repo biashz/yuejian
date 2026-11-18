@@ -42,6 +42,21 @@ pub struct Category {
     pub created_at: u64,
 }
 
+/// 电子书书签。
+///
+/// 只存 CFI 和当时的章节名。位置必须是 CFI：电子书是流式排版，「第 87 页」
+/// 换一次窗口就是另一段文字，存页码等于存了个假位置。
+///
+/// `label` 是加入时的章节名快照，纯粹给侧栏列表看——每次渲染都去解析 CFI
+/// 意味着同步打开一堆章节文档，代价与收益完全不成比例。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bookmark {
+    pub cfi: String,
+    pub label: String,
+    pub created_at: u64,
+}
+
 /// 书架条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +83,9 @@ pub struct Book {
     /// 而用户的选择一旦丢了（比如重启后回到自动），乱码就又会回来。
     #[serde(default)]
     pub encoding: String,
+    /// 电子书书签；只有 `kind == "ebook"` 会有内容
+    #[serde(default)]
+    pub bookmarks: Vec<Bookmark>,
     pub progress: Progress,
 }
 
@@ -90,6 +108,8 @@ pub struct Settings {
     pub language: String,
     /// 启动时自动检查更新
     pub auto_check_update: bool,
+    /// 电子书是否双页显示（窗口过窄时由前端自动降级为单页，不改这个值）
+    pub ebook_spread: bool,
 }
 
 impl Default for Settings {
@@ -105,6 +125,7 @@ impl Default for Settings {
             link_sync: true,
             language: "zh".into(),
             auto_check_update: true,
+            ebook_spread: true,
         }
     }
 }

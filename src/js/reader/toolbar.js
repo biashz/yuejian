@@ -125,15 +125,27 @@ function renderToolbar() {
       </div>
       <span class="page-total">${stat}</span>${paneTools}`;
   } else if (book.kind === "ebook") {
-    // 电子书：翻页 + 全书百分比。没有页码可填——页码是排版算出来的，窗口一变就作废，
-    // 给一个能输的页码框只会让人以为可以「跳到第 200 页」
-    const pane = activePane();
-    const pct = Math.round((state.ebookFraction || pane?.ratio || 0) * 100);
+    // 电子书：翻页 + 可拖进度条 + 单双页 + 书签。仍然不给页码输入框——
+    // 页码是排版算出来的，窗口一变就作废，能输入只会让人以为可以「跳到第 200 页」
+    const fraction = state.ebookFraction || 0;
+    const pct = Math.round(fraction * 100);
+    const spread = state.settings.ebookSpread !== false;
     bar.innerHTML = `
       <div class="tool-group">
         <button class="tool-btn" data-act="ebook-prev" title="${t("reader.prev")}"><svg class="ic"><use href="#i-chevron-left"/></svg></button>
+        <input class="ebook-slider" id="ebookSlider" type="range" min="0" max="1000" value="${Math.round(fraction * 1000)}"
+          style="--_fill:${pct}%" aria-label="${t("reader.ebookSeek")}" title="${t("reader.ebookSeek")}" />
         <span class="page-total ebook-pct">${pct}%</span>
         <button class="tool-btn" data-act="ebook-next" title="${t("reader.next")}"><svg class="ic"><use href="#i-chevron-right"/></svg></button>
+      </div>
+      <span class="tool-sep"></span>
+      <div class="tool-group">
+        <button class="tool-btn ${spread ? "is-on" : ""}" data-act="ebook-spread" title="${t("reader.ebookSpread")}">
+          <svg class="ic"><use href="#i-book-spread"/></svg>
+        </button>
+        <button class="tool-btn ${state.ebookMarked ? "is-on" : ""}" data-act="ebook-mark" title="${t("reader.ebookMark")}">
+          <svg class="ic"><use href="#i-bookmark"/></svg>
+        </button>
       </div>
       <span class="tool-sep"></span>
       <div class="tool-group">
@@ -175,6 +187,34 @@ function updateToolbarPage() {
   if (zoomOut) zoomOut.disabled = state.pdfZoom <= ZOOM_MIN + 0.005;
   if (zoomIn) zoomIn.disabled = state.pdfZoom >= ZOOM_MAX - 0.005;
   syncZoomMenu();
+  syncEbookBar();
+}
+
+/**
+ * 电子书的进度显示。
+ *
+ * 只改值与类名，不重建工具栏：拖滑杆的过程中重建 DOM 会把拖动手势打断，
+ * 表现为「拖到一半就弹回原位」。
+ */
+function syncEbookBar() {
+  const percent = $(".ebook-pct");
+  if (!percent) return;
+  const fraction = clamp01(state.ebookFraction);
+  percent.textContent = `${Math.round(fraction * 100)}%`;
+  const slider = $("#ebookSlider");
+  // 正在拖的时候不回写：否则用户拖到 80%，手指还没抬起来就被 relocate 拽回去
+  if (slider) {
+    slider.style.setProperty("--_fill", `${Math.round(fraction * 100)}%`);
+    if (document.activeElement !== slider) slider.value = String(Math.round(fraction * 1000));
+  }
+  const mark = $('[data-act="ebook-mark"]');
+  if (mark) mark.classList.toggle("is-on", Boolean(state.ebookMarked));
+  const spread = $('[data-act="ebook-spread"]');
+  if (spread) spread.classList.toggle("is-on", state.settings.ebookSpread !== false);
+}
+
+function clamp01(value) {
+  return Math.min(1, Math.max(0, Number(value) || 0));
 }
 
 /** 展开 / 收起缩放比例菜单 */
