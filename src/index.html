@@ -120,6 +120,7 @@
         <button class="chip" data-filter="pdf">PDF</button>
         <button class="chip" data-filter="markdown">MARKDOWN</button>
         <button class="chip" data-filter="text" data-i18n="library.filterText">文本</button>
+        <button class="chip" data-filter="ebook">EPUB</button>
         <button class="chip" data-filter="star" data-i18n="library.filterStar">收藏</button>
       </div>
 
@@ -151,7 +152,7 @@
         <button class="import-cta" id="importCta">
           <svg class="ic"><use href="#i-folder-plus"/></svg><span data-i18n="library.importCta">导入本地文档</span>
         </button>
-        <p class="hint" data-i18n="library.hint">支持 PDF / Markdown · 也可以把文件拖进窗口</p>
+        <p class="hint" data-i18n="library.hint">支持 PDF / EPUB / Markdown / 文本 · 也可以把文件拖进窗口</p>
       </div>
     </aside>
 
@@ -229,6 +230,7 @@
               <div class="scroll-area">
                 <div class="pdf-stack"></div>
                 <article class="md-doc"></article>
+                <div class="ebook-stack" hidden></div>
               </div>
             </div>
 
@@ -244,6 +246,7 @@
               <div class="scroll-area">
                 <div class="pdf-stack"></div>
                 <article class="md-doc"></article>
+                <div class="ebook-stack" hidden></div>
               </div>
             </div>
           </div>

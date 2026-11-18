@@ -25,6 +25,10 @@ const state = {
   pdfZoom: 1,
   pdfTotal: 0,
   pdfOutline: null,
+  /* 电子书：当前章节名、全书百分比、CFI。三者都来自 foliate 的 relocate 事件 */
+  ebookLabel: "",
+  ebookHref: "",
+  ebookFraction: 0,
   findQuery: "",
   paletteIndex: 0,
 };

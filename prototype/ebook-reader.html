@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8" />
+<title>阅笺 · 电子书阅读原型</title>
+<style>
+/* ============ 1. Tokens（与 src/styles.css 一致） ============ */
+:root{
+  --paper:#f3ede1; --surface:#fbf7ee; --surface-2:#ede4d3;
+  --ink:#241f1a; --ink-2:#5e5548; --ink-3:#8c8272;
+  --line:#dfd4c0; --line-strong:#c9bba2;
+  --accent:#b23a2b; --accent-ink:#8e2c20; --accent-weak:#ebd9d3;
+  --font-display:"KaiTi","STKaiti","Kaiti SC","Songti SC",serif;
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  --font-read:"Songti SC","Source Han Serif SC","Noto Serif CJK SC","SimSun",Georgia,serif;
+  --font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  --r-sm:4px; --r-md:8px; --r-lg:14px;
+  --shadow-md:0 8px 24px -12px rgba(40,32,20,.24);
+  --shadow-lg:0 24px 60px -20px rgba(40,32,20,.38);
+  --ease:cubic-bezier(.22,.8,.24,1);
+  --rail-w:56px; --lib-w:304px; --ctx-w:268px;
+}
+[data-theme="night"]{
+  --paper:#12100e; --surface:#1a1715; --surface-2:#221e1a;
+  --ink:#e9e2d6; --ink-2:#b3a894; --ink-3:#847a6b;
+  --line:#2e2925; --line-strong:#3d3630;
+  --accent:#c9674f; --accent-ink:#d98a74; --accent-weak:#33241f;
+  --shadow-md:0 8px 24px -12px rgba(0,0,0,.6);
+  --shadow-lg:0 24px 60px -20px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font:14px/1.5 var(--font-ui);
+  -webkit-font-smoothing:antialiased;
+  display:grid; grid-template-columns:var(--rail-w) 1fr; grid-template-rows:56px 1fr 30px;
+  transition:background .2s var(--ease), color .2s var(--ease);
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.rail{grid-row:1 / -1; border-right:1px solid var(--line); display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px 0}
+.rail .mark{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font:600 12px/1 var(--font-display);margin-bottom:8px}
+.rail button{width:34px;height:34px;border-radius:var(--r-md);color:var(--ink-3);display:grid;place-items:center;font-size:13px}
+.rail button.is-on{background:var(--surface-2);color:var(--ink)}
+.rail button:hover{color:var(--ink)}
+
+/* ============ 2. 顶栏 ============ */
+.top{display:flex;align-items:center;gap:14px;padding:0 20px;border-bottom:1px solid var(--line);background:var(--paper);position:relative;z-index:20}
+.back{display:flex;align-items:center;gap:6px;color:var(--ink-3);font-size:12px;padding:5px 9px;border-radius:var(--r-sm)}
+.back:hover{background:var(--surface-2);color:var(--ink)}
+.doc-title{display:flex;flex-direction:column;gap:1px;min-width:0}
+.doc-title b{font:500 14px/1.3 var(--font-ui);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.doc-title span{font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:2px}
+.icon{width:30px;height:30px;border-radius:var(--r-sm);display:grid;place-items:center;color:var(--ink-3)}
+.icon:hover{background:var(--surface-2);color:var(--ink)}
+.icon.is-on{color:var(--accent)}
+.icon svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+/* ============ 3. 阅读工具栏 ============ */
+.bar{
+  position:absolute; top:56px; left:var(--rail-w); right:0; height:44px;
+  display:flex; align-items:center; gap:10px; padding:0 18px;
+  border-bottom:1px solid var(--line); background:var(--paper); z-index:15;
+}
+.seg{display:flex;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+.seg button{padding:4px 10px;font-size:11.5px;color:var(--ink-3);border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.is-on{background:var(--surface-2);color:var(--ink)}
+.chapter-where{display:flex;align-items:baseline;gap:8px;margin-left:6px;min-width:0}
+.chapter-where b{font:400 12.5px/1 var(--font-ui);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chapter-where span{font:11px/1 var(--font-mono);color:var(--ink-3)}
+.bar-right{margin-left:auto;display:flex;align-items:center;gap:2px}
+.tool{height:28px;padding:0 9px;border-radius:var(--r-sm);display:flex;align-items:center;gap:5px;color:var(--ink-3);font-size:11.5px}
+.tool:hover{background:var(--surface-2);color:var(--ink)}
+.tool.is-on{background:var(--surface-2);color:var(--ink)}
+.tool svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+/* ============ 4. 阅读区 ============ */
+.stage{grid-column:2; position:relative; overflow:hidden; padding-top:132px; transition:padding-right .18s var(--ease)}
+/* 面板开着时阅读区收窄，而不是被盖住——正经阅读器都是这样让位的 */
+body.ctx-open .stage{padding-right:var(--ctx-w)}
+.scroll{height:100%; overflow:auto; padding:0 0 40px}
+.spread{
+  max-width:1180px; margin:0 auto; padding:0 48px;
+  display:grid; grid-template-columns:1fr 1fr; gap:0;
+}
+.spread[data-spread="single"]{max-width:680px; grid-template-columns:1fr}
+.page{
+  padding:0 44px 40px; position:relative;
+  height:calc(100vh - 214px); overflow:hidden;
+  font-family:var(--font-read);
+  font-size:var(--read-size,17px); line-height:var(--read-lh,1.9);
+  color:var(--ink); text-align:justify; text-justify:inter-ideograph;
+}
+.spread[data-spread="double"] .page:first-child{border-right:1px solid var(--line); padding-right:52px}
+.page p{margin:0 0 .2em; text-indent:2em}
+.page p.noindent{text-indent:0}
+.page h2{
+  font-family:var(--font-display); font-size:1.5em; font-weight:400; letter-spacing:.04em;
+  margin:.2em 0 .1em; text-indent:0;
+}
+.page .ch-rule{height:1px;background:var(--line);margin:.6em 0 1.4em}
+.page figure{margin:.7em 0; text-indent:0}
+.page .imgph{
+  height:90px; border:1px solid var(--line); border-radius:2px;
+  background:
+    repeating-linear-gradient(135deg, transparent 0 7px, var(--surface-2) 7px 8px);
+  display:grid; place-items:center; color:var(--ink-3); font:11px var(--font-ui);
+}
+.page figcaption{font:11px/1.6 var(--font-ui); color:var(--ink-3); text-align:center; margin-top:6px; text-indent:0}
+.fn{color:var(--accent-ink); font-size:.72em; vertical-align:super; cursor:pointer; text-decoration:none}
+.page .pageno{
+  position:absolute; left:0; right:0; bottom:14px; text-align:center;
+  font:10.5px/1 var(--font-mono); color:var(--ink-3); letter-spacing:.08em;
+}
+.page .running{font:10.5px/1 var(--font-ui); color:var(--ink-3); letter-spacing:.14em; text-align:center; margin-bottom:22px}
+
+/* 页码交互热区（点击左右半屏翻页） */
+.turn{position:absolute;top:100px;bottom:0;width:22%;display:grid;place-items:center;color:transparent;transition:background .18s var(--ease)}
+.turn:hover{background:linear-gradient(90deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent)}
+.turn.next{right:0;background:linear-gradient(270deg, color-mix(in srgb, var(--ink) 4%, transparent), transparent)}
+.turn.prev{left:var(--rail-w)}
+
+/* ============ 5. 侧栏 ============ */
+.ctx{
+  position:absolute; top:100px; right:0; bottom:30px; width:var(--ctx-w);
+  background:var(--surface); border-left:1px solid var(--line);
+  display:flex; flex-direction:column; z-index:14;
+  box-shadow:-12px 0 30px -24px rgba(0,0,0,.4);
+}
+.ctx[hidden]{display:none}
+.ctx-tabs{display:flex;border-bottom:1px solid var(--line);padding:0 10px}
+.ctx-tab{padding:11px 8px;font-size:11.5px;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px}
+.ctx-tab.is-on{color:var(--ink);border-bottom-color:var(--accent)}
+.ctx-body{flex:1;overflow:auto;padding:8px 0}
+.toc-item{
+  display:flex;align-items:baseline;gap:8px;width:100%;text-align:left;
+  padding:7px 14px 7px 12px;font-size:12px;line-height:1.5;color:var(--ink-2);
+  border-left:2px solid transparent;
+}
+.toc-item:hover{background:var(--surface-2);color:var(--ink)}
+.toc-item.is-on{color:var(--accent-ink);border-left-color:var(--accent);background:var(--accent-weak)}
+.toc-item .lvl2{padding-left:16px;font-size:11.5px;color:var(--ink-3)}
+.toc-item .dot{color:var(--ink-3);font:10px var(--font-mono);margin-left:auto}
+.bm-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 12px;font-size:11.5px;color:var(--ink-2)}
+.bm-item:hover{background:var(--surface-2)}
+.bm-item .bm-bar{width:2px;height:22px;background:var(--accent);border-radius:2px;flex:none}
+.bm-item small{display:block;color:var(--ink-3);font-size:10.5px}
+.ctx-empty{padding:24px 16px;text-align:center;color:var(--ink-3);font-size:11.5px;line-height:1.7}
+
+/* ============ 6. 设置浮层 ============ */
+.settings{
+  position:absolute; right:18px; bottom:46px; width:326px; z-index:30;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r-lg);
+  box-shadow:var(--shadow-lg); padding:6px 0 4px;
+}
+body.ctx-open .settings{right:calc(var(--ctx-w) + 18px)}
+.settings[hidden]{display:none}
+.settings h4{margin:8px 16px 4px;font:500 11px/1 var(--font-ui);letter-spacing:.12em;color:var(--ink-3);text-transform:uppercase}
+.set-row{display:flex;align-items:center;gap:12px;padding:7px 16px}
+.set-row>label{font-size:12px;color:var(--ink-2);width:56px;flex:none}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{padding:3px 9px;border:1px solid var(--line);border-radius:var(--r-sm);font-size:11.5px;color:var(--ink-2);background:transparent}
+.chip:hover{border-color:var(--line-strong)}
+.chip.is-on{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-weak)}
+.switch{margin-left:auto;width:34px;height:18px;border-radius:999px;background:var(--line-strong);position:relative;transition:background .18s var(--ease)}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--surface);transition:transform .18s var(--ease)}
+.switch.is-on{background:var(--accent)}
+.switch.is-on::after{transform:translateX(16px)}
+.set-note{padding:4px 16px 8px;font-size:10.5px;line-height:1.7;color:var(--ink-3)}
+
+/* ============ 7. 状态栏 ============ */
+.status{
+  grid-column:2; display:flex; align-items:center; gap:14px; padding:0 16px;
+  border-top:1px solid var(--line); font:10.5px/1 var(--font-mono); color:var(--ink-3);
+  background:var(--paper); letter-spacing:.04em;
+}
+.status .right{margin-left:auto;display:flex;gap:14px}
+
+/* ============ 8. 原型说明条（不属于产品界面） ============ */
+.proto-note{
+  position:absolute; top:100px; left:0; right:0; height:32px; z-index:16;
+  display:flex; align-items:center; gap:10px; padding:0 18px;
+  border-bottom:1px dashed var(--line);
+  background:var(--paper); font-size:11px; color:var(--ink-3);
+}
+.proto-note b{color:var(--ink-2);font-weight:500}
+.proto-note kbd{font:10px var(--font-mono);border:1px solid var(--line);border-radius:3px;padding:0 4px;background:var(--surface)}
+</style>
+</head>
+<body data-theme="paper">
+
+<!-- 图标栏 -->
+<nav class="rail">
+  <div class="mark">笺</div>
+  <button class="is-on" title="书架">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 5h6v14H4zM14 5h6v14h-6z"/></svg>
+  </button>
+  <button title="搜索">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="M15.5 15.5 20 20"/></svg>
+  </button>
+  <button title="设置">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+  </button>
+</nav>
+
+<!-- 顶栏 -->
+<header class="top">
+  <button class="back">← 书架</button>
+  <div class="doc-title">
+    <b>长物志</b>
+    <span>文震亨 · EPUB · 12 章 · 2.4 MB</span>
+  </div>
+  <div class="top-right">
+    <button class="icon is-on" title="收藏">★</button>
+    <button class="icon" id="themeBtn" title="切换主题">◐</button>
+    <button class="icon" title="禅模式">□</button>
+    <button class="icon is-on" id="ctxBtn" title="目录">☰</button>
+  </div>
+</header>
+
+<!-- 阅读工具栏 -->
+<div class="bar">
+  <div class="seg" id="spreadSeg">
+    <button data-spread="single">单页</button>
+    <button class="is-on" data-spread="double">双页</button>
+  </div>
+  <div class="chapter-where">
+    <b>卷三 · 盆玩</b>
+    <span>27%</span>
+  </div>
+  <div class="bar-right">
+    <button class="tool is-on" id="tocBtn">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>目录
+    </button>
+    <button class="tool" id="bmBtn">
+      <svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg>书签
+    </button>
+    <button class="tool" id="findBtn">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M15.5 15.5 20 20"/></svg>搜索
+    </button>
+    <button class="tool" id="minusBtn" title="缩小字号">A−</button>
+    <button class="tool" id="plusBtn" title="放大字号">A+</button>
+    <button class="tool is-on" id="setBtn">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>设置
+    </button>
+  </div>
+</div>
+
+<!-- 阅读区 -->
+<main class="stage">
+  <!-- 原型说明条（不属于产品界面，开发时删除） -->
+  <aside class="proto-note">
+    <b>原型可操作：</b>左右半屏点击或 <kbd>←</kbd> <kbd>→</kbd> 翻页；<kbd>单页/双页</kbd> 切换跨页；
+    <kbd>A±</kbd> 改字号（书内文字实时变）；<kbd>◐</kbd> 切夜读；工具栏右侧可开目录 / 书签 / 搜索 / 设置。
+  </aside>
+
+  <div class="scroll">
+    <div class="spread" id="spread" data-spread="double">
+      <!-- 左页 -->
+      <article class="page">
+        <div class="running">长 物 志</div>
+        <h2>卷三 · 盆玩</h2>
+        <div class="ch-rule"></div>
+        <p class="noindent">盆玩，时尚以列几案间者为第一，列庭榭中者次之，余持论则反是。</p>
+        <p>最古者以天目松为第一，高不过二尺，短不过尺许，其本如臂，其针若簇，结为马远之欹斜诘曲、郭熙之露顶张拳、刘松年之偃亚层叠、盛子昭之拖拽轩翥等状，栽以佳器，槎牙可观。</p>
+        <p>又有古梅，苍藓鳞皴，苔须垂满，含花吐叶，历久不败者，亦古。意其结体，大约有二：一为烟霞色，一为水墨色<span class="fn" title="脚注">1</span>。</p>
+        <figure>
+          <div class="imgph">图版 · 盆玩</div>
+          <figcaption>图一　天目松盆景（原书插图，点击可放大）</figcaption>
+        </figure>
+        <div class="pageno">— 74 —</div>
+      </article>
+
+      <!-- 右页 -->
+      <article class="page">
+        <div class="running">卷 三 · 盆 玩</div>
+        <p class="noindent">其次则枸杞之属，其枝干虬曲，可以入画。然性喜燥，畏湿，浇灌不得法，未有不萎者。</p>
+        <p>又其次则菖蒲、石竹、虎刺、六月雪之类，皆可作案头清供。菖蒲以九节为贵，叶细而长，色翠而润，置之白石盆中，佐以昆石，最为雅致。</p>
+        <p>凡盆玩之属，最忌者三：一曰俗，二曰冗，三曰做作。俗者，金银其饰、朱漆其几是也；冗者，百物杂陈、了无主次是也；做作者，强为盘曲、故为古拙是也。三者既去，虽瓦盆拳石，亦有逸趣。</p>
+        <p>至于盆之别，亦有等第。窑器为上，如哥窑、官窑、龙泉之属；砂器次之，如均州、宜兴之属；瓦器为下，然亦须精细者。若以金银为盆，则俗不可耐矣。</p>
+        <div class="pageno">— 75 —</div>
+      </article>
+    </div>
+  </div>
+
+  <!-- 翻页热区 -->
+  <div class="turn prev" id="turnPrev"></div>
+  <div class="turn next" id="turnNext"></div>
+</main>
+
+<!-- 侧栏 -->
+<aside class="ctx" id="ctx">
+  <div class="ctx-tabs">
+    <button class="ctx-tab is-on" data-tab="toc">目录</button>
+    <button class="ctx-tab" data-tab="bm">书签</button>
+    <button class="ctx-tab" data-tab="find">搜索</button>
+  </div>
+  <div class="ctx-body" id="ctxBody"></div>
+</aside>
+
+<!-- 设置浮层 -->
+<section class="settings" id="settings">
+  <h4>版式</h4>
+  <div class="set-row"><label>字号</label>
+    <div class="chips" data-set="size">
+      <button class="chip" data-v="14">14</button>
+      <button class="chip" data-v="16">16</button>
+      <button class="chip is-on" data-v="17">17</button>
+      <button class="chip" data-v="19">19</button>
+      <button class="chip" data-v="22">22</button>
+    </div>
+  </div>
+  <div class="set-row"><label>行高</label>
+    <div class="chips" data-set="lh">
+      <button class="chip" data-v="1.5">1.5</button>
+      <button class="chip" data-v="1.7">1.7</button>
+      <button class="chip is-on" data-v="1.9">1.9</button>
+      <button class="chip" data-v="2.1">2.1</button>
+    </div>
+  </div>
+  <div class="set-row"><label>页边距</label>
+    <div class="chips" data-set="margin">
+      <button class="chip" data-v="narrow">窄</button>
+      <button class="chip is-on" data-v="mid">中</button>
+      <button class="chip" data-v="wide">宽</button>
+    </div>
+  </div>
+  <div class="set-row"><label>字体</label>
+    <div class="chips" data-set="family">
+      <button class="chip is-on" data-v="serif">宋体</button>
+      <button class="chip" data-v="sans">黑体</button>
+      <button class="chip" data-v="kai">楷体</button>
+    </div>
+  </div>
+  <div class="set-row"><label>对齐</label>
+    <div class="chips" data-set="align">
+      <button class="chip is-on" data-v="justify">两端</button>
+      <button class="chip" data-v="left">左对齐</button>
+    </div>
+  </div>
+  <h4>显示</h4>
+  <div class="set-row"><label>主题</label>
+    <div class="chips" data-set="theme">
+      <button class="chip is-on" data-v="paper">纸白</button>
+      <button class="chip" data-v="night">夜读</button>
+    </div>
+  </div>
+  <div class="set-row"><label>覆盖书内样式</label>
+    <button class="switch" id="forceSwitch" aria-pressed="false"></button>
+  </div>
+  <p class="set-note">关闭时只做温和缩放，尊重原书排版；开启后用 <code>!important</code> 覆盖书自带的字体与行距。</p>
+</section>
+
+<!-- 状态栏 -->
+<footer class="status">
+  <span>EPUB</span><span>12 章</span><span>第 74–75 页</span>
+  <div class="right"><span id="pct">27%</span><span>剩余 约 4 小时</span></div>
+</footer>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+const TOC = [
+  { label: "卷一 · 室庐", page: "3" },
+  { label: "　起居", page: "5", lvl: 2 },
+  { label: "　几榻", page: "11", lvl: 2 },
+  { label: "卷二 · 花木", page: "26" },
+  { label: "　牡丹", page: "28", lvl: 2 },
+  { label: "　海棠", page: "34", lvl: 2 },
+  { label: "卷三 · 盆玩", page: "74", current: true },
+  { label: "　瓶花", page: "88", lvl: 2 },
+  { label: "　奇石", page: "96", lvl: 2 },
+  { label: "卷四 · 禽鱼", page: "108" },
+  { label: "卷五 · 书画", page: "126" },
+];
+
+const BOOKMARKS = [
+  { label: "卷三 · 盆玩", note: "第 74 页 · 昨天 21:40" },
+  { label: "卷二 · 牡丹", note: "「牡丹称花王」· 11 月 12 日" },
+];
+
+const FINDS = [
+  { ch: "卷三 · 盆玩", text: "盆玩，时尚以列几案间者为第一" },
+  { ch: "卷三 · 盆玩", text: "凡盆玩之属，最忌者三" },
+  { ch: "卷五 · 书画", text: "盆山不可太过，须有起伏" },
+];
+
+function renderToc() {
+  $("#ctxBody").innerHTML = TOC.map((t) => `
+    <button class="toc-item ${t.current ? "is-on" : ""} ${t.lvl === 2 ? "lvl2" : ""}">
+      ${t.label}<span class="dot">${t.page}</span>
+    </button>`).join("");
+}
+function renderBm() {
+  $("#ctxBody").innerHTML = BOOKMARKS.map((b) => `
+    <button class="bm-item"><span class="bm-bar"></span>
+      <span>${b.label}<small>${b.note}</small></span>
+    </button>`).join("") + `<div class="ctx-empty">共 ${BOOKMARKS.length} 个书签</div>`;
+}
+function renderFind() {
+  $("#ctxBody").innerHTML = `
+    <div style="padding:10px 12px">
+      <input id="findInput" value="盆玩" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font:12px var(--font-ui)" />
+    </div>
+    <div style="padding:0 12px 8px;font-size:11px;color:var(--ink-3)">找到 ${FINDS.length} 处</div>
+    ${FINDS.map((f) => `<button class="toc-item" style="display:block">
+      <span style="font:10.5px var(--font-ui);color:var(--ink-3);display:block;margin-bottom:2px">${f.ch}</span>
+      ${f.text.replace("盆玩", "<mark>盆玩</mark>")}
+    </button>`).join("")}`;
+}
+
+let tab = "toc";
+function setTab(next) {
+  tab = next;
+  $$(".ctx-tab").forEach((b) => b.classList.toggle("is-on", b.dataset.tab === next));
+  if (next === "toc") renderToc();
+  if (next === "bm") renderBm();
+  if (next === "find") renderFind();
+}
+$$(".ctx-tab").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
+
+// 侧栏开合
+function toggleCtx(force) {
+  const ctx = $("#ctx");
+  ctx.hidden = force === undefined ? !ctx.hidden : !force;
+  // 面板让位：阅读区收窄，正文不被盖住
+  document.body.classList.toggle("ctx-open", !ctx.hidden);
+  $("#ctxBtn").classList.toggle("is-on", !ctx.hidden);
+  $("#tocBtn").classList.toggle("is-on", !ctx.hidden && tab === "toc");
+}
+$("#ctxBtn").addEventListener("click", () => toggleCtx());
+$("#tocBtn").addEventListener("click", () => { setTab("toc"); toggleCtx(true); });
+$("#bmBtn").addEventListener("click", () => { setTab("bm"); toggleCtx(true); });
+$("#findBtn").addEventListener("click", () => { setTab("find"); toggleCtx(true); });
+
+// 单双页
+$$("#spreadSeg button").forEach((b) => b.addEventListener("click", () => {
+  $$("#spreadSeg button").forEach((x) => x.classList.toggle("is-on", x === b));
+  $("#spread").dataset.spread = b.dataset.spread;
+}));
+
+// 字号
+let size = 17;
+function setSize(v) {
+  size = Math.min(22, Math.max(14, v));
+  document.documentElement.style.setProperty("--read-size", size + "px");
+  $$('[data-set="size"] .chip').forEach((c) => c.classList.toggle("is-on", Number(c.dataset.v) === size));
+}
+$("#plusBtn").addEventListener("click", () => setSize(size + 1));
+$("#minusBtn").addEventListener("click", () => setSize(size - 1));
+
+// 设置面板
+$("#setBtn").addEventListener("click", () => {
+  const s = $("#settings");
+  s.hidden = !s.hidden;
+  $("#setBtn").classList.toggle("is-on", !s.hidden);
+});
+
+$$("#settings .chips").forEach((group) => {
+  group.addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    [...group.children].forEach((c) => c.classList.toggle("is-on", c === chip));
+    const v = chip.dataset.v, kind = group.dataset.set;
+    if (kind === "size") setSize(Number(v));
+    if (kind === "lh") document.documentElement.style.setProperty("--read-lh", v);
+    if (kind === "margin") {
+      const pad = v === "narrow" ? 28 : v === "wide" ? 72 : 44;
+      $$(".page").forEach((p) => (p.style.padding = "0 " + pad + "px"));
+    }
+    if (kind === "family") {
+      const map = { serif: "var(--font-read)", sans: "var(--font-ui)", kai: "var(--font-display)" };
+      $$(".page").forEach((p) => (p.style.fontFamily = map[v]));
+    }
+    if (kind === "align") $$(".page").forEach((p) => (p.style.textAlign = v === "left" ? "left" : "justify"));
+    if (kind === "theme") document.documentElement.dataset.theme = v;
+  });
+});
+
+$("#forceSwitch").addEventListener("click", (e) => {
+  const on = e.currentTarget.classList.toggle("is-on");
+  e.currentTarget.setAttribute("aria-pressed", String(on));
+  $$(".page").forEach((p) => (p.style.letterSpacing = on ? "0.02em" : ""));
+});
+
+// 主题
+$("#themeBtn").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "paper" ? "night" : "paper";
+  document.documentElement.dataset.theme = next;
+  $$('[data-set="theme"] .chip').forEach((c) => c.classList.toggle("is-on", c.dataset.v === next));
+});
+
+// 翻页（原型只改页码与进度）
+let spreadIndex = 74;
+function turn(dir) {
+  spreadIndex = Math.min(200, Math.max(3, spreadIndex + dir * 2));
+  const pages = $$(".page .pageno");
+  pages[0].textContent = "— " + spreadIndex + " —";
+  if (pages[1]) pages[1].textContent = "— " + (spreadIndex + 1) + " —";
+  const pct = Math.round((spreadIndex / 200) * 96) + 4;
+  $("#pct").textContent = pct + "%";
+  $(".chapter-where span").textContent = pct + "%";
+  $$(".status span")[2].textContent = "第 " + spreadIndex + "–" + (spreadIndex + 1) + " 页";
+}
+$("#turnNext").addEventListener("click", () => turn(1));
+$("#turnPrev").addEventListener("click", () => turn(-1));
+addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") { e.preventDefault(); turn(1); }
+  if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); turn(-1); }
+});
+
+setTab("toc");
+document.body.classList.add("ctx-open");
+$("#settings").hidden = true;
+</script>
+</body>
+</html>

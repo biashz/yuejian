@@ -21,6 +21,7 @@ import { existsSync } from "node:fs";
 import { join, extname, dirname, resolve } from "node:path";
 import { tmpdir, platform } from "node:os";
 import { fileURLToPath } from "node:url";
+import { buildEpub } from "./lib/make-epub.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const WORK = join(tmpdir(), "yuejian-smoke");
@@ -91,6 +92,7 @@ const MIME = {
   ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml",
   ".png": "image/png", ".woff2": "font/woff2", ".wasm": "application/wasm",
   ".pdf": "application/pdf", ".md": "text/markdown; charset=utf-8",
+  ".epub": "application/epub+zip",
 };
 
 /* ---------------- 桥接桩 ---------------- */
@@ -192,6 +194,10 @@ function stubSource() {
     { id: "b-tsv", path: "C:/fixtures/reading-log.tsv", title: "reading-log.tsv", author: "本地", kind: "text",
       size: 90, pages: 0, words: 0, addedAt: now - 3000, lastOpenedAt: now - 800, favorite: false,
       categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
+    // 电子书：路径指向测试服务器上的 /fixtures/sample.epub（现场生成，不进仓库）
+    { id: "b-epub", path: "/fixtures/sample.epub", title: "冒烟样本", author: "本地", kind: "ebook",
+      size: 4096, pages: 0, words: 0, addedAt: now - 2800, lastOpenedAt: now - 750, favorite: false,
+      categoryId: "", encoding: "", progress: { ratio: 0, page: 0, zoom: 1, cfi: "" } },
     // 大文件：正文由 read_text_window 按窗口现生成，不预置全文——
     // 20 万行 × 约 100 字节 ≈ 20MB，正好越过 8MB 的整篇上限
     { id: "b-huge", path: "C:/fixtures/huge.log", title: "huge.log", author: "本地", kind: "text",
@@ -213,6 +219,9 @@ function stubSource() {
         if (command === "open_book") {
           window.__encCalls.push(args.encoding === undefined ? null : args.encoding);
           if (args.id === "b-pdf") return Promise.resolve(clone({ kind: "pdf", path: "/fixtures/sample.pdf", pages: 3, size: 4000 }));
+          if (args.id === "b-epub") return Promise.resolve(clone({
+            kind: "ebook", path: "/fixtures/sample.epub", size: 4096,
+          }));
           if (args.id === "b-txt") return Promise.resolve(clone({
             kind: "text", text: ${JSON.stringify(TEXT_LOG)},
             // 手动指定编码时回填对应名字，用来验证「选什么就按什么解」
@@ -287,12 +296,36 @@ function send(ws, method, params = {}) {
   return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
 }
 
-async function evaluate(ws, expression) {
+async function evaluate(ws, expression, contextId) {
   const reply = await send(ws, "Runtime.evaluate", {
     expression, awaitPromise: true, returnByValue: true,
+    ...(contextId ? { contextId } : {}),
   });
   if (reply.exceptionDetails) throw new Error(`求值失败：${reply.exceptionDetails.text}`);
   return reply.result?.value;
+}
+
+/**
+ * 电子书的章节渲染在 blob: iframe 里，而 `foliate-view` 的 shadow root 是 closed 的
+ * ——从页面里既拿不到 renderer，也进不去 iframe。这里从 CDP 的 frame 树上找到那个
+ * iframe，给它开一个隔离世界再读 DOM：只用于验证「正文真的渲染出来了」。
+ */
+async function blobFrameContext(ws) {
+  const tree = await send(ws, "Page.getFrameTree");
+  const frames = [];
+  const walk = (node) => {
+    frames.push(node.frame);
+    for (const child of node.childFrames || []) walk(child);
+  };
+  walk(tree.frameTree);
+  // Page.Frame 的字段叫 id（不是 frameId），createIsolatedWorld 才用 frameId
+  const frame = frames.find((item) => (item.url || "").startsWith("blob:"));
+  if (!frame) return null;
+  const world = await send(ws, "Page.createIsolatedWorld", {
+    frameId: frame.id,
+    worldName: "smoke-ebook",
+  });
+  return world.executionContextId;
 }
 
 async function waitFor(ws, expression, label, timeout = 10000) {
@@ -341,9 +374,17 @@ async function shot(ws, name) {
 async function main() {
   await mkdir(WORK, { recursive: true });
   await writeFile(join(WORK, "sample.pdf"), buildPdf(["第一页", "第二页", "第三页"]));
+  // script: true —— 第一章带一段 <script>，用来证明清洗生效（见 make-epub.mjs）
+  await writeFile(join(WORK, "sample.epub"), buildEpub({ script: true }));
   await writeFile(join(WORK, "demo.md"), "# 第一章\n\n正文\n");
 
   // 端口交给系统分配：并行跑多个实例不会撞车
+  // 把 tauri.conf.json 里的 CSP 原样作为响应头发给页面：
+  // 真机上由 Tauri 注入这条策略，冒烟里若只在 HTTP 下跑，CSP 写错了永远测不出来
+  const csp = await readFile(join(ROOT, "..", "src-tauri", "tauri.conf.json"), "utf8")
+    .then((text) => JSON.parse(text)?.app?.security?.csp)
+    .catch(() => null);
+
   const server = createServer(async (req, res) => {
     const url = decodeURIComponent(req.url.split("?")[0]);
     const file = url.startsWith("/fixtures/")
@@ -351,7 +392,9 @@ async function main() {
       : join(ROOT, url === "/" ? "index.html" : url.slice(1));
     try {
       const body = await readFile(file);
-      res.writeHead(200, { "Content-Type": MIME[extname(file)] || "application/octet-stream" });
+      const headers = { "Content-Type": MIME[extname(file)] || "application/octet-stream" };
+      if (csp && extname(file) === ".html") headers["Content-Security-Policy"] = csp;
+      res.writeHead(200, headers);
       res.end(body);
     } catch {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -416,8 +459,22 @@ async function main() {
     await send(ws, "Runtime.enable");
     await send(ws, "Page.addScriptToEvaluateOnNewDocument", { source: stubSource() });
     await send(ws, "Page.navigate", { url: `${origin}/` });
-    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length >= 7", "书架渲染");
-    check("启动完成，书架渲染 7 本书", true);
+    await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length >= 8", "书架渲染");
+    check("启动完成，书架渲染 8 本书", true);
+
+    // CSP：既确认策略按 tauri.conf.json 下发，也确认它真的生效（内联脚本被拦）
+    const sentCsp = await fetch(`${origin}/`).then((res) => res.headers.get("content-security-policy"));
+    const inlineBlocked = await evaluate(ws, `(async () => {
+      const frame = document.createElement("iframe");
+      frame.srcdoc = "<" + "script>parent.__inlineRan = 1<" + "/script>";
+      document.body.append(frame);
+      await new Promise((r) => setTimeout(r, 300));
+      const ran = window.__inlineRan === 1;
+      frame.remove();
+      return !ran;
+    })()`);
+    check("CSP 按 tauri.conf.json 下发", Boolean(csp) && sentCsp === csp, `${String(sentCsp || "").slice(0, 48)}…`);
+    check("CSP 真的生效：内联脚本被拦下", inlineBlocked, inlineBlocked ? "未执行" : "内联脚本执行了");
 
     const pane = '[data-pane-root="0"]';
     const errors = () => evaluate(ws, "window.__errors.slice()");
@@ -964,6 +1021,130 @@ async function main() {
     errs = await errors();
     check("大文件搜索无未捕获异常", errs.length === 0, errs.join(" | "));
     await shot(ws, "text-huge-search");
+
+    /* --- 电子书：打开、分页、目录、CFI 续读、书内脚本不执行 --- */
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-epub"]').click()`);
+    await waitFor(ws, `document.querySelector('${pane} .ebook-stack foliate-view') !== null`, "电子书挂载", 20000);
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return (mod.activePane()?.ebook?.location?.cfi || "").length > 0;
+    })()`, "电子书首屏定位", 20000);
+
+    const ebook = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const current = mod.activePane();
+      const view = document.querySelector('${pane} .ebook-stack foliate-view');
+      const box = view?.getBoundingClientRect();
+      return {
+        height: Math.round(box?.height || 0),
+        toc: (current?.ebookToc || []).map((item) => item.label),
+        levels: (current?.ebookToc || []).map((item) => item.level),
+        chapters: current?.ebook?.chapters || 0,
+        cfi: current?.ebook?.location?.cfi || "",
+        fraction: current?.ebook?.location?.fraction ?? -1,
+        label: current?.ebook?.location?.label || "",
+        status: document.querySelector("#statusRight").textContent,
+        sub: document.querySelector("#docSub").textContent,
+        toolbar: document.querySelector("#readToolbar").textContent.replace(/\\s+/g, " ").trim(),
+        title: document.querySelector("#docTitle").textContent,
+      };
+    })()`);
+    errs = await errors();
+    check("EPUB 打开并占满分栏", ebook.height > 200, `view 高度 ${ebook.height}px`);
+    check("目录取自书内 NAV，三章都在",
+      ebook.toc.length === 3 && ebook.toc[0] === "第一章 起点" && ebook.chapters === 3,
+      `${ebook.toc.join(" / ")}（章节计数 ${ebook.chapters}）`);
+    check("状态栏报章节与百分比", /第一章 起点 · \d+%/.test(ebook.status), ebook.status);
+    check("副标题与工具栏按电子书口径", /EPUB · 3 章/.test(ebook.sub) && /%/.test(ebook.toolbar),
+      `${ebook.sub} | ${ebook.toolbar}`);
+    check("书名回填自 OPF 元数据", ebook.title === "冒烟样本", ebook.title);
+
+    // 正文确实渲染出来了：只能从 iframe 的隔离世界里读
+    let frameCtx = await blobFrameContext(ws);
+    const body = frameCtx ? await evaluate(ws,
+      `({ text: document.body.innerText.replace(/\\s+/g, " ").trim().slice(0, 40),
+          length: document.body.innerText.length,
+          scripts: document.querySelectorAll("script").length })`, frameCtx) : null;
+    check("章节正文已排版（iframe 内可见文字）",
+      Boolean(body && body.length > 500), body ? `${body.length} 字，开头「${body.text}」` : "找不到章节 iframe");
+    check("书内 <script> 已被清洗", Boolean(body && body.scripts === 0) && await evaluate(ws, "window.__pwned === undefined"),
+      body ? `iframe 内 script 元素 ${body.scripts} 个` : "无 iframe");
+
+    // 翻页：键盘 → relocate → 百分比增加
+    for (const type of ["keyDown", "keyUp"]) {
+      await send(ws, "Input.dispatchKeyEvent", {
+        type, key: "ArrowRight", code: "ArrowRight",
+        windowsVirtualKeyCode: 39, nativeVirtualKeyCode: 39,
+      });
+    }
+    await sleep(700);
+    const turned = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const current = mod.activePane();
+      return {
+        fraction: current?.ebook?.location?.fraction ?? -1,
+        cfi: current?.ebook?.location?.cfi || "",
+        ratio: current?.book?.progress?.ratio ?? -1,
+        savedCfi: current?.book?.progress?.cfi || "",
+      };
+    })()`);
+    check("键盘翻页改变了位置（CFI 与比例都前进）",
+      turned.fraction > ebook.fraction && turned.cfi !== ebook.cfi,
+      `${ebook.fraction.toFixed(4)} → ${turned.fraction.toFixed(4)}`);
+    check("进度写回书架条目（ratio + cfi）",
+      turned.ratio === turned.fraction && turned.savedCfi === turned.cfi,
+      `ratio ${turned.ratio.toFixed(4)}，cfi ${turned.savedCfi}`);
+
+    // 目录跳转
+    const tocClick = await evaluate(ws, `(() => {
+      const item = document.querySelector('#ctxBody .toc-item[data-goto$="ch3.xhtml"]');
+      if (!item) return { found: false, html: (document.querySelector("#ctxBody")?.innerHTML || "").slice(0, 160),
+        tab: (document.querySelector("#ctxTabs .is-on")?.textContent || ""),
+        len: (document.querySelector("#ctxBody")?.children.length ?? -1),
+        panel: document.querySelector("#ctxPanel")?.className || "" };
+      item.click();
+      return { found: true };
+    })()`);
+    await sleep(900);
+    if (!tocClick.found) check("目录里能找到第三章", false, JSON.stringify(tocClick));
+    const jumpedEbook = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const current = mod.activePane();
+      return {
+        label: current?.ebook?.location?.label || "",
+        status: document.querySelector("#statusRight").textContent,
+        active: document.querySelector('#ctxBody .toc-item.is-active')?.textContent.trim() || "",
+      };
+    })()`);
+    check("点目录跳到第三章并高亮当前项",
+      jumpedEbook.label === "第三章 收束" && /第三章/.test(jumpedEbook.active),
+      `章节「${jumpedEbook.label}」，高亮「${jumpedEbook.active}」`);
+    await shot(ws, "ebook-epub");
+
+    // 续读：回书架再打开，位置要回到第三章
+    const beforeReopen = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const current = mod.activePane();
+      return { cfi: current?.book?.progress?.cfi || "", label: current?.ebook?.location?.label || "" };
+    })()`);
+    await evaluate(ws, `document.querySelector("#backBtn").click()`);
+    await sleep(600);
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-epub"]').click()`);
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return (mod.activePane()?.ebook?.location?.cfi || "").length > 0;
+    })()`, "电子书续读定位", 20000);
+    await sleep(500);
+    const reopened = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const current = mod.activePane();
+      return { cfi: current?.ebook?.location?.cfi || "", label: current?.ebook?.location?.label || "" };
+    })()`);
+    check("关掉重开回到原位（CFI 续读）",
+      reopened.cfi === beforeReopen.cfi || reopened.label === beforeReopen.label,
+      `期望「${beforeReopen.label}」，实际「${reopened.label}」`);
+    errs = await errors();
+    check("电子书阅读无未捕获异常", errs.length === 0, errs.join(" | "));
 
     /* --- 更新安装提示：非模态卡片，可稍后，点立即安装才走安装命令 --- */
     await evaluate(ws, `(async () => {

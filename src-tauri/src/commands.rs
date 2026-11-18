@@ -69,10 +69,14 @@ fn quiet(command: &mut std::process::Command) -> &mut std::process::Command {
     command
 }
 
-/// 文档类型判定：pdf / markdown / text。
+/// 文档类型判定：pdf / markdown / text / ebook。
 ///
 /// 文本类不再逐个枚举扩展名——`text::classify` 那一张表同时服务于
 /// 「能不能打开」「默认哪种视图」「用什么语言高亮」三件事，避免三处各写一份。
+///
+/// 电子书在这里只按扩展名放行，真正的格式判定在前端（`foliate-js` 的
+/// `makeBook` 按魔术字节分派）。两处判定不冲突：这里回答「让不让进书架」，
+/// 那里回答「用什么解析器解」。
 fn detect_kind(path: &Path) -> Option<&'static str> {
     let ext = path
         .extension()
@@ -86,6 +90,7 @@ fn detect_kind(path: &Path) -> Option<&'static str> {
     match ext.as_str() {
         "pdf" => Some("pdf"),
         "md" | "markdown" | "mdown" => Some("markdown"),
+        "epub" => Some("ebook"),
         _ => text::is_text(&ext, &name).then_some("text"),
     }
 }
@@ -166,9 +171,9 @@ pub fn save_settings(state: State<'_, StoreState>, settings: Settings) -> Result
 /// 只影响「默认看得见哪些」：用户仍可用「所有文件」选任意文件，
 /// 不支持的会在导入时被跳过（前端会提示跳过了几个）。
 const PICK_EXTS: &[&str] = &[
-    "pdf", "md", "markdown", "mdown", "txt", "text", "log", "nfo", "csv", "tsv", "json", "yml",
-    "yaml", "toml", "ini", "conf", "xml", "html", "css", "js", "ts", "rs", "go", "py", "java",
-    "c", "h", "cpp", "cs", "php", "rb", "sh", "sql", "diff",
+    "pdf", "epub", "md", "markdown", "mdown", "txt", "text", "log", "nfo", "csv", "tsv", "json",
+    "yml", "yaml", "toml", "ini", "conf", "xml", "html", "css", "js", "ts", "rs", "go", "py",
+    "java", "c", "h", "cpp", "cs", "php", "rb", "sh", "sql", "diff",
 ];
 
 /// 调起系统文件对话框，返回选中的路径
@@ -226,6 +231,14 @@ pub enum OpenDoc {
     },
     /// 文本类（txt / log / csv / 代码配置）：正文 + 元信息
     Text(text::TextDoc),
+    /// 电子书（EPUB / FB2 / MOBI / CBZ）：只回路径与体积。
+    ///
+    /// 正文由前端解析——解压、解析 OPF、排版全在 `foliate-js` 里做，
+    /// Rust 侧再解一遍等于把同一份逻辑写两遍，还得跟着库的解析规则同步。
+    Ebook {
+        path: String,
+        size: u64,
+    },
 }
 
 #[tauri::command]
@@ -268,6 +281,13 @@ pub async fn open_book(
             pages: book.pages,
             size,
         });
+    }
+
+    if book.kind == "ebook" {
+        // 只回路径与体积：解析在前端。文件不在这里打开，所以「书架里有、磁盘上没了」
+        // 这种情况也要能让前端自己报错——体积取不到时回 0，由前端按失败处理
+        let size = fs::metadata(&book.path).map(|meta| meta.len()).unwrap_or(book.size);
+        return Ok(OpenDoc::Ebook { path: book.path, size });
     }
 
     if book.kind == "text" {
@@ -589,10 +609,12 @@ pub fn save_progress(
     page: u32,
     zoom: f64,
     pages: u32,
+    // 只有电子书会传：流式排版里页码是算出来的，位置必须记 CFI
+    cfi: Option<String>,
 ) -> Result<(), String> {
     let mut data = lock(&state)?;
     if let Some(book) = data.books.iter_mut().find(|b| b.id == id) {
-        book.progress = Progress { ratio, page, zoom };
+        book.progress = Progress { ratio, page, zoom, cfi: cfi.unwrap_or_default() };
         if pages > 0 {
             book.pages = pages;
         }

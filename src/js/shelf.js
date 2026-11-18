@@ -15,7 +15,7 @@ function visibleBooks() {
   return state.books
     .filter((book) => {
       if (state.filter === "star" && !book.favorite) return false;
-      if (["pdf", "markdown", "text"].includes(state.filter) && book.kind !== state.filter) return false;
+      if (["pdf", "markdown", "text", "ebook"].includes(state.filter) && book.kind !== state.filter) return false;
       if (!matchCategory(book)) return false;
       if (query && !`${book.title} ${book.author}`.toLowerCase().includes(query)) return false;
       return true;
@@ -38,6 +38,10 @@ function bookProgressText(book) {
   if (book.kind === "text") {
     const words = book.words ? t("reader.wordsCount", { count: book.words }) : "";
     return words ? `${words} · ${formatBytes(book.size)}` : formatBytes(book.size);
+  }
+  if (book.kind === "ebook") {
+    // 章节数要解析完 OPF 才有，书架这一层拿不到，只报体积
+    return `${kindLabel("ebook", book)} · ${formatBytes(book.size)}`;
   }
   const words = book.words ? t("reader.wordsCount", { count: book.words }) : "Markdown";
   return `${words} · ${formatBytes(book.size)}`;
@@ -186,6 +190,8 @@ function filterSummary() {
   }
   if (state.filter === "pdf") parts.push("PDF");
   if (state.filter === "markdown") parts.push("MARKDOWN");
+  if (state.filter === "text") parts.push(t("library.filterText"));
+  if (state.filter === "ebook") parts.push("EPUB");
   if (state.filter === "star") parts.push(t("library.filterStar"));
   if (state.query) parts.push(`“${state.query}”`);
   return parts;

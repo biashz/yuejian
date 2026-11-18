@@ -11,10 +11,12 @@ import { activePane } from "./panes.js";
 import { canHighlight, willHighlight } from "../reader-text.js";
 import { delimiterLabel } from "../reader-csv.js";
 
-/* 每种文档能用的侧栏视图：PDF 有缩略图，文本类没有大纲但有文件信息 */
+/* 每种文档能用的侧栏视图：PDF 有缩略图，文本类没有大纲但有文件信息，
+   电子书的目录来自书本身的 NAV/NCX（不是扫描标题），所以只有目录与信息 */
 const TABS_BY_KIND = {
   pdf: ["toc", "thumbs", "find"],
   text: ["info", "find"],
+  ebook: ["toc", "info"],
 };
 
 /**
@@ -113,6 +115,7 @@ function renderInfo() {
   const body = $("#ctxBody");
   const pane = activePane();
   const doc = pane?.doc;
+  if (doc?.kind === "ebook") return renderEbookInfo(pane);
   if (!doc || doc.kind !== "text") {
     body.innerHTML = `<div class="ctx-empty">${t("reader.infoEmpty")}</div>`;
     return;
@@ -151,6 +154,28 @@ function renderInfo() {
     <p class="info-note">${t("reader.infoEncodingHint")}</p>`;
 }
 
+/**
+ * 电子书信息：出版元数据来自书本身（OPF），比书架当初从文件名猜的可靠。
+ * 这里只读不写——书名与作者在打开时已经回填到书架条目上了。
+ */
+function renderEbookInfo(pane) {
+  const body = $("#ctxBody");
+  const book = pane?.book;
+  const meta = pane?.ebook?.book?.metadata || {};
+  const row = (key, value) => `<div class="info-row"><dt>${key}</dt><dd>${escapeHtml(value)}</dd></div>`;
+  const rows = [
+    row(t("reader.infoKind"), kindLabel("ebook", book)),
+    row(t("reader.infoChapters"), String(pane?.ebook?.chapters || pane?.ebookToc?.length || 0)),
+    row(t("reader.infoSize"), formatBytes(book?.size || 0)),
+  ];
+  if (meta.title) rows.push(row(t("reader.infoTitle"), String(meta.title)));
+  if (meta.author) rows.push(row(t("reader.infoAuthor"), String(meta.author)));
+  if (meta.publisher) rows.push(row(t("reader.infoPublisher"), String(meta.publisher)));
+  if (meta.language) rows.push(row(t("reader.infoLanguage"), String(meta.language)));
+  body.innerHTML = `<dl class="info-list">${rows.join("")}</dl>
+    <p class="info-note">${t("reader.infoEbookHint")}</p>`;
+}
+
 async function renderToc() {
   const body = $("#ctxBody");
   const pane = activePane();
@@ -186,6 +211,21 @@ async function renderToc() {
     return;
   }
 
+  // 电子书的目录是书自带的 NAV/NCX，可能是空的一本（只有正文没有目录）
+  if (book.kind === "ebook") {
+    const items = pane.ebookToc || [];
+    if (!items.length) {
+      body.innerHTML = `<div class="ctx-empty">${t("reader.tocEbookEmpty")}</div>`;
+      return;
+    }
+    body.innerHTML = items.map((item) => `
+      <button class="toc-item" data-level="${item.level}" data-goto="${escapeHtml(item.href)}" data-kind="ebook">
+        ${escapeHtml(item.label)}
+      </button>`).join("");
+    markTocActive();
+    return;
+  }
+
   const toc = pane.doc?.toc || [];
   if (!toc.length) {
     body.innerHTML = `<div class="ctx-empty">${t("reader.tocMdEmpty")}</div>`;
@@ -206,6 +246,21 @@ function markTocActive(id) {
     return;
   }
   const pane = activePane();
+  // 电子书：目录项的 href 可能带锚点，当前定位也可能是同一文件的另一处，
+  // 所以先找完全相同的，再退化成「同一个文件」的最后一项
+  if (pane?.book?.kind === "ebook") {
+    const href = state.ebookHref || pane.ebook?.location?.href || "";
+    if (!href) return;
+    const file = href.split("#")[0];
+    let activeIndex = -1;
+    items.forEach((item, index) => {
+      const target = item.dataset.goto || "";
+      if (target === href) activeIndex = index;
+      else if (activeIndex < 0 && target.split("#")[0] === file) activeIndex = index;
+    });
+    items.forEach((item, index) => item.classList.toggle("is-active", index === activeIndex));
+    return;
+  }
   if (!pane?.outline?.length) return;
   // PDF：取最后一个页码不超过当前页的条目
   let activeIndex = 0;

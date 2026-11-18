@@ -124,6 +124,21 @@ function renderToolbar() {
         <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
       </div>
       <span class="page-total">${stat}</span>${paneTools}`;
+  } else if (book.kind === "ebook") {
+    // 电子书：翻页 + 全书百分比。没有页码可填——页码是排版算出来的，窗口一变就作废，
+    // 给一个能输的页码框只会让人以为可以「跳到第 200 页」
+    const pane = activePane();
+    const pct = Math.round((state.ebookFraction || pane?.ratio || 0) * 100);
+    bar.innerHTML = `
+      <div class="tool-group">
+        <button class="tool-btn" data-act="ebook-prev" title="${t("reader.prev")}"><svg class="ic"><use href="#i-chevron-left"/></svg></button>
+        <span class="page-total ebook-pct">${pct}%</span>
+        <button class="tool-btn" data-act="ebook-next" title="${t("reader.next")}"><svg class="ic"><use href="#i-chevron-right"/></svg></button>
+      </div>
+      <span class="tool-sep"></span>
+      <div class="tool-group">
+        <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
+      </div>${paneTools}`;
   } else {
     const settings = state.settings;
     bar.innerHTML = `

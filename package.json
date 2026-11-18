@@ -12,6 +12,7 @@
     "vendor": "node scripts/vendor-assets.mjs",
     "check": "node scripts/check-undefined.mjs",
     "smoke": "node scripts/smoke-reader.mjs",
+    "e2e": "node scripts/e2e-ebook.mjs",
     "version:bump": "node scripts/bump-version.mjs"
   },
   "devDependencies": {

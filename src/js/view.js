@@ -64,6 +64,11 @@ function statusRightText(book) {
       chars: doc?.chars ?? 0,
     });
   }
+  if (book.kind === "ebook") {
+    // 电子书没有页码：报「当前章节 + 全书百分比」，这是流式排版下唯一稳定的口径
+    const label = state.ebookLabel || t("reader.ebookNoChapter");
+    return t("status.ebook", { label, pct: Math.round((state.ebookFraction || 0) * 100) });
+  }
   return t("status.markdown", {
     words: book.words || 0,
     size: state.settings.fontSize,
@@ -86,7 +91,9 @@ function updateStatus() {
 /* ---------------- 语言切换 ---------------- */
 /** 原生窗口标题跟随界面语言（任务栏 / Alt+Tab 上显示的名称） */
 function syncWindowTitle() {
-  currentWindow?.setTitle(t("app.title"));
+  // 权限缺失时 setTitle 会以一个被拒绝的 Promise 形式失败，不 catch 就是一条
+  // 未捕获异常；标题不是关键路径，失败就不改，别让它在控制台里刷屏
+  Promise.resolve(currentWindow?.setTitle?.(t("app.title"))).catch(() => {});
 }
 
 /**

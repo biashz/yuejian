@@ -47,6 +47,10 @@ function mirrorPane(pane) {
   state.pdfTotal = pane.total;
   state.pdfOutline = pane.outline;
   state.findQuery = pane.query;
+  // 电子书的位置也跟着活动栏走：切栏后状态栏显示的必须是这一栏正在读的那一章
+  state.ebookLabel = pane.ebookLabel || "";
+  state.ebookHref = pane.ebook?.location?.href || "";
+  state.ebookFraction = pane.ebook?.location?.fraction || 0;
 }
 
 function initPanes() {
@@ -61,7 +65,12 @@ function initPanes() {
       scrollArea: $(".scroll-area", root),
       pdfStack: $(".pdf-stack", root),
       mdDoc: $(".md-doc", root),
+      ebookStack: $(".ebook-stack", root),
       reader: null,
+      /* 电子书阅读器实例；PDF 用上面那个 reader 槽位，两者不会同时存在 */
+      ebook: null,
+      /* 当前书的目录（foliate 的嵌套 TOC 拍平后），侧栏与高亮都读它 */
+      ebookToc: [],
       doc: null,
       book: null,
       page: 1,
@@ -146,6 +155,11 @@ function maybeSync(source, { page, ratio, pageOffset }) {
     target.reader.goPosition(page, pageOffset || 0);
     return;
   }
+  // 电子书没有滚动条可对，「比例」即全书进度：另一栏按同一比例跳过去
+  if (source.book.kind === "ebook") {
+    target.ebook?.goToFraction(ratio);
+    return;
+  }
   if (Math.abs((target.ratio || 0) - ratio) < 0.002) return;
   scrollPaneToRatio(target, ratio);
 }
@@ -216,9 +230,12 @@ function closePaneDoc(pane) {
   // 否则 Markdown / PDF 也会触发它去取窗口
   unmountWindowed(pane);
   pane.reader?.destroy();
+  pane.ebook?.destroy();
   pane.doc = null;
   pane.book = null;
   pane.outline = null;
+  pane.ebookToc = [];
+  pane.ebookLabel = "";
   pane.query = "";
   pane.hits = [];
   pane.headingEls = [];

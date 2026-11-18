@@ -4,8 +4,8 @@
 import { t } from "../i18n.js";
 
 const THEME_ORDER = ["paper", "night", "sepia"];
-const KIND_LABEL = { pdf: "PDF", markdown: "MARKDOWN", text: "文本" };
-const KIND_CLASS = { pdf: "pdf", markdown: "md", text: "txt" };
+const KIND_LABEL = { pdf: "PDF", markdown: "MARKDOWN", text: "文本", ebook: "EPUB" };
+const KIND_CLASS = { pdf: "pdf", markdown: "md", text: "txt", ebook: "epub" };
 /* 主题名与文档类型名随语言切换，用函数取值避免缓存旧语言文案 */
 const themeLabel = (theme) => t(`status.theme.${theme}`);
 /**

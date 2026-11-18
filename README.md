@@ -2,9 +2,9 @@
 
 [English](README.en.md) · 简体中文
 
-> 把 PDF 论文、Markdown 笔记与随手下载的文本文件放进同一个安静的阅读空间。
+> 把 PDF 论文、EPUB 电子书、Markdown 笔记与随手下载的文本文件放进同一个安静的阅读空间。
 
-本地优先的桌面阅读器：Rust + Tauri 2 外壳、pdf.js 渲染 PDF、comrak 渲染 Markdown、encoding_rs 解码纯文本。无账号、无云同步、无遥测，所有文档与阅读记录都留在本机。
+本地优先的桌面阅读器：Rust + Tauri 2 外壳、pdf.js 渲染 PDF、foliate-js 排版电子书、comrak 渲染 Markdown、encoding_rs 解码纯文本。无账号、无云同步、无遥测，所有文档与阅读记录都留在本机。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-b23a2b.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24c8db.svg)](https://tauri.app)
@@ -17,8 +17,9 @@
 ## 功能
 
 - **PDF 阅读**：pdf.js 连续滚动渲染，叠加透明文本层支持选择复制；长文档按视口懒加载。
+- **EPUB 阅读**：foliate-js 负责解包与分页，目录取自书内 NAV/NCX，`←` `→` / 空格翻页；位置按 **CFI** 记录，换窗口尺寸、改字号都不会丢失（页码是排版算出来的，存不得）；书内脚本一律不执行（清掉脚本资源与内联脚本，CSP 再兜一层）；书名与作者读自 OPF 元数据。
 - **文本阅读**：`txt` / `log` / `csv` 与三十余种代码、配置扩展名直接打开；正文、等宽、表格三视图，行号与软换行可切；按 BOM + 探测自动识别编码，中文记事本存的 GBK 文本也不会乱码，判错了可在「信息」面板换成 GB18030 / Big5 / Shift_JIS 等重开并记住选择；代码类按扩展名语法高亮，超过 200KB 自动关掉并说明原因；CSV / TSV 按 RFC 4180 拆列，表头与行号列随滚动粘住；**超过 8MB 的日志按行索引 + 窗口加载**，100MB 也能打开、拖到底部，内存与文件大小无关。
-- **侧栏四视图**：文档大纲跳章节、缩略图定位、文件信息（编码 / 行数 / 换行符）、全文档关键词搜索与高亮。
+- **侧栏四视图**：文档大纲跳章节、缩略图定位、文件信息（编码 / 行数 / 换行符 / 章节数）、全文档关键词搜索与高亮。
 - **Markdown 阅读**：Rust 端 comrak 渲染 GFM（表格、任务列表、脚注、删除线、自动链接），标题自动生成目录锚点，代码块语法高亮。
 - **阅读排版**：纸白 / 夜读 / 护眼三套主题；正文字号 15 / 17 / 19 / 21px、行高 1.7 / 1.9 / 2.1、版心 620 / 720 / 820px；专注模式收起非正文元素。
 - **阅读进度**：页码、缩放与滚动位置自动保存，下次打开回到原处。
@@ -54,6 +55,7 @@
 | 应用外壳 | Tauri 2 | Rust 后端 + 系统 WebView，包体小、权限模型清晰 |
 | 前端 | 原生 HTML / CSS / ES Module | 无打包器、无构建步骤，启动即加载 |
 | PDF 渲染 | pdf.js | 画布渲染 + 文本层 + 搜索 |
+| 电子书 | foliate-js（MIT，固定提交） | EPUB 解包、流式分页、CFI、目录；目录即代码副本，见 `docs/ebook-vendor-foliate.md` |
 | Markdown | comrak | Rust 侧 GFM 解析，输出净化后的 HTML |
 | 文本编码 | encoding_rs + chardetng | Firefox 同源实现，BOM + 探测判定，GBK / GB18030 不乱码 |
 | 文本高亮 | highlight.js | 与 Markdown 代码块共用同一份离线构建与配色 |
@@ -77,6 +79,7 @@ yuejian/
 │   │   ├── i18n.js          # 中英文案字典与语言切换
 │   │   ├── update.js        # 更新桥接：查询 Release、下载、启动安装器
 │   │   ├── reader-pdf.js    # pdf.js 封装：渲染、翻页、缩放、搜索
+│   │   ├── reader-epub.js   # 电子书：挂载 foliate-view、事件桥接、CFI、脚本清洗
 │   │   ├── reader-md.js     # Markdown 渲染与目录滚动同步
 │   │   ├── reader-text.js   # 文本渲染：三视图、行号、软换行、语法高亮
 │   │   ├── reader-csv.js    # CSV / TSV：分隔符判定、RFC 4180 解析、表格 HTML
@@ -141,9 +144,9 @@ npm run dev      # 增量编译 debug 版并启动应用
 | `npm run dev` | 增量编译 debug 版并启动应用（前端为原生文件，改动后重新运行即可） |
 | `npm run build` | 编译 release 二进制但不生成安装包（`tauri build --no-bundle`） |
 | `npm run bundle` | 构建当前平台的安装包 |
-| `npm run vendor` | 同步前端离线资源到 `src/vendor`：pdf.js 取自 `node_modules`，highlight.js 下载官方浏览器构建 |
+| `npm run vendor` | 同步前端离线资源到 `src/vendor`：pdf.js 取自 `node_modules`，highlight.js 下载官方浏览器构建，foliate-js 按固定提交逐个文件拉取 |
 | `npm run check` | 静态检查全部前端模块，报出「调用了但没声明/没导入」的函数；有问题时退出码为 1 |
-| `npm run smoke` | 用本机 Chrome 无头跑真浏览器冒烟（打开 Markdown / PDF / 文本 / CSV、翻页、缩放、三视图切换、代码高亮、表格粘性表头、Ctrl+B），无未捕获异常才通过；未装 Chrome 时跳过 |
+| `npm run smoke` | 用本机 Chrome 无头跑真浏览器冒烟（打开 Markdown / PDF / EPUB / 文本 / CSV、翻页、缩放、三视图切换、代码高亮、表格粘性表头、Ctrl+B、CSP 生效），无未捕获异常才通过；未装 Chrome 时跳过 |
 | `npm run version:bump` | 手动递增版本号（默认 patch，可加 `--minor` / `--major` / `--set 1.2.3`） |
 | `npm run tauri -- <args>` | 透传任意 Tauri CLI 参数 |
 

@@ -4,6 +4,7 @@
  */
 import { invoke } from "../api.js";
 import { PdfReader } from "../reader-pdf.js";
+import { EbookReader, flattenToc } from "../reader-epub.js";
 import { renderMarkdown, setupScrollSpy } from "../reader-md.js";
 import { renderText, defaultTextView, applyTextView, scheduleHighlight } from "../reader-text.js";
 import { isWindowed, mountWindowed } from "../reader-bigtext.js";
@@ -55,7 +56,10 @@ async function openBook(id, pane = activePane(), { encoding } = {}) {
   const token = pane.loadToken;
 
   pane.pdfStack.style.display = book.kind === "pdf" ? "flex" : "none";
-  pane.mdDoc.style.display = book.kind === "pdf" ? "none" : "block";
+  pane.mdDoc.style.display = book.kind === "pdf" || book.kind === "ebook" ? "none" : "block";
+  // 电子书的排版由 foliate 接管：唯一能滚动的是它自己的分页器，
+  // 外层 scroll-area 一旦还能滚，翻页时就会连带把整块内容推出视口
+  pane.root.classList.toggle("is-ebook", book.kind === "ebook");
 
   if (wasActive) {
     setCtxTabActive("toc");
@@ -82,6 +86,7 @@ async function openBook(id, pane = activePane(), { encoding } = {}) {
   if (wasActive) state.doc = doc;
 
   if (doc.kind === "pdf") await openPdf(doc, pane);
+  else if (doc.kind === "ebook") await openEbook(doc, pane);
   else if (doc.kind === "text") openText(doc, pane);
   else openMarkdown(doc, pane);
 
@@ -120,6 +125,12 @@ function updateDocSub() {
         chars: doc?.chars ?? book.words ?? 0,
         size: formatBytes(book.size),
       });
+    return;
+  }
+  if (book.kind === "ebook") {
+    const pane = activePane();
+    const chapters = pane?.ebook?.chapters || pane?.ebookToc?.length || book.pages || 0;
+    sub.textContent = t("reader.docSubEbook", { chapters, size: formatBytes(book.size) });
     return;
   }
   sub.textContent = t("reader.docSubMd", { words: book.words || 0, size: formatBytes(book.size) });
@@ -222,6 +233,84 @@ function refreshTextView(pane = activePane(), { rerender = true } = {}) {
   if (rerender) requestAnimationFrame(() => scrollPaneToRatio(pane, ratio));
 }
 
+/* ---------------- 电子书 ---------------- */
+function ensureEbookReader(pane) {
+  if (pane.ebook) return pane.ebook;
+  pane.ebook = new EbookReader({
+    stack: pane.ebookStack,
+    onRelocate: (loc) => handleEbookRelocate(pane, loc),
+  });
+  return pane.ebook;
+}
+
+async function openEbook(doc, pane) {
+  const reader = ensureEbookReader(pane);
+  if (pane.index === activePaneIndex) {
+    state.ebookLabel = "";
+    state.ebookHref = "";
+    state.ebookFraction = 0;
+    renderToolbar();
+    renderCtx();
+    updateDocSub();
+  }
+
+  // 续读位置只认 CFI；ratio 是给书架进度条看的，跳不过去（比例反算章节会偏）
+  const cfi = pane.book?.progress?.cfi || "";
+  try {
+    await reader.open(doc.path, {
+      size: doc.size || 0,
+      cfi,
+      name: pane.book?.path?.split(/[\\/]/).pop() || "",
+    });
+    pane.ebookToc = flattenToc(reader.book?.toc);
+    // 书里的元数据比文件名可靠：书名、作者都在 OPF 里，书架当初只拿到了文件名
+    const meta = reader.book?.metadata;
+    if (meta?.title && pane.book) pane.book.title = String(meta.title);
+    if (meta?.author && pane.book && meta.author !== "本地文档") pane.book.author = String(meta.author);
+  } catch (error) {
+    pane.ebookStack.innerHTML = `<div class="pdf-error">${t("reader.ebookErrorTitle")}<br><small>${escapeHtml(error?.message || error)}</small></div>`;
+    pane.ebookStack.hidden = false;
+    toast(t("reader.ebookErrorToast"));
+  }
+
+  if (pane.index === activePaneIndex) {
+    renderToolbar();
+    renderCtx();
+    updateDocSub();
+    updateStatus();
+    updatePaneHeads();
+  }
+}
+
+/** 位置变化：写进度、更新状态栏与目录高亮，并按节流落盘 */
+function handleEbookRelocate(pane, loc) {
+  pane.ratio = loc.fraction;
+  pane.page = 0;
+  pane.ebookLabel = loc.label;
+  if (pane.book) {
+    pane.book.progress = { ratio: loc.fraction, page: 0, zoom: 1, cfi: loc.cfi };
+  }
+  updatePaneHeads();
+  if (pane.index !== activePaneIndex) return;
+
+  state.ebookLabel = loc.label;
+  state.ebookHref = loc.href;
+  state.ebookFraction = loc.fraction;
+  markTocActive();
+  updateDocSub();
+  updateStatus();
+  scheduleSave();
+  maybeSync(pane, { page: 0, ratio: loc.fraction });
+}
+
+/** 键盘与点击翻页：两栏各自翻自己那本 */
+function ebookStep(step) {
+  const pane = activePane();
+  if (!pane?.ebook) return;
+  if (step > 0) pane.ebook.next();
+  else pane.ebook.prev();
+}
+
 /* ---------------- PDF 阅读器 ---------------- */
 function ensurePdfReader(pane) {
   if (pane.reader) return pane.reader;
@@ -283,4 +372,4 @@ function handlePdfReady(pane, pages) {
   flushProgress();
 }
 
-export { openBook, updateDocSub, openPdf, openMarkdown, openText, refreshTextView, ensurePdfReader, handleZoomChange, handlePageChange, handlePdfReady };
+export { openBook, updateDocSub, openPdf, openMarkdown, openText, openEbook, ebookStep, refreshTextView, ensurePdfReader, handleZoomChange, handlePageChange, handlePdfReady };

@@ -41,7 +41,7 @@ const GLOBALS = new Set([
   "Event", "MouseEvent", "KeyboardEvent", "DragEvent", "DataTransfer", "FormData", "Blob", "File",
   "FileReader", "URL", "URLSearchParams", "AbortController", "IntersectionObserver",
   "ResizeObserver", "MutationObserver", "Worker", "Image", "Audio", "Element", "HTMLElement",
-  "Node", "DOMParser", "NodeFilter", "TextEncoder", "TextDecoder", "btoa", "atob", "performance",
+  "Node", "DOMParser", "XMLSerializer", "NodeFilter", "TextEncoder", "TextDecoder", "btoa", "atob", "performance",
   "crypto", "innerWidth", "innerHeight", "devicePixelRatio", "screen",
   // 类型化数组与其它内建构造器
   "Uint8Array", "Uint8ClampedArray", "Uint16Array", "Uint32Array", "Int8Array", "Int16Array",

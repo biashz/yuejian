@@ -10,7 +10,7 @@ import { activePane, splitMode, linkSync, setSplit, setLink, panes } from "../re
 import { setView, updateStatus } from "../view.js";
 import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, fitPdfPage, fitPdfWidth, renderToolbar } from "../reader/toolbar.js";
 import { setCtxOpen, switchCtxTab } from "../reader/ctx.js";
-import { refreshTextView, openBook } from "../reader/open.js";
+import { refreshTextView, openBook, ebookStep } from "../reader/open.js";
 import { scrollToLine } from "../reader-bigtext.js";
 import { presenting, presentEntering, enterPresent, exitPresent, presentStep, handlePresentWheel, schedulePresentPaint } from "../reader/present.js";
 import { applySettings, syncSettingsUI, persistSettings, toggleZen } from "../preferences.js";
@@ -90,6 +90,7 @@ export function bindReaderEvents() {
     const goto = event.target.closest("[data-goto]");
     if (goto) {
       if (goto.dataset.kind === "pdf") goPage(Number(goto.dataset.goto));
+      else if (goto.dataset.kind === "ebook") activePane()?.ebook?.goTo(goto.dataset.goto);
       else if (activePane()) scrollToHeading(activePane().scrollArea, goto.dataset.goto);
       return;
     }
@@ -138,6 +139,8 @@ export function bindReaderEvents() {
     const settings = state.settings;
     if (act === "prev") goPage(state.pdfPage - 1);
     if (act === "next") goPage(state.pdfPage + 1);
+    if (act === "ebook-prev") ebookStep(-1);
+    if (act === "ebook-next") ebookStep(1);
     if (act === "zoom-in") zoomByStep(1);
     if (act === "zoom-out") zoomByStep(-1);
     if (act === "zoom-menu") setZoomMenu(!zoomMenuOpen);

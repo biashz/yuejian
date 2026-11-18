@@ -32,6 +32,8 @@ function flushPaneProgress(pane) {
     page: book.progress.page || 0,
     zoom: book.progress.zoom || 1,
     pages: book.pages || 0,
+    // 电子书才有；PDF / Markdown 传空串，Rust 侧存成空表示「这本书没有 CFI」
+    cfi: book.progress.cfi || "",
   }).catch(() => {});
 }
 

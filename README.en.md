@@ -2,9 +2,9 @@
 
 English · [简体中文](README.md)
 
-> PDF papers, Markdown notes, and stray text files, in one quiet reading space.
+> PDF papers, EPUB ebooks, Markdown notes, and stray text files, in one quiet reading space.
 
-A local-first desktop reader: a Rust + Tauri 2 shell, PDF rendering with pdf.js, Markdown rendering with comrak, and plain-text decoding via encoding_rs. No account, no cloud sync, no telemetry — every document and reading record stays on your machine.
+A local-first desktop reader: a Rust + Tauri 2 shell, PDF rendering with pdf.js, EPUB pagination with foliate-js, Markdown rendering with comrak, and plain-text decoding via encoding_rs. No account, no cloud sync, no telemetry — every document and reading record stays on your machine.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-b23a2b.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24c8db.svg)](https://tauri.app)
@@ -17,6 +17,7 @@ A local-first desktop reader: a Rust + Tauri 2 shell, PDF rendering with pdf.js,
 ## Features
 
 - **PDF reading**: pdf.js renders a continuous scroll with a transparent text layer for selection and copy; long documents load lazily around the viewport.
+- **EPUB reading**: foliate-js unpacks and paginates; the table of contents comes from the book's own NAV/NCX; `←` `→` and Space turn pages. Position is stored as a **CFI**, so resizing the window never loses your place (page numbers are derived from layout and cannot be persisted). Scripts inside books never run — script items and inline handlers are stripped, with the CSP as a second line of defence. Title and author are read from the OPF metadata.
 - **Three sidebar views**: jump by document outline, locate by thumbnail, or search and highlight keywords across the whole document.
 - **Text reading**: open `txt` / `log` / `csv` plus thirty-odd code and config extensions; prose, monospace, and table views, with line numbers and soft wrap; encoding resolved by BOM plus detection, so GBK files saved by Chinese Notepad do not turn into mojibake — and if detection gets it wrong, the info panel lets you re-open as GB18030 / Big5 / Shift_JIS and remembers the choice; code files are syntax-highlighted by extension, with highlighting switched off (and explained) above 200 KB; CSV / TSV are split per RFC 4180 with a sticky header and row-number column; **files over 8 MB load through a line index and a render window**, so a 100 MB log opens, scrolls to the end, and uses memory independent of file size.
 - **Markdown reading**: comrak renders GFM on the Rust side (tables, task lists, footnotes, strikethrough, autolinks); headings get automatic outline anchors and code blocks are syntax-highlighted.
@@ -53,6 +54,7 @@ Notes:
 | App shell | Tauri 2 | Rust backend + system WebView; small bundle, clear permission model |
 | Frontend | Vanilla HTML / CSS / ES Modules | No bundler, no build step; loads as-is at startup |
 | PDF rendering | pdf.js | Canvas rendering + text layer + search |
+| Ebooks | foliate-js (MIT, pinned commit) | EPUB unpacking, reflowable pagination, CFI, TOC; vendored source, see `docs/ebook-vendor-foliate.md` |
 | Markdown | comrak | GFM parsing on the Rust side, sanitized HTML output |
 | Text encoding | encoding_rs + chardetng | The implementations Firefox uses; BOM plus detection, GBK / GB18030 safe |
 | Text highlighting | highlight.js | Same offline build and palette as Markdown code blocks |
@@ -76,6 +78,7 @@ yuejian/
 │   │   ├── i18n.js          # Chinese/English dictionaries and language switching
 │   │   ├── update.js        # Update check, download progress, install hand-off
 │   │   ├── reader-pdf.js    # pdf.js wrapper: rendering, paging, zoom, search
+│   │   ├── reader-epub.js   # Ebooks: mount foliate-view, event bridge, CFI, script stripping
 │   │   ├── reader-md.js     # Markdown rendering and outline scroll sync
 │   │   ├── reader-text.js   # Text rendering: views, line numbers, soft wrap, highlighting
 │   │   ├── reader-csv.js    # CSV / TSV: delimiter detection, RFC 4180 parsing, table HTML
@@ -121,7 +124,7 @@ In debug builds the data directory is `.data/` at the project root, so `src-taur
 | `npm run dev` | Incremental debug build and launch (the frontend is plain files — just rerun after edits) |
 | `npm run build` | Compile a release binary without an installer (`tauri build --no-bundle`) |
 | `npm run bundle` | Build an installer for the current platform |
-| `npm run vendor` | Sync offline frontend assets into `src/vendor`: pdf.js from `node_modules`, highlight.js from the official browser build |
+| `npm run vendor` | Sync offline frontend assets into `src/vendor`: pdf.js from `node_modules`, highlight.js from the official browser build, foliate-js fetched file-by-file at a pinned commit |
 | `npm run version:bump` | Bump the version manually (patch by default; supports `--minor` / `--major` / `--set 1.2.3`) |
 | `npm run tauri -- <args>` | Pass any arguments through to the Tauri CLI |
 

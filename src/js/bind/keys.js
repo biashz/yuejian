@@ -13,6 +13,7 @@ import { presenting, enterPresent, exitPresent, presentStep } from "../reader/pr
 import { importDocuments } from "../actions.js";
 import { openPalette, closePalette, paletteItems, renderPalette, runPalette } from "../palette.js";
 import { flushProgress } from "../reader/progress.js";
+import { ebookStep } from "../reader/open.js";
 
 export function bindKeyEvents() {
   // 键盘
@@ -84,6 +85,16 @@ export function bindKeyEvents() {
     if (event.key === "ArrowLeft" && state.current?.kind === "pdf") {
       event.preventDefault();
       goPage(state.pdfPage - 1);
+    }
+    // 电子书：←/→ 与空格翻页。页码是排版算出来的，所以只认「上一页 / 下一页」
+    if (state.current?.kind === "ebook") {
+      const nextKey = ["ArrowRight", "ArrowDown", "PageDown", " "].includes(event.key);
+      const prevKey = ["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(event.key);
+      if (nextKey || prevKey) {
+        event.preventDefault();
+        ebookStep(nextKey ? 1 : -1);
+        return;
+      }
     }
     // 缩放：Ctrl +/- 按档位步进，Ctrl+0 回到 100%；不带修饰键的 +/- 同样可用
     if (modifier && (event.key === "+" || event.key === "=" || event.key === "-")) {

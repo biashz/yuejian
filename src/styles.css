@@ -539,6 +539,7 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .type-dot.pdf { background: var(--accent); }
 .type-dot.md { background: var(--ok); }
 .type-dot.txt { background: var(--cat-indigo); }
+.type-dot.epub { background: var(--cat-plum); }
 .progress-line {
   position: relative;
   height: 2px; margin-top: 6px;
@@ -933,6 +934,24 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .textLayer ::selection {
   background: color-mix(in srgb, var(--accent) 26%, transparent);
   color: transparent;
+}
+
+/* 电子书（foliate 分页器） */
+/* 分页器自己算页：外层一旦还能滚动，翻页时会把整块内容连带推出视口。
+   所以电子书模式下 scroll-area 只当画布用 */
+.reader-pane.is-ebook .scroll-area { overflow: hidden; }
+.ebook-stack {
+  position: absolute; inset: 0;
+  background: var(--paper);
+}
+.ebook-stack[hidden] { display: none; }
+.ebook-view {
+  display: block;
+  width: 100%; height: 100%;
+}
+.ebook-pct {
+  min-width: 42px; text-align: center;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
 
 /* Markdown */

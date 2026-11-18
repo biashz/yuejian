@@ -13,11 +13,18 @@ pub struct Progress {
     pub ratio: f64,
     pub page: u32,
     pub zoom: f64,
+    /// 电子书的 EPUB CFI（形如 `epubcfi(/6/14!/4/2/2)`）。
+    ///
+    /// 电子书是流式排版：页码由视口算出来，窗口一变「第 87 页」就是另一段文字了，
+    /// 所以位置只能记成 CFI——它指向 DOM 节点偏移，与排版无关。
+    /// `ratio` 仍然写，供书架进度条使用（那里没有排版，也用不到 CFI）。
+    #[serde(default)]
+    pub cfi: String,
 }
 
 impl Default for Progress {
     fn default() -> Self {
-        Self { ratio: 0.0, page: 1, zoom: 1.0 }
+        Self { ratio: 0.0, page: 1, zoom: 1.0, cfi: String::new() }
     }
 }
 
