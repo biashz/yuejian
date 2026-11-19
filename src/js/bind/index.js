@@ -8,6 +8,7 @@ import { bindReaderEvents } from "./reader.js";
 import { bindPanelEvents } from "./panels.js";
 import { bindKeyEvents } from "./keys.js";
 import { bindCategoryEvents } from "./category.js";
+import { bindBookDrag } from "./book-drag.js";
 
 export function bind() {
   bindShelfEvents();
@@ -15,4 +16,6 @@ export function bind() {
   bindPanelEvents();
   bindKeyEvents();
   bindCategoryEvents();
+  // 拖拽归类要排在最后：它靠捕获阶段吃掉拖完那一次 click，别抢在别人前面
+  bindBookDrag();
 }

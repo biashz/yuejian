@@ -481,6 +481,24 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .book-row.is-selected { background: var(--accent-weak); }
 .book-card.is-selected .cover { box-shadow: 0 0 0 2px var(--accent); }
 .book-row.is-dragging, .book-card.is-dragging { opacity: 0.4; }
+
+/* 拖拽归类：跟着指针走的一枚小签（指针事件版，见 bind/book-drag.js） */
+.book-ghost {
+  position: fixed; left: 0; top: 0; z-index: 74;
+  max-width: 220px; padding: 6px 10px;
+  font-size: 11.5px; line-height: 1.4; color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+  will-change: transform;
+}
+body.is-book-dragging { cursor: grabbing; user-select: none; }
+body.is-book-dragging .book-row,
+body.is-book-dragging .book-card { cursor: grabbing; }
 .book-row, .book-card { cursor: grab; }
 .book-row:active, .book-card:active { cursor: grabbing; }
 

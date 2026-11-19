@@ -31,7 +31,14 @@ function nextCategoryColor() {
 /** 文档是否通过当前分类筛选：categoryId 为 null 表示不按分类过滤 */
 const matchCategory = (book) => state.categoryId === null || book.categoryId === state.categoryId;
 
+/**
+ * 落点的 data-cat 换算成后端用的分类 id：
+ * `__none`（未分类）与 `__all`（全部）都表示「不属于任何分类」，也就是空串。
+ * 批量归类的下拉与拖拽归类共用这一条，别各写一份。
+ */
+const targetCategoryId = (value) => (value === "__none" || value === "__all" ? "" : value);
+
 export {
   sortedCategories, categoryById, countInCategory, uncategorizedCount,
-  nextCategoryColor, matchCategory,
+  nextCategoryColor, matchCategory, targetCategoryId,
 };

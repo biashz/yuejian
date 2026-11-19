@@ -78,7 +78,7 @@ function renderBookList(books) {
   }
   list.innerHTML = books.map((book) => `
     <div class="book-row ${book.id === state.currentId ? "is-current" : ""} ${state.selected.has(book.id) ? "is-selected" : ""}"
-      data-book="${book.id}" role="button" tabindex="0" draggable="true">
+      data-book="${book.id}" role="button" tabindex="0">
       <div class="mini-cover tint-${tintOf(book.id)}"><span>${escapeHtml(book.title.slice(0, 1))}</span></div>
       <div class="book-row-main">
         <div class="book-row-title">${escapeHtml(book.title)}</div>
@@ -106,7 +106,7 @@ function renderGrid(books) {
     const category = book.categoryId ? categoryById(book.categoryId) : null;
     return `
     <div class="book-card ${state.selected.has(book.id) ? "is-selected" : ""}" data-book="${book.id}"
-      tabindex="0" draggable="true" style="animation-delay:${140 + index * 40}ms">
+      tabindex="0" style="animation-delay:${140 + index * 40}ms">
       <div class="cover tint-${tintOf(book.id)}">
         <div class="cover-inner">
           <span class="cover-kind">${kindLabel(book.kind, book)}</span>

@@ -228,6 +228,8 @@ function stubSource() {
       size: 20500000, pages: 0, words: 0, addedAt: now - 2500, lastOpenedAt: now - 700, favorite: false,
       categoryId: "", encoding: "", progress: { ratio: 0, page: 1, zoom: 1 } },
   ];
+  const CATEGORIES = [{ id: "c-1", name: "论文", color: "clay", createdAt: 1 }];
+
   const SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true,
     zen: false, split: false, linkSync: true, language: "zh", autoCheckUpdate: false, ebookSpread: true,
     ebookFontSize: 18, ebookLineHeight: 1.8, ebookMargin: 48,
@@ -245,7 +247,14 @@ function stubSource() {
           return Promise.resolve(null);
         }
         if (command === "get_library") return Promise.resolve(clone(BOOKS));
-        if (command === "get_categories") return Promise.resolve([]);
+        if (command === "get_categories") return Promise.resolve(clone(CATEGORIES));
+        // 拖拽 / 批量归类：记下最后一次的参数，并把书挪到目标分类
+        if (command === "assign_category") {
+          window.__assigned = { ids: args.ids, categoryId: args.categoryId };
+          const moved = new Set(args.ids);
+          return Promise.resolve(clone(BOOKS.map((book) =>
+            (moved.has(book.id) ? { ...book, categoryId: args.categoryId } : book))));
+        }
         if (command === "app_version") return Promise.resolve("0.0.0-smoke");
         if (command === "open_book") {
           window.__encCalls.push(args.encoding === undefined ? null : args.encoding);
@@ -383,6 +392,24 @@ async function evaluate(ws, expression, contextId) {
   });
   if (reply.exceptionDetails) throw new Error(`求值失败：${reply.exceptionDetails.text}`);
   return reply.result?.value;
+}
+
+/** 用真实鼠标事件走一遍拖拽：按下 → 分几步移动 → 松开（Chromium 会据此合成 pointer 事件） */
+async function dragPointer(ws, from, to, onMidway) {
+  const point = (type, x, y, extra) => send(ws, "Input.dispatchMouseEvent",
+    { type, x, y, ...extra });
+  await point("mouseMoved", from.x, from.y, { button: "none", buttons: 0 });
+  await point("mousePressed", from.x, from.y, { button: "left", buttons: 1, clickCount: 1 });
+  await sleep(30);
+  for (let i = 1; i <= 6; i += 1) {
+    const x = Math.round(from.x + ((to.x - from.x) * i) / 6);
+    const y = Math.round(from.y + ((to.y - from.y) * i) / 6);
+    await point("mouseMoved", x, y, { button: "left", buttons: 1 });
+    await sleep(25);
+  }
+  if (onMidway) await onMidway();
+  await point("mouseReleased", to.x, to.y, { button: "left", buttons: 0, clickCount: 1 });
+  await sleep(140);
 }
 
 /**
@@ -608,6 +635,39 @@ async function main() {
       renderLibrary();
     })()`);
     await sleep(180);
+
+    /* --- 拖拽归类：HTML5 拖放在真机上时灵时不灵，改走指针事件（bind/book-drag.js） --- */
+    const dragPoints = await evaluate(ws, `(() => {
+      // 取第一条可见的行：按最近打开排序，别的行可能在滚动区外面
+      const row = document.querySelector("#bookList .book-row");
+      const cat = document.querySelector('.cat-row[data-cat="c-1"]');
+      if (!row || !cat) return null;
+      const a = row.getBoundingClientRect(), b = cat.getBoundingClientRect();
+      return { book: row.dataset.book,
+        from: { x: Math.round(a.left + a.width / 2), y: Math.round(a.top + a.height / 2) },
+        to: { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) } };
+    })()`);
+    let midway = { ghost: "", drop: 0 };
+    if (dragPoints) {
+      await dragPointer(ws, dragPoints.from, dragPoints.to, async () => {
+        midway = await evaluate(ws, `({
+          ghost: document.querySelector(".book-ghost")?.textContent || "",
+          drop: document.querySelectorAll(".cat-row.is-drop").length })`);
+      });
+    }
+    const afterDrag = await evaluate(ws, `({ assigned: window.__assigned || null,
+      ghostLeft: document.querySelectorAll(".book-ghost").length,
+      dropLeft: document.querySelectorAll(".cat-row.is-drop").length,
+      dragging: document.querySelectorAll(".is-dragging").length })`);
+    check("把文档拖到分类行上就归类（指针事件版）",
+      Boolean(dragPoints) && midway.ghost.length > 0 && midway.drop === 1
+        && afterDrag.assigned?.ids?.length === 1
+        && afterDrag.assigned.ids[0] === dragPoints?.book && afterDrag.assigned.categoryId === "c-1"
+        && afterDrag.ghostLeft === 0 && afterDrag.dropLeft === 0 && afterDrag.dragging === 0,
+      `拖「${midway.ghost}」，途中高亮 ${midway.drop} 行，归类 ${JSON.stringify(afterDrag.assigned)}；` +
+      `收尾残留 ghost ${afterDrag.ghostLeft} / 高亮 ${afterDrag.dropLeft} / 拖动态 ${afterDrag.dragging}`);
+    // 拖完那一次 click 会被吃掉，补一个空点击把标记用掉，免得影响后面的点击
+    await evaluate(ws, `document.body.click()`);
 
     // CSP：既确认策略按 tauri.conf.json 下发，也确认它真的生效（内联脚本被拦）
     const sentCsp = await fetch(`${origin}/`).then((res) => res.headers.get("content-security-policy"));
