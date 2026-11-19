@@ -230,10 +230,15 @@ function stubSource() {
   ];
   const CATEGORIES = [{ id: "c-1", name: "论文", color: "clay", createdAt: 1 }];
 
+  // 与 Rust 侧 Settings::default 一致：新装的机器读出来就是这一份，
+  // 版式面板因此第一眼落在「舒适中文」预设上
   const SETTINGS = { theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720, showCtx: true,
     zen: false, split: false, linkSync: true, language: "zh", autoCheckUpdate: false, ebookSpread: true,
-    ebookFontSize: 18, ebookLineHeight: 1.8, ebookMargin: 48,
-    ebookFamily: "serif", ebookAlign: "justify", ebookOverride: false };
+    ebookFontSize: 19, ebookLineHeight: 1.85, ebookMargin: 56,
+    ebookFamily: "serif", ebookAlign: "justify", ebookOverride: false,
+    ebookLetterSpacing: 0.25, ebookIndent: 2, ebookParaSpacing: 0,
+    ebookMeasure: 660, ebookGap: 8, ebookHyphenate: false, ebookPunctuate: true,
+    ebookOverrideColor: null };
   const HTML = ${JSON.stringify(MD_HTML)};
 
   window.__TAURI__ = {
@@ -1559,7 +1564,7 @@ async function main() {
       reopened.cfi === beforeReopen.cfi || reopened.label === beforeReopen.label,
       `期望「${beforeReopen.label}」，实际「${reopened.label}」`);
 
-    /* --- 电子书阅读设置：六项都要即时落到章节文档上，而不是等下次打开 --- */
+    /* --- 版式面板：电子书的版式全在这一块调，与通用设置彻底分开 --- */
     frameCtx = await blobFrameContext(ws);
     // 书自带 style.css（serif / 16px 底色 #fff / 左对齐 / 行高 1.5），
     // 所以「设置胜出」这件事才有对象可比
@@ -1568,39 +1573,43 @@ async function main() {
       const body = getComputedStyle(document.body);
       const p = document.querySelector("p");
       const ps = p ? getComputedStyle(p) : null;
+      const css = [...document.head.querySelectorAll("style")].map((el) => el.textContent).join("\\n");
       return { htmlSize: parseFloat(html.fontSize), bodySize: parseFloat(body.fontSize),
         ratio: parseFloat(body.lineHeight) / parseFloat(body.fontSize),
         family: body.fontFamily, align: body.textAlign, pAlign: ps ? ps.textAlign : "",
-        color: body.color, bg: body.backgroundColor };
+        letter: body.letterSpacing, indent: ps ? ps.textIndent : "",
+        color: body.color, bg: body.backgroundColor, css };
     })()`;
     const baseTypo = await evaluate(ws, typoOf, frameCtx);
-    check("默认版式已是偏好的值（18px / 1.8 / 宋体 / 两端对齐）",
-      Math.round(baseTypo.htmlSize) === 18 && Math.round(baseTypo.bodySize) === 18
-        && Math.abs(baseTypo.ratio - 1.8) < 0.02 && /SimSun|Songti/i.test(baseTypo.family) && baseTypo.pAlign === "justify",
-      `${baseTypo.bodySize}px / ${baseTypo.ratio.toFixed(2)} / ${baseTypo.family.slice(0, 24)} / ${baseTypo.pAlign}`);
+    check("默认版式就是「舒适中文」预设（19px / 1.85 / 0.25 字距 / 首行缩进 2em）",
+      Math.round(baseTypo.htmlSize) === 19 && Math.abs(baseTypo.ratio - 1.85) < 0.02
+        && /SimSun|Songti/i.test(baseTypo.family) && baseTypo.pAlign === "justify"
+        && Math.abs(parseFloat(baseTypo.letter) - 0.25) < 0.01
+        && Math.abs(parseFloat(baseTypo.indent) - 38) < 1.5,
+      `${baseTypo.bodySize}px / ${baseTypo.ratio.toFixed(2)} / 字距 ${baseTypo.letter} / 缩进 ${baseTypo.indent}`);
 
-    const panel = await evaluate(ws, `(async () => {
-      const prefs = await import("/js/preferences.js");
-      prefs.openSettings();
-      const group = [...document.querySelectorAll("#settingsOverlay .setting-group")]
-        .find((el) => el.querySelector("#ebookSizeSeg"));
+    // 通用设置里那组旧控件必须已经下线：两个入口同时存在，用户不知道改哪个才对
+    const legacy = await evaluate(ws, `(async () => {
+      (await import("/js/preferences.js")).openSettings();
       const ids = ["#ebookSizeSeg", "#ebookLhSeg", "#ebookMarginSeg", "#ebookFamilySeg", "#ebookAlignSeg", "#switchEbookOverride"];
+      const alive = ids.filter((id) => document.querySelector(id));
+      const group = [...document.querySelectorAll("#settingsOverlay .setting-group")]
+        .find((el) => el.querySelector("h3")?.dataset.i18n === "settings.ebook");
+      const note = group?.querySelector(".setting-note")?.dataset.i18n || "";
       const sheet = document.querySelector("#settingsOverlay .sheet");
       const body = sheet.querySelector(".sheet-body");
       const foot = sheet.querySelector(".sheet-foot");
-      return { title: group?.querySelector("h3")?.textContent || "",
-        on: ids.filter((id) => group?.querySelector(id)).length,
-        sheetH: Math.round(sheet.getBoundingClientRect().height),
-        winH: window.innerHeight,
-        footInside: foot.getBoundingClientRect().bottom <= window.innerHeight + 1,
+      const sheetH = Math.round(sheet.getBoundingClientRect().height);
+      return { alive, note, sheetH, winH: innerHeight,
+        footInside: foot.getBoundingClientRect().bottom <= innerHeight + 1,
         scrolls: body.scrollHeight > body.clientHeight + 1 };
     })()`);
-    check("设置面板有「电子书」分组与六项设置",
-      panel.on === 6 && panel.title === "电子书", `${panel.title} · ${panel.on}/6`);
-    // 多了第六组之后面板明显变长：正文要能自己滚，而「完成」按钮必须还在窗口里
-    check("面板变长后仍整屏收住（正文滚动、按钮可见）",
-      panel.footInside && panel.scrolls && panel.sheetH <= panel.winH + 1,
-      `面板 ${panel.sheetH}px / 窗口 ${panel.winH}px，按钮在窗口内 ${panel.footInside}，正文可滚 ${panel.scrolls}`);
+    check("通用设置里的旧电子书控件已下线，只留一行指路",
+      legacy.alive.length === 0 && legacy.note === "settings.ebookMoved",
+      `残留 ${legacy.alive.join(",") || "无"} · 指路 ${legacy.note || "缺失"}`);
+    check("设置面板仍整屏收住（正文滚动、底栏可见）",
+      legacy.footInside && legacy.scrolls && legacy.sheetH <= legacy.winH + 1,
+      `面板 ${legacy.sheetH}px / 窗口 ${legacy.winH}px，底栏在窗口内 ${legacy.footInside}，正文可滚 ${legacy.scrolls}`);
 
     // 窗口压到 420 高再验一遍：面板必须整块收在窗口里，正文滚到底、底栏永远看得见。
     // 早先 `.sheet` 用 `height: 100%`，网格项目的百分比高度会退化成 auto，
@@ -1623,90 +1632,233 @@ async function main() {
         moved: body.scrollTop > before,
         lastInside: last.getBoundingClientRect().bottom <= body.getBoundingClientRect().bottom + 1 };
     })()`);
-    check("窗口压到 420 高时面板仍收在窗口内，正文能滚到底",
+    check("窗口压到 420 高时设置面板仍收在窗口内，正文能滚到底",
       shortPanel.sheetBottom <= shortPanel.winH + 1 && shortPanel.footBottom <= shortPanel.winH + 1
         && shortPanel.scrolls && shortPanel.moved && shortPanel.lastInside,
       `面板底 ${shortPanel.sheetBottom} / 窗口 ${shortPanel.winH}，底栏底 ${shortPanel.footBottom}，` +
       `可滚 ${shortPanel.scrolls}，滚到底 ${shortPanel.moved}，末组可见 ${shortPanel.lastInside}`);
     await send(ws, "Emulation.clearDeviceMetricsOverride");
     await sleep(250);
+    await evaluate(ws, `(async () => { (await import("/js/preferences.js")).closeSettings(); })()`);
 
-    await evaluate(ws, `(() => {
-      document.querySelector('#ebookSizeSeg [data-esize="22"]').click();
-      document.querySelector('#ebookLhSeg [data-elh="2.1"]').click();
-      document.querySelector('#ebookFamilySeg [data-efamily="kai"]').click();
-      document.querySelector('#ebookAlignSeg [data-ealign="left"]').click();
-      document.querySelector('#ebookMarginSeg [data-emargin="72"]').click();
-      return true;
+    /* --- 打开版式面板：从工具栏的 Aa 进，且它要靠挤窄阅读区来腾位置 --- */
+    const beforeOpen = await evaluate(ws, `Math.round(document.querySelector(".reader-panes").getBoundingClientRect().width)`);
+    await evaluate(ws, `document.querySelector('[data-act="ebook-layout"]').click()`);
+    await sleep(500);
+    const opened = await evaluate(ws, `(() => {
+      const panel = document.querySelector("#layoutPanel");
+      const body = panel.querySelector(".lp-body");
+      const foot = panel.querySelector(".lp-foot");
+      const chip = panel.querySelector(".lp-chip.is-on");
+      return { open: !panel.classList.contains("is-hidden"),
+        width: Math.round(panel.getBoundingClientRect().width),
+        panes: Math.round(document.querySelector(".reader-panes").getBoundingClientRect().width),
+        preset: chip?.dataset.preset || "",
+        custom: !panel.querySelector("#lpCustom").hidden,
+        title: panel.querySelector("h2").textContent,
+        scrolls: body.scrollHeight > body.clientHeight + 1,
+        footInside: foot.getBoundingClientRect().bottom <= innerHeight + 1 };
     })()`);
-    await sleep(1200);
+    check("工具栏 Aa 打开版式面板，默认高亮「舒适中文」",
+      opened.open && opened.title === "版式" && opened.preset === "comfort" && !opened.custom,
+      `开 ${opened.open} · 标题 ${opened.title} · 预设 ${opened.preset || "无"} · 自定义 ${opened.custom}`);
+    // 面板是挤窄阅读区，不是浮在上面：正文因此会真的重排，这才叫所见即所得
+    check("面板参与布局（阅读区正好少了面板那 332px）",
+      beforeOpen - opened.panes === opened.width && opened.width === 332,
+      `开之前 ${beforeOpen}px，开之后 ${opened.panes}px，面板 ${opened.width}px`);
+    check("面板正文自己滚、底栏留在屏内",
+      opened.scrolls && opened.footInside,
+      `可滚 ${opened.scrolls}，底栏在窗口内 ${opened.footInside}`);
+
+    // 带副标题的行（版心宽度那行有「纸的最大宽度」）不能把自己的小字裁掉：
+    // 行是 flex + min-height，最容易出现的塌陷就是第二行文字溢出行框
+    const labelFit = await evaluate(ws, `(() => {
+      const row = [...document.querySelectorAll("#layoutPanel .lp-row")].find((r) => r.querySelector("small"));
+      const small = row.querySelector("small");
+      const outer = row.getBoundingClientRect();
+      const inner = small.getBoundingClientRect();
+      return { gap: Math.round((outer.bottom - inner.bottom) * 10) / 10,
+        height: Math.round(outer.height), text: small.textContent };
+    })()`);
+    check("带副标题的行不会把自己的小字裁掉",
+      labelFit.gap >= 0 && labelFit.height >= 30,
+      `「${labelFit.text}」距行底 ${labelFit.gap}px，行高 ${labelFit.height}px`);
+
+    // 滑杆的填充与数值必须对得上：填充是按 (值-下限)/(上限-下限) 算的，
+    // 算错就会出现「数值 0、滑块却贴在最左」这种自相矛盾的界面
+    const sliderFill = await evaluate(ws, `(() => {
+      const input = document.querySelector("#layoutPanel [data-range='letter']");
+      return { value: input.value, fill: input.style.getPropertyValue("--_fill") };
+    })()`);
+    check("滑杆填充与数值一致（0 在 [-0.5, 2] 的五分之一处）",
+      Number(sliderFill.value) === 0.25 && sliderFill.fill === "30%",
+      `值 ${sliderFill.value} · 填充 ${sliderFill.fill || "未设置"}`);
+
+    /* --- 窄窗口：面板退回抽屉 + 遮罩，不再挤占阅读区 --- */
+    await send(ws, "Emulation.setDeviceMetricsOverride",
+      { width: 900, height: 780, deviceScaleFactor: 1, mobile: false });
+    await sleep(400);
+    const narrow = await evaluate(ws, `(() => {
+      const panel = document.querySelector("#layoutPanel");
+      const scrim = document.querySelector("#layoutScrim");
+      const style = getComputedStyle(panel);
+      const scrimStyle = getComputedStyle(scrim);
+      return { position: style.position, width: Math.round(panel.getBoundingClientRect().width),
+        scrimOn: scrim.classList.contains("is-on"), scrimShown: scrimStyle.display !== "none",
+        scrimOpacity: Number(scrimStyle.opacity),
+        right: Math.round(innerWidth - panel.getBoundingClientRect().right) };
+    })()`);
+    check("窄窗口下面板浮成右侧抽屉并压一层遮罩",
+      narrow.position === "absolute" && narrow.right <= 1 && narrow.width <= 332
+        && narrow.scrimShown && narrow.scrimOn && narrow.scrimOpacity > 0.5,
+      `${narrow.position} · 宽 ${narrow.width} · 贴右 ${narrow.right}px · 遮罩显示 ${narrow.scrimShown}/${narrow.scrimOpacity}`);
+    // 点遮罩就收起来
+    await evaluate(ws, `document.querySelector("#layoutScrim").click()`);
+    await sleep(300);
+    const closedByScrim = await evaluate(ws, `document.querySelector("#layoutPanel").classList.contains("is-hidden")`);
+    check("点遮罩收起面板", closedByScrim === true, String(closedByScrim));
+    await evaluate(ws, `document.querySelector('[data-act="ebook-layout"]').click()`);
+    await send(ws, "Emulation.clearDeviceMetricsOverride");
+    await sleep(400);
+
+    /* --- 预设：整组回填 + 反推出「自定义」 --- */
+    await evaluate(ws, `document.querySelector('#layoutPanel [data-preset="latin"]').click()`);
+    await sleep(900);
     frameCtx = await blobFrameContext(ws);
-    const nextTypo = await evaluate(ws, typoOf, frameCtx);
-    check("字号 / 行高 / 字体 / 对齐即时生效（压过书内样式表）",
-      Math.round(nextTypo.htmlSize) === 22 && Math.round(nextTypo.bodySize) === 22
-        && Math.abs(nextTypo.ratio - 2.1) < 0.02 && /KaiTi|Kaiti/i.test(nextTypo.family)
-        && nextTypo.pAlign === "left",
-      `${nextTypo.bodySize}px / ${nextTypo.ratio.toFixed(2)} / ${nextTypo.family.slice(0, 24)} / ${nextTypo.pAlign}`);
-
-    // 高亮跟着值走：`syncSettingsUI` 靠比较按钮上的 dataset，写错字段就会出现
-    // 「点了 22、亮的却是 20」这种只在界面上才看得见的偏差
-    const marks = await evaluate(ws, `(() => {
-      const on = (sel) => [...document.querySelectorAll(sel + " button.is-on")]
-        .map((button) => button.dataset[Object.keys(button.dataset)[0]]);
-      return { size: on("#ebookSizeSeg"), lh: on("#ebookLhSeg"), margin: on("#ebookMarginSeg"),
-        family: on("#ebookFamilySeg"), align: on("#ebookAlignSeg"),
-        override: document.querySelector("#switchEbookOverride").classList.contains("is-on") };
+    const latinTypo = await evaluate(ws, typoOf, frameCtx);
+    const latinPanel = await evaluate(ws, `(() => {
+      const panel = document.querySelector("#layoutPanel");
+      const on = (sel) => panel.querySelector(sel + " .is-on")?.dataset[
+        Object.keys(panel.querySelector(sel + " .is-on")?.dataset || {})[0]] || "";
+      return { preset: panel.querySelector(".lp-chip.is-on")?.dataset.preset || "",
+        custom: !panel.querySelector("#lpCustom").hidden,
+        family: on("#lpFamily"), align: on("#lpAlign"), brk: on("#lpBreak"),
+        size: panel.querySelector("[data-val='size']").textContent };
     })()`);
-    const picked = [marks.size.join(), marks.lh.join(), marks.margin.join(), marks.family.join(), marks.align.join()];
-    check("分段按钮的高亮跟着值走（各亮一个且是对的）",
-      JSON.stringify(picked) === JSON.stringify(["22", "2.1", "72", "kai", "left"]) && marks.override === false,
-      `${picked.join(" / ")}，覆盖 ${marks.override}`);
+    check("点「西文衬线」整组回填（左对齐 + 连字符开 + 标点挤压关）",
+      latinPanel.preset === "latin" && !latinPanel.custom && latinPanel.align === "left"
+        && latinPanel.brk === "space" && latinPanel.size === "17" && latinTypo.pAlign === "left",
+      `预设 ${latinPanel.preset} · 对齐 ${latinPanel.align} · 分段 ${latinPanel.brk} · 字号 ${latinPanel.size} · 书内 ${latinTypo.pAlign}`);
 
-    const marginApplied = await evaluate(ws, `(async () => {
+    await evaluate(ws, `document.querySelector('#layoutPanel [data-step="1"]').click()`);
+    await sleep(300);
+    const custom = await evaluate(ws, `(() => {
+      const panel = document.querySelector("#layoutPanel");
+      return { preset: panel.querySelector(".lp-chip.is-on")?.dataset.preset || "",
+        custom: !panel.querySelector("#lpCustom").hidden,
+        size: panel.querySelector("[data-val='size']").textContent };
+    })()`);
+    check("手改一项就变成「自定义」，不再挂着旧预设",
+      custom.preset === "" && custom.custom && custom.size === "18",
+      `预设 ${custom.preset || "无"} · 自定义可见 ${custom.custom} · 字号 ${custom.size}`);
+
+    /* --- 缩进与段距互斥 --- */
+    const breakModes = await evaluate(ws, `(() => {
+      const panel = document.querySelector("#layoutPanel");
+      const p = () => getComputedStyle(document.querySelector(".ebook-stack") || document.body);
+      panel.querySelector('[data-break="indent"]').click();
+      const indent = { wrapHidden: panel.querySelector("#lpParaWrap").hidden,
+        val: panel.querySelector("[data-val='para']").textContent };
+      panel.querySelector('[data-break="space"]').click();
+      const space = { wrapHidden: panel.querySelector("#lpParaWrap").hidden,
+        val: panel.querySelector("[data-val='para']").textContent };
+      panel.querySelector('[data-break="none"]').click();
+      const none = { wrapHidden: panel.querySelector("#lpParaWrap").hidden };
+      return { indent, space, none };
+    })()`);
+    check("分段方式三选一，段距滑杆只在「段间距」下露出来",
+      breakModes.indent.wrapHidden && !breakModes.space.wrapHidden
+        && Number(breakModes.space.val) > 0 && breakModes.none.wrapHidden,
+      `缩进 ${breakModes.indent.wrapHidden ? "藏" : "露"} · 段距 ${breakModes.space.wrapHidden ? "藏" : `露(${breakModes.space.val})`} · 无 ${breakModes.none.wrapHidden ? "藏" : "露"}`);
+
+    /* --- 生效链路：CSS 走注入，页面参数走分页器属性 --- */
+    await evaluate(ws, `document.querySelector('#layoutPanel [data-break="indent"]').click()`);
+    await sleep(900);
+    frameCtx = await blobFrameContext(ws);
+    const applied = await evaluate(ws, typoOf, frameCtx);
+    check("注入的样式表带上了字号与缩进（不是只改了面板上的数字）",
+      applied.css.includes("font-size: 18px") && applied.css.includes("text-indent: 2em"),
+      applied.css.includes("font-size: 18px") ? "含 font-size: 18px + text-indent: 2em" : `未见新规则：${applied.css.slice(0, 90)}`);
+
+    const pageParams = await evaluate(ws, `(async () => {
       const mod = await import("/js/reader/panes.js");
       const renderer = mod.activePane()?.ebook?.view?.renderer;
-      return renderer?.style.getPropertyValue("--_margin") || "";
+      return { margin: renderer?.getAttribute("margin") || "",
+        measure: renderer?.getAttribute("max-inline-size") || "",
+        gap: renderer?.getAttribute("gap") || "" };
     })()`);
-    check("页边距落到分页器（--_margin 72px）", marginApplied === "72px", marginApplied || "未设置");
+    check("页边距 / 版心宽度 / 列间距落到分页器属性",
+      pageParams.margin === "48px" && pageParams.measure === "640px" && pageParams.gap === "8%",
+      `margin ${pageParams.margin || "无"} · max-inline-size ${pageParams.measure || "无"} · gap ${pageParams.gap || "无"}`);
 
-    // 强制覆盖：书里写死了 #333 字色与白底，开关打开后要让位给主题色
-    await evaluate(ws, `document.querySelector("#switchEbookOverride").click()`);
+    /* --- 覆盖配色依赖覆盖排版 --- */
+    /* --- 配色覆盖独立于排版覆盖，且默认开 --- */
+    const beforeOverride = await evaluate(ws, `(async () => {
+      const panel = document.querySelector("#layoutPanel");
+      const color = panel.querySelector("[data-switch='overrideColor']");
+      const typo = panel.querySelector("[data-switch='override']");
+      const mod = await import("/js/reader/ebook-layout.js");
+      const { state } = await import("/js/core/session.js");
+      return { colorOn: color.classList.contains("is-on"), colorDisabled: color.disabled,
+        typoOn: typo.classList.contains("is-on"),
+        resolved: mod.readLayout(state.settings).overrideColor };
+    })()`);
+    check("配色覆盖默认开、不依赖排版覆盖（夜读下书里写死的深色字才读得清）",
+      beforeOverride.colorOn && !beforeOverride.colorDisabled && !beforeOverride.typoOn
+        && beforeOverride.resolved === true,
+      `配色覆盖 ${beforeOverride.colorOn}/禁用 ${beforeOverride.colorDisabled} · 排版覆盖 ${beforeOverride.typoOn}`);
+
+    // 关掉配色覆盖：字色回到书里自己的（#333），排版覆盖仍是关的
+    await evaluate(ws, `document.querySelector("#layoutPanel [data-switch='overrideColor']").click()`);
+    await sleep(1200);
+    frameCtx = await blobFrameContext(ws);
+    const ownColor = await evaluate(ws, typoOf, frameCtx);
+    const appInk = await evaluate(ws, `getComputedStyle(document.body).color`);
+    check("关掉配色覆盖后字色回到书里自己的",
+      ownColor.color !== appInk,
+      `字色 ${ownColor.color}（应用 ${appInk}）/ 底色 ${ownColor.bg}`);
+
+    // 再打开：字色被压成主题色、底色交还给容器
+    await evaluate(ws, `document.querySelector("#layoutPanel [data-switch='overrideColor']").click()`);
     await sleep(1200);
     frameCtx = await blobFrameContext(ws);
     const forced = await evaluate(ws, typoOf, frameCtx);
-    const appInk = await evaluate(ws, `getComputedStyle(document.body).color`);
-    check("强制覆盖把书内配色压成主题色",
+    check("打开配色覆盖把书内字色与底色交给主题",
       forced.color === appInk && forced.bg === "rgba(0, 0, 0, 0)",
       `字色 ${forced.color}（应用 ${appInk}）/ 底色 ${forced.bg}`);
 
-    await sleep(400);
-    // 面板比窗口长，截图前把「电子书」这一组滚到中间，否则拍到的还是上面几组
-    await evaluate(ws, `(() => {
-      const group = [...document.querySelectorAll("#settingsOverlay .setting-group")]
-        .find((el) => el.querySelector("#ebookSizeSeg"));
-      group.scrollIntoView({ block: "center" });
-      return true;
-    })()`);
-    await shot(ws, "ebook-settings");
-    const saved = await evaluate(ws, `window.__saved || null`);
-    check("六项设置写进偏好并落盘",
-      Boolean(saved) && saved.ebookFontSize === 22 && saved.ebookLineHeight === 2.1
-        && saved.ebookMargin === 72 && saved.ebookFamily === "kai"
-        && saved.ebookAlign === "left" && saved.ebookOverride === true,
-      saved ? `字号 ${saved.ebookFontSize} 行高 ${saved.ebookLineHeight} 边距 ${saved.ebookMargin} ${saved.ebookFamily}/${saved.ebookAlign}/覆盖 ${saved.ebookOverride}` : "未调用 save_settings");
+    // 排版覆盖此时仍是关的：字色被接管、字体字号还是书里的
+    const typoStillOff = await evaluate(ws, `(() => document.querySelector("#layoutPanel [data-switch='override']").classList.contains("is-on"))()`);
+    check("配色覆盖与排版覆盖互不影响", typoStillOff === false, `排版覆盖 ${typoStillOff}`);
 
-    // 旧 state.json 里没有这六个字段，容器级 serde(default) 靠前端这份默认值兜底：
+    await sleep(400);
+    await shot(ws, "ebook-layout-panel");
+    const saved = await evaluate(ws, `window.__saved || null`);
+    check("版式写进偏好并落盘（新增字段一个不少）",
+      Boolean(saved) && saved.ebookFontSize === 18 && saved.ebookFamily === "serif"
+        && saved.ebookAlign === "left" && saved.ebookIndent === 2
+        && saved.ebookLetterSpacing === 0 && saved.ebookMeasure === 640
+        && saved.ebookGap === 8 && saved.ebookOverride === false && saved.ebookOverrideColor === true,
+      saved ? `字号 ${saved.ebookFontSize} 字距 ${saved.ebookLetterSpacing} 缩进 ${saved.ebookIndent}`
+        + ` 版心 ${saved.ebookMeasure} 列距 ${saved.ebookGap} 覆盖 ${saved.ebookOverride}/${saved.ebookOverrideColor}`
+        : "未调用 save_settings");
+
+    // 旧 state.json 里没有这些字段，容器级 serde(default) 靠前端这份默认值兜底：
     // 少一个键，升级后第一次打开电子书就会把 undefined 写进样式
     const defaults = await evaluate(ws, `(async () => {
       const mod = await import("/js/core/constants.js");
-      const keys = ["ebookFontSize", "ebookLineHeight", "ebookMargin", "ebookFamily", "ebookAlign", "ebookOverride"];
+      const keys = ["ebookFontSize", "ebookLineHeight", "ebookMargin", "ebookFamily", "ebookAlign",
+        "ebookOverride", "ebookLetterSpacing", "ebookIndent", "ebookParaSpacing", "ebookMeasure",
+        "ebookGap", "ebookHyphenate", "ebookPunctuate", "ebookSpread", "ebookOverrideColor"];
       const missing = keys.filter((key) => mod.DEFAULT_SETTINGS[key] === undefined);
-      await (await import("/js/preferences.js")).closeSettings();
-      return { missing, count: keys.length - missing.length };
+      return { missing, count: keys.length - missing.length, total: keys.length };
     })()`);
-    check("默认设置补齐六项（旧配置升级不受影响）",
-      defaults.missing.length === 0 && defaults.count === 6,
-      defaults.missing.length ? `缺 ${defaults.missing.join(",")}` : "6/6");
+    check("默认设置补齐全部版式字段（旧配置升级不受影响）",
+      defaults.missing.length === 0 && defaults.count === defaults.total,
+      defaults.missing.length ? `缺 ${defaults.missing.join(",")}` : `${defaults.count}/${defaults.total}`);
+
+    // 固定版面（CBZ）下面板要整体禁用并给出说明，值仍照存
+    await evaluate(ws, `(async () => { (await import("/js/reader/ebook-layout-panel.js")).setLayoutPanel(false); })()`);
 
     /* --- P4：FB2 / CBZ（固定版面）/ 带 DRM 的 EPUB --- */
     // 设置面板前面留在打开状态，先关掉，否则遮罩挡住书架的点击
@@ -1804,6 +1956,31 @@ async function main() {
       cbz.fixed && cbz.pages === 3 && /^CBZ · 3 页/.test(cbz.sub),
       `${cbz.format} · 固定 ${cbz.fixed} · ${cbz.pages} 页 · ${cbz.sub}`);
     check("固定版面下不显示单双页按钮", cbz.spreadHidden === true, String(cbz.spreadHidden));
+
+    // 版式面板对固定版面无能为力：整块禁用 + 顶部说明，而不是让人白调半天
+    await evaluate(ws, `document.querySelector('[data-act="ebook-layout"]').click()`);
+    await sleep(500);
+    const fixedPanel = await evaluate(ws, `(() => {
+      const panel = document.querySelector("#layoutPanel");
+      const notice = panel.querySelector("#lpNotice");
+      const range = panel.querySelector("[data-range='measure']");
+      const body = panel.querySelector(".lp-body");
+      // 计算出的 opacity 是元素自己的，子元素不会继承成 0.42，所以量分组这一层
+      const row = panel.querySelector(".lp-group");
+      return { open: !panel.classList.contains("is-hidden"),
+        disabled: panel.classList.contains("is-fixed"),
+        noticeShown: !notice.hidden,
+        rangeDisabled: range.disabled,
+        sub: panel.querySelector("#lpSub").textContent,
+        rowOpacity: Number(getComputedStyle(row).opacity),
+        rowPe: getComputedStyle(row).pointerEvents };
+    })()`);
+    check("固定版面上版式面板整体禁用并给出说明",
+      fixedPanel.open && fixedPanel.disabled && fixedPanel.noticeShown && fixedPanel.rangeDisabled
+        && fixedPanel.rowPe === "none" && fixedPanel.rowOpacity < 0.5
+        && /固定版面/.test(fixedPanel.sub),
+      `禁用 ${fixedPanel.disabled} · 说明 ${fixedPanel.noticeShown} · 滑杆禁用 ${fixedPanel.rangeDisabled} `
+        + `· 行不可点 ${fixedPanel.rowPe}/${fixedPanel.rowOpacity}`);
 
     // 漫画的目录条目原本是图片文件名，界面上应当是人读的页码
     const cbzToc = await evaluate(ws, `(async () => {

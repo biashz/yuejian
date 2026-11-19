@@ -45,9 +45,19 @@ const DEFAULT_SETTINGS = {
   theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720,
   showCtx: true, zen: false, linkSync: true, language: "zh",
   autoCheckUpdate: true, ebookSpread: true,
-  /* 电子书专属：字号/行高/边距/字体/对齐/覆盖，与 PDF 的排版档位互不影响 */
-  ebookFontSize: 18, ebookLineHeight: 1.8, ebookMargin: 48,
+  /*
+   * 电子书专属：与 PDF / 文本的排版档位互不影响。
+   * 这一组默认值 = 版式面板的「舒适中文」预设（见 reader/ebook-layout.js）：
+   * 出厂就落在某一套预设上，面板打开时第一眼是「已选中」，不是「自定义」。
+   * 改预设值时这两处要一起改——`scripts/smoke-reader.mjs` 里有断言盯着。
+   */
+  ebookFontSize: 19, ebookLineHeight: 1.85, ebookMargin: 56,
   ebookFamily: "serif", ebookAlign: "justify", ebookOverride: false,
+  ebookLetterSpacing: 0.25, ebookIndent: 2, ebookParaSpacing: 0,
+  ebookMeasure: 660, ebookGap: 8,
+  ebookHyphenate: false, ebookPunctuate: true,
+  /* 配色覆盖独立于排版覆盖，默认开：书里写死的字色在夜读主题下会读不清 */
+  ebookOverrideColor: true,
 };
 /* 电子书字体的可选值与字体栈：值存盘，栈只在这里出现一次 */
 const EBOOK_FONTS = {

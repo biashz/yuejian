@@ -12,7 +12,7 @@ import { activePane, activePaneIndex, maybeSync, updatePaneHeads, panes } from "
 import { state } from "../core/session.js";
 import { t } from "../i18n.js";
 import { toast } from "../core/feedback.js";
-import { clamp, escapeHtml } from "../core/dom.js";
+import { escapeHtml } from "../core/dom.js";
 import { updateStatus } from "../view.js";
 import { persistSettings } from "../preferences.js";
 import { EbookReader } from "../reader-epub.js";
@@ -25,16 +25,24 @@ import { bindEbookGestures } from "./ebook-gesture.js";
 import { showFootnote, hideFootnote } from "./footnote.js";
 import { isBookmarked } from "./bookmarks.js";
 import { buildEbookStyles } from "./ebook-style.js";
+import { readLayout } from "./ebook-layout.js";
 import { explainEbookError } from "./ebook-error.js";
 import { closeHighlightMenu, highlightMenuAge } from "./highlight-menu.js";
 import { openImage } from "./image-view.js";
 import { askHighlight, pickAnnotation } from "./highlight-actions.js";
 
-/** 字号/行高/字体/对齐折成 CSS，页边距单独给分页器（它不参与书内 DOM 的样式） */
-function typography() {
+/**
+ * 版式折成四个值：写进章节文档的 CSS（字号/行高/字体/对齐/缩进/段距/标点），
+ * 以及三个归分页器管的页面参数（页边距 / 版心宽度 / 列间距）。
+ *
+ * 分开的理由见 `ebook-style.js` 的头注释：页面参数必须走属性，分页器自己拿它们
+ * 算每栏宽度和翻页偏移，注入 CSS 去改会与它的分栏计算打架。
+ */
+function layoutValues() {
+  const layout = readLayout(state.settings);
   return {
     css: buildEbookStyles(state.settings),
-    margin: clamp(Number(state.settings.ebookMargin) || 48, 8, 160),
+    layout: { margin: layout.margin, measure: layout.measure, gap: layout.gap },
   };
 }
 
@@ -52,8 +60,8 @@ function ensureEbookReader(pane) {
     onAnnotation: (detail) => pickAnnotation(pane, detail),
   });
   // 先存进实例：此刻还没有 `<foliate-view>`，等 `open()` 起完首帧再贴
-  const { css, margin } = typography();
-  pane.ebook.applyTypography(css, margin);
+  const { css, layout } = layoutValues();
+  pane.ebook.applyLayout(css, layout);
   // 正文 iframe 之外的留白也要能点、能滚
   bindEbookGestures(pane.ebookStack, handlers(pane));
   return pane.ebook;
@@ -61,11 +69,17 @@ function ensureEbookReader(pane) {
 
 /**
  * 版式改动落到所有已打开的书上：左右两栏各有一份实例，谁都不该被落下。
- * 设置面板与主题切换都走这一个入口。
+ * 版式面板、主题切换都走这一个入口。
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.render] 是否立刻重排；拖动滑杆期间传 false，松手再补
+ * @param {boolean} [options.live] 拖动中：跳过版心宽度——改它会让分页器整章重排，
+ *   一次 `input` 一次重排会直接卡住；松手那一次才写进去
  */
-function refreshEbookStyles() {
-  const { css, margin } = typography();
-  for (const pane of panes) pane.ebook?.applyTypography(css, margin);
+function refreshEbookStyles({ render = true, live = false } = {}) {
+  const { css, layout } = layoutValues();
+  const values = live ? { margin: layout.margin, gap: layout.gap } : layout;
+  for (const pane of panes) pane.ebook?.applyLayout(css, values, { render });
 }
 
 /** 手势动作统一走这里：主文档与 iframe 内用的是同一套 */

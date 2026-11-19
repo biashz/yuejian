@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8" />
+<title>阅笺 · 电子书版式面板原型</title>
+<style>
+/* ============ 1. Tokens（与 src/styles.css 一致） ============ */
+:root{
+  --paper:#f3ede1; --surface:#fbf7ee; --surface-2:#ede4d3;
+  --ink:#241f1a; --ink-2:#5e5548; --ink-3:#8c8272;
+  --line:#dfd4c0; --line-strong:#c9bba2;
+  --accent:#b23a2b; --accent-ink:#8e2c20; --accent-weak:#ebd9d3;
+  --ok:#4f7355;
+  --font-display:"KaiTi","STKaiti","Kaiti SC","Songti SC",serif;
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  --font-read:"Songti SC","Source Han Serif SC","Noto Serif CJK SC","SimSun",Georgia,serif;
+  --font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  --r-sm:4px; --r-md:8px; --r-lg:14px;
+  --shadow-sm:0 1px 2px rgba(40,32,20,.06);
+  --shadow-md:0 8px 24px -12px rgba(40,32,20,.24);
+  --shadow-lg:0 24px 60px -20px rgba(40,32,20,.38);
+  --shadow-page:0 18px 48px -24px rgba(40,32,20,.4),0 2px 6px rgba(40,32,20,.06);
+  --ease:cubic-bezier(.22,.8,.24,1);
+  --rail-w:56px; --lp-w:332px;
+}
+[data-theme="night"]{
+  --paper:#12100e; --surface:#1a1715; --surface-2:#221e1a;
+  --ink:#ede5d8; --ink-2:#b7ab98; --ink-3:#7e7466;
+  --line:#2e2924; --line-strong:#3d362f;
+  --accent:#e0705c; --accent-ink:#c95c49; --accent-weak:#3a2620;
+  --ok:#7fa585;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:0 10px 28px -14px rgba(0,0,0,.7);
+  --shadow-lg:0 28px 64px -24px rgba(0,0,0,.8);
+  --shadow-page:0 20px 50px -26px rgba(0,0,0,.9);
+}
+[data-theme="sepia"]{
+  --paper:#e9e1ce; --surface:#f6efdd; --surface-2:#e0d5bd;
+  --ink:#2c2519; --ink-2:#635844; --ink-3:#8d8267;
+  --line:#d6c9ae; --line-strong:#bfae8e;
+  --accent:#9a5a20; --accent-ink:#7d4718; --accent-weak:#e6d8bd;
+}
+*{box-sizing:border-box}
+/* 面板里有 display:flex 的行，UA 的 [hidden]{display:none} 压不住，必须显式兜一层 */
+[hidden]{display:none !important}
+html,body{height:100%}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--font-ui); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column; overflow:hidden;
+  transition:background .22s var(--ease), color .22s var(--ease);
+}
+button{font:inherit; color:inherit; background:none; border:0; cursor:pointer}
+svg.ic{width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.6;
+  stroke-linecap:round; stroke-linejoin:round}
+
+/* ============ 2. 顶部实验条（原型专用，不属于产品界面） ============ */
+.proto-bar{
+  flex:none; display:flex; align-items:center; gap:10px;
+  padding:0 14px; height:44px;
+  background:var(--surface); border-bottom:1px solid var(--line);
+  font-size:12px; color:var(--ink-2);
+}
+.proto-bar .tag{
+  font-family:var(--font-mono); font-size:10px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--ink-3); padding-right:8px;
+  border-right:1px solid var(--line);
+}
+.proto-bar .spacer{flex:1}
+.proto-seg{display:flex; border:1px solid var(--line-strong); border-radius:var(--r-sm); overflow:hidden}
+.proto-seg button{padding:4px 10px; font-size:11.5px; color:var(--ink-2); background:var(--surface)}
+.proto-seg button + button{border-left:1px solid var(--line)}
+.proto-seg button.is-on{background:var(--ink); color:var(--paper); border-color:var(--ink)}
+.proto-bar label{display:flex; align-items:center; gap:6px; font-size:11.5px; cursor:pointer}
+.proto-bar input[type=checkbox]{accent-color:var(--accent)}
+
+/* ============ 3. 阅读区 ============ */
+.stage{
+  flex:1; min-height:0; display:flex; overflow:hidden; position:relative;
+  transition:padding .24s var(--ease);
+}
+.rail{
+  flex:none; width:var(--rail-w); border-right:1px solid var(--line);
+  background:var(--surface); display:flex; flex-direction:column;
+  align-items:center; gap:6px; padding:10px 0;
+}
+.rail .dot{width:22px; height:22px; border-radius:6px; background:var(--surface-2);
+  border:1px solid var(--line)}
+.rail .dot:first-child{background:var(--ink); border-color:var(--ink)}
+
+.page-wrap{
+  flex:1; min-width:0; position:relative;
+  display:flex; justify-content:center;
+  padding:28px clamp(16px,4vw,64px) 34px;
+  overflow:hidden;
+}
+/* 书页：版心宽度由 --lp-measure 控制，两侧留白由 --lp-margin 控制 */
+.page{
+  width:100%; max-width:var(--lp-measure);
+  padding:var(--lp-margin);
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:var(--r-md);
+  box-shadow:var(--shadow-page);
+  overflow:auto; overscroll-behavior:contain;
+  scrollbar-width:thin;
+}
+.page::-webkit-scrollbar{width:8px}
+.page::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--ink-3) 28%,transparent); border-radius:99px}
+.page:hover::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--ink-3) 55%,transparent)}
+
+/* 正文：全部由 JS 写进 CSS 变量 */
+.book{
+  font-family:var(--lp-family,var(--font-read));
+  font-size:calc(var(--lp-size,19) * 1px);
+  line-height:var(--lp-lh,1.85);
+  letter-spacing:calc(var(--lp-ls,0) * 1px);
+  text-align:var(--lp-align,justify);
+  hyphens:var(--lp-hyph,manual);
+  color:var(--ink);
+}
+.book.is-punct{
+  text-justify:inter-character;
+  font-feature-settings:"palt";
+  text-autospace:normal;
+  line-break:strict;
+}
+.book h1{
+  font-size:1.5em; line-height:1.35; font-weight:600; margin:0 0 1.4em;
+  text-align:left; letter-spacing:0;
+}
+.book .meta{
+  font-size:.78em; color:var(--ink-3); letter-spacing:.02em;
+  margin:-1em 0 2.2em; text-align:left;
+}
+.book p{
+  margin:0;
+  text-indent:calc(var(--lp-indent,2) * 1em);
+}
+/* 段距只加在「两段之间」，不是给每段上下都留白——否则首段会凭空多出一段高度 */
+.book p + p{margin-top:calc(var(--lp-para,0) * 1px)}
+.book blockquote{
+  margin:1.6em 0; padding:0; border:0;
+  text-indent:0; color:var(--ink-2); font-style:italic;
+}
+.book blockquote + p{margin-top:1.6em}
+.book .en{
+  text-indent:0;
+  font-size:.94em; color:var(--ink-2);
+}
+/* 「书里自带样式」的一小段：用来让「覆盖排版 / 覆盖配色」这两个开关有可观察的对象。
+   真书里是同一种情况——出版方把字体、字号、颜色写死在 CSS 里，我们的注入默认排在它后面。 */
+.book .pub{
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:.82em; line-height:1.6; letter-spacing:0; text-indent:0;
+  color:#7a5a3a; margin-top:1.1em;
+  padding-left:.85em; border-left:2px solid currentColor;
+}
+.book.is-ovr .pub{
+  font-family:var(--lp-family,var(--font-read));
+  font-size:1em;
+  line-height:var(--lp-lh,1.85);
+  letter-spacing:calc(var(--lp-ls,0) * 1px);
+}
+.book.is-color .pub{color:var(--ink)}
+
+/* 固定版面（漫画）示意 */
+.page.is-fixed{ background:var(--surface-2); border-style:dashed }
+.fixed-art{
+  width:100%; aspect-ratio:3/4; border-radius:var(--r-sm);
+  background:
+    repeating-linear-gradient(45deg,transparent 0 14px,color-mix(in srgb,var(--line) 60%,transparent) 14px 15px),
+    var(--surface);
+  display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px;
+  color:var(--ink-3); font-size:12px; letter-spacing:.08em;
+}
+
+/* ============ 4. 版式面板 ============ */
+.lp{
+  flex:none; width:var(--lp-w);
+  display:flex; flex-direction:column; min-height:0;
+  background:var(--surface); border-left:1px solid var(--line);
+}
+.lp[hidden]{display:none}
+
+.lp-head{
+  flex:none; display:flex; align-items:flex-start; gap:10px;
+  padding:16px 16px 12px; border-bottom:1px solid var(--line);
+}
+.lp-head .eyebrow{
+  margin:0 0 3px; font-family:var(--font-mono); font-size:9.5px;
+  letter-spacing:.2em; text-transform:uppercase; color:var(--ink-3);
+}
+.lp-head h2{margin:0; font-size:15px; font-weight:600; letter-spacing:.01em}
+.lp-head .sub{margin:4px 0 0; font-size:11.5px; color:var(--ink-3); line-height:1.45}
+.lp-head .close{
+  margin-left:auto; flex:none; width:26px; height:26px; border-radius:var(--r-sm);
+  display:grid; place-items:center; color:var(--ink-3);
+}
+.lp-head .close:hover{background:var(--surface-2); color:var(--ink)}
+
+.lp-body{
+  flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+  padding:4px 16px 20px;
+}
+.lp-body::-webkit-scrollbar{width:9px}
+.lp-body::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--ink-3) 26%,transparent); border-radius:99px}
+.lp-body:hover::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--ink-3) 52%,transparent)}
+
+.lp-note{
+  margin:12px 0 0; padding:9px 11px; border-radius:var(--r-sm);
+  background:var(--accent-weak); color:var(--accent-ink);
+  font-size:11.5px; line-height:1.5;
+}
+
+.lp-group{padding:16px 0 4px; border-top:1px solid var(--line)}
+.lp-group:first-of-type{border-top:0}
+.lp-group h3{
+  margin:0 0 12px; font-family:var(--font-mono); font-size:9.5px;
+  font-weight:500; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-3);
+}
+
+/* 预设 */
+.lp-presets{display:flex; flex-wrap:wrap; gap:6px}
+.lp-preset{
+  padding:6px 11px; border-radius:var(--r-pill,999px);
+  border:1px solid var(--line-strong); color:var(--ink-2);
+  font-size:12px; line-height:1.4; transition:all .16s var(--ease);
+}
+.lp-preset:hover{border-color:var(--ink-3); color:var(--ink)}
+.lp-preset.is-on{
+  background:var(--ink); border-color:var(--ink); color:var(--paper);
+}
+.lp-preset.is-custom{background:none; border-style:dashed; color:var(--ink-3); cursor:default}
+
+/* 行 */
+.lp-row{display:flex; align-items:center; gap:10px; min-height:30px; margin-bottom:12px}
+.lp-row:last-child{margin-bottom:0}
+.lp-label{flex:1; min-width:0; font-size:12.5px; color:var(--ink-2)}
+.lp-label small{display:block; font-size:10.5px; color:var(--ink-3); margin-top:1px}
+.lp-val{
+  flex:none; font-family:var(--font-mono); font-size:11px; color:var(--ink-3);
+  min-width:38px; text-align:right; font-variant-numeric:tabular-nums;
+}
+
+/* 分段控件 */
+.lp-seg{
+  display:flex; flex:none; border:1px solid var(--line-strong);
+  border-radius:var(--r-sm); overflow:hidden;
+}
+.lp-seg button{
+  padding:5px 9px; font-size:11.5px; line-height:1.4; color:var(--ink-2);
+  background:var(--surface); transition:background .14s var(--ease), color .14s var(--ease);
+}
+.lp-seg button + button{border-left:1px solid var(--line)}
+.lp-seg button:hover:not(.is-on){background:var(--surface-2)}
+.lp-seg button.is-on{background:var(--ink); color:var(--paper); border-color:var(--ink)}
+.lp-seg.is-block{display:flex; width:100%}
+.lp-seg.is-block button{flex:1; padding:6px 4px; text-align:center}
+
+/* 滑杆 */
+.lp-range{
+  -webkit-appearance:none; appearance:none; width:100%; height:18px;
+  background:transparent; margin:0;
+}
+.lp-range::-webkit-slider-runnable-track{
+  height:2px; border-radius:2px;
+  background:linear-gradient(to right,var(--ink) var(--fill,50%),var(--line-strong) var(--fill,50%));
+}
+.lp-range::-webkit-slider-thumb{
+  -webkit-appearance:none; width:12px; height:12px; margin-top:-5px;
+  border-radius:50%; background:var(--surface); border:1.5px solid var(--ink);
+  transition:transform .12s var(--ease);
+}
+.lp-range:hover::-webkit-slider-thumb{transform:scale(1.12)}
+.lp-range:active::-webkit-slider-thumb{background:var(--ink)}
+.lp-range:disabled{opacity:.4}
+.lp-field{width:100%; margin:2px 0 14px}
+
+/* 字号步进 */
+.lp-step{display:flex; flex:none; align-items:center; gap:2px;
+  border:1px solid var(--line-strong); border-radius:var(--r-sm); overflow:hidden}
+.lp-step button{
+  width:26px; height:26px; display:grid; place-items:center; font-size:13px; color:var(--ink-2);
+}
+.lp-step button:hover:not(:disabled){background:var(--surface-2); color:var(--ink)}
+.lp-step button:disabled{opacity:.35; cursor:default}
+.lp-step .n{
+  min-width:30px; text-align:center; font-family:var(--font-mono); font-size:11.5px;
+  color:var(--ink); font-variant-numeric:tabular-nums;
+}
+
+/* 开关 */
+.lp-switch{
+  flex:none; width:34px; height:19px; border-radius:99px; padding:2px;
+  background:var(--line-strong); transition:background .18s var(--ease);
+  display:flex; justify-content:flex-start;
+}
+.lp-switch i{
+  display:block; width:15px; height:15px; border-radius:50%;
+  background:var(--surface); box-shadow:var(--shadow-sm);
+  transition:transform .18s var(--ease);
+}
+.lp-switch.is-on{background:var(--accent); justify-content:flex-end}
+.lp-switch:disabled{opacity:.4; cursor:default}
+
+/* 禁用态：整组压暗 + 不可点 */
+.lp.is-disabled .lp-body > *:not(.lp-note){opacity:.42; pointer-events:none}
+.lp.is-disabled .lp-note{display:block}
+
+/* 底栏 */
+.lp-foot{
+  flex:none; padding:10px 16px; border-top:1px solid var(--line);
+  display:flex; align-items:center; gap:8px; background:var(--surface);
+}
+.lp-reset{
+  padding:6px 12px; border-radius:var(--r-sm); font-size:12px;
+  color:var(--ink-2); border:1px solid var(--line-strong);
+}
+.lp-reset:hover{border-color:var(--ink-3); color:var(--ink)}
+.lp-saved{margin-left:auto; font-size:10.5px; color:var(--ink-3); letter-spacing:.04em}
+
+/* ============ 5. 窄窗口：抽屉 + 遮罩 ============ */
+.backdrop{
+  position:absolute; inset:0; z-index:20;
+  background:color-mix(in srgb,var(--paper) 40%,rgba(20,16,12,.42));
+  backdrop-filter:blur(1.5px);
+  opacity:0; pointer-events:none; transition:opacity .2s var(--ease);
+}
+.is-narrow .lp{
+  position:absolute; top:0; right:0; bottom:0; z-index:21;
+  width:min(332px,calc(100% - 40px));
+  box-shadow:var(--shadow-lg);
+  transform:translateX(100%); transition:transform .24s var(--ease);
+}
+.is-narrow .lp:not([hidden]){transform:none}
+.is-narrow .lp[hidden]{display:flex; transform:translateX(100%); visibility:hidden}
+.is-narrow .backdrop.is-on{opacity:1; pointer-events:auto}
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="tag">PROTOTYPE · 版式面板</span>
+  <div class="proto-seg" id="themeSeg">
+    <button data-t="paper" class="is-on">纸白</button>
+    <button data-t="sepia">护眼</button>
+    <button data-t="night">夜读</button>
+  </div>
+  <div class="proto-seg" id="widthSeg">
+    <button data-w="wide" class="is-on">宽窗口</button>
+    <button data-w="narrow">窄窗口</button>
+  </div>
+  <label><input type="checkbox" id="fixedChk" /> 固定版面（CBZ）</label>
+  <span class="spacer"></span>
+  <span id="hint" style="font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3)"></span>
+</div>
+
+<div class="stage" id="stage">
+  <div class="rail">
+    <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+  </div>
+
+  <div class="page-wrap" id="pageWrap">
+    <div class="page" id="page">
+      <div class="book is-punct" id="book">
+        <h1>项脊轩志</h1>
+        <p class="meta">归有光 · 明代 · 约 1,100 字</p>
+        <p>项脊轩，旧南阁子也。室仅方丈，可容一人居。百年老屋，尘泥渗漉，雨泽下注；每移案，顾视无可置者。又北向，不能得日，日过午已昏。余稍为修葺，使不上漏。前辟四窗，垣墙周庭，以当南日，日影反照，室始洞然。</p>
+        <p>又杂植兰桂竹木于庭，旧时栏楯，亦遂增胜。借书满架，偃仰啸歌，冥然兀坐，万籁有声；而庭阶寂寂，小鸟时来啄食，人至不去。三五之夜，明月半墙，桂影斑驳，风移影动，珊珊可爱。</p>
+        <p>然余居于此，多可喜，亦多可悲。先是庭中通南北为一。迨诸父异爨，内外多置小门墙，往往而是。东犬西吠，客逾庖而宴，鸡栖于厅。庭中始为篱，已为墙，凡再变矣。</p>
+        <blockquote>妪每谓余曰：「某所，而母立于兹。」妪又曰：「汝姊在吾怀，呱呱而泣；娘以指叩门扉曰：『儿寒乎？欲食乎？』吾从板外相为应答。」语未毕，余泣，妪亦泣。</blockquote>
+        <p>余自束发读书轩中，一日，大母过余曰：「吾儿，久不见若影，何竟日默默在此，大类女郎也？」比去，以手阖门，自语曰：「吾家读书久不效，儿之成，则可待乎！」顷之，持一象笏至，曰：「此吾祖太常公宣德间执此以朝，他日汝当用之！」瞻顾遗迹，如在昨日，令人长号不自禁。</p>
+        <p class="en">The room was barely ten feet square, holding one person and no more. A hundred-year-old house: dust sifted through the beams, and when it rained the water came in. I moved the desk from corner to corner and found nowhere to put it.</p>
+        <p>庭有枇杷树，吾妻死之年所手植也，今已亭亭如盖矣。</p>
+        <p class="pub">这一段是「书里自带样式」：Georgia · 0.82em · 褐色，模拟出版方写死的字体与颜色。打开下面的「覆盖排版」会把它的字体字号拉回上面的设置，打开「覆盖配色」才会连字色一起接管。</p>
+      </div>
+      <div class="fixed-art" id="fixedArt" hidden>
+        <svg class="ic" style="width:26px;height:26px"><use href="#i-frame"/></svg>
+        <span>COMIC · 固定版面</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 版式面板 -->
+  <aside class="lp" id="lp" role="dialog" aria-label="版式">
+    <div class="lp-head">
+      <div>
+        <p class="eyebrow">LAYOUT</p>
+        <h2>版式</h2>
+        <p class="sub" id="lpSub">只作用于电子书，改动即时生效</p>
+      </div>
+      <button class="close" id="lpClose" title="关闭">
+        <svg class="ic"><use href="#i-x"/></svg>
+      </button>
+    </div>
+
+    <div class="lp-body" id="lpBody">
+      <p class="lp-note" id="lpNote" hidden>这本书是固定版面，排版由出版方决定，版式设置对它无效。</p>
+
+      <!-- 预设 -->
+      <section class="lp-group">
+        <h3>预设</h3>
+        <div class="lp-presets" id="presetRow">
+          <button class="lp-preset" data-preset="comfort">舒适中文</button>
+          <button class="lp-preset" data-preset="compact">紧凑</button>
+          <button class="lp-preset" data-preset="latin">西文衬线</button>
+          <span class="lp-preset is-custom" id="customTag" hidden>自定义</span>
+        </div>
+      </section>
+
+      <!-- 文字 -->
+      <section class="lp-group">
+        <h3>文字</h3>
+        <div class="lp-row">
+          <span class="lp-label">字体</span>
+          <div class="lp-seg" id="familySeg">
+            <button data-f="serif">宋体</button>
+            <button data-f="sans">黑体</button>
+            <button data-f="kai">楷体</button>
+          </div>
+        </div>
+        <div class="lp-row">
+          <span class="lp-label">字号</span>
+          <div class="lp-step" id="sizeStep">
+            <button data-d="-1" aria-label="减小">A−</button>
+            <span class="n" id="sizeVal">19</span>
+            <button data-d="1" aria-label="增大">A+</button>
+          </div>
+        </div>
+        <div class="lp-row">
+          <span class="lp-label">字间距</span>
+          <span class="lp-val" id="lsVal">0</span>
+        </div>
+        <input class="lp-range lp-field" type="range" id="ls" min="-0.5" max="2" step="0.25" value="0" />
+      </section>
+
+      <!-- 段落 -->
+      <section class="lp-group">
+        <h3>段落</h3>
+        <div class="lp-row">
+          <span class="lp-label">行高</span>
+          <span class="lp-val" id="lhVal">1.85</span>
+        </div>
+        <input class="lp-range lp-field" type="range" id="lh" min="1.3" max="2.4" step="0.05" value="1.85" />
+        <div class="lp-row">
+          <span class="lp-label">分段方式</span>
+        </div>
+        <div class="lp-seg is-block" id="breakSeg" style="margin-bottom:10px">
+          <button data-b="none">无</button>
+          <button data-b="indent">首行缩进</button>
+          <button data-b="space">段间距</button>
+        </div>
+        <div class="lp-row" id="paraRow" hidden>
+          <span class="lp-label">段间距</span>
+          <span class="lp-val" id="paraVal">10</span>
+        </div>
+        <input class="lp-range lp-field" type="range" id="para" min="0" max="32" step="2" value="10" hidden />
+        <div class="lp-row">
+          <span class="lp-label">对齐</span>
+          <div class="lp-seg" id="alignSeg">
+            <button data-a="left">左对齐</button>
+            <button data-a="justify">两端</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 页面 -->
+      <section class="lp-group">
+        <h3>页面</h3>
+        <div class="lp-row">
+          <span class="lp-label">页边距</span>
+          <span class="lp-val" id="mgVal">56</span>
+        </div>
+        <input class="lp-range lp-field" type="range" id="mg" min="8" max="120" step="4" value="56" />
+        <div class="lp-row">
+          <span class="lp-label">版心宽度<small>纸的最大宽度</small></span>
+          <span class="lp-val" id="msVal">660</span>
+        </div>
+        <input class="lp-range lp-field" type="range" id="ms" min="480" max="1200" step="20" value="660" />
+        <div class="lp-row">
+          <span class="lp-label">双页</span>
+          <button class="lp-switch is-on" id="spreadSw" aria-label="双页"><i></i></button>
+        </div>
+      </section>
+
+      <!-- 细节 -->
+      <section class="lp-group" style="padding-bottom:14px">
+        <h3>细节</h3>
+        <div class="lp-row">
+          <span class="lp-label">连字符<small>西文断词</small></span>
+          <button class="lp-switch" id="hyphSw" aria-label="连字符"><i></i></button>
+        </div>
+        <div class="lp-row">
+          <span class="lp-label">标点挤压<small>中西文间隙 · 标点半角</small></span>
+          <button class="lp-switch is-on" id="punctSw" aria-label="标点挤压"><i></i></button>
+        </div>
+        <div class="lp-row">
+          <span class="lp-label">覆盖排版<small>让书内字体字号让位</small></span>
+          <button class="lp-switch" id="ovrSw" aria-label="覆盖排版"><i></i></button>
+        </div>
+        <div class="lp-row">
+          <span class="lp-label">覆盖配色<small>依赖覆盖排版</small></span>
+          <button class="lp-switch" id="colorSw" aria-label="覆盖配色" disabled><i></i></button>
+        </div>
+      </section>
+    </div>
+
+    <div class="lp-foot">
+      <button class="lp-reset" id="lpReset">恢复默认</button>
+      <span class="lp-saved" id="saved">已保存</span>
+    </div>
+  </aside>
+
+  <div class="backdrop" id="backdrop"></div>
+</div>
+
+<!-- 图标 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-frame" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 9h18M9 9v11"/></symbol>
+</svg>
+
+<script>
+/* =====================================================================
+   版式面板原型
+   —— 只为一件事：让「面板上动一下、右边文字立刻变」这件事能被看见。
+   实现里所有值最终会落到 state.settings 的平铺字段上（见 docs/ebook-layout-plan.md §2），
+   这里用一个同名的 layout 对象模拟。
+   ===================================================================== */
+const FONTS = {
+  serif: '"Songti SC","Source Han Serif SC","Noto Serif CJK SC","SimSun",Georgia,serif',
+  sans: '"PingFang SC","Microsoft YaHei","Source Han Sans SC","Noto Sans CJK SC",system-ui,sans-serif',
+  kai: '"Kaiti SC","KaiTi","STKaiti","Source Han Serif SC",Georgia,serif',
+};
+const RANGE = {
+  size: [14, 28], ls: [-0.5, 2], lh: [1.3, 2.4], para: [0, 32], mg: [8, 120], ms: [480, 1200],
+};
+
+/* 预设：字段与面板一一对应；比较时逐项相等才算命中 */
+const PRESETS = {
+  comfort: { family:"serif", size:19, ls:0.25, lh:1.85, breakMode:"indent", para:10, align:"justify", mg:56, ms:660, hyph:false, punct:true },
+  compact: { family:"sans",  size:17, ls:0,    lh:1.65, breakMode:"space",  para:8,  align:"justify", mg:40, ms:780, hyph:false, punct:true },
+  latin:   { family:"serif", size:17, ls:0,    lh:1.7,  breakMode:"space",  para:12, align:"left",    mg:48, ms:640, hyph:true,  punct:false },
+};
+const DEFAULTS = { ...PRESETS.comfort, spread:true, ovr:false, color:false };
+
+const layout = { ...DEFAULTS };
+
+const $ = (s) => document.querySelector(s);
+const el = {
+  book: $("#book"), page: $("#page"), lp: $("#lp"), note: $("#lpNote"),
+  presetRow: $("#presetRow"), customTag: $("#customTag"), sub: $("#lpSub"),
+  sizeVal: $("#sizeVal"), lsVal: $("#lsVal"), lhVal: $("#lhVal"), paraVal: $("#paraVal"),
+  mgVal: $("#mgVal"), msVal: $("#msVal"), paraRow: $("#paraRow"), paraField: $("#para"),
+  saved: $("#saved"), stage: $("#stage"), backdrop: $("#backdrop"),
+};
+
+/* ---------- 预设反推：不存预设 id，永远从当前值算 ---------- */
+const same = (a, b) => ["family","size","ls","lh","breakMode","para","align","mg","ms","hyph","punct"]
+  .every((k) => a[k] === b[k]);
+function activePreset() {
+  return Object.keys(PRESETS).find((name) => same(layout, PRESETS[name])) || "";
+}
+
+/* ---------- 写值：layout → DOM ---------- */
+function paint() {
+  const root = document.documentElement.style;
+  root.setProperty("--lp-family", FONTS[layout.family]);
+  root.setProperty("--lp-size", layout.size);
+  root.setProperty("--lp-lh", layout.lh);
+  root.setProperty("--lp-ls", layout.ls);
+  root.setProperty("--lp-align", layout.align);
+  root.setProperty("--lp-indent", layout.breakMode === "indent" ? 2 : 0);
+  root.setProperty("--lp-para", layout.breakMode === "space" ? layout.para : 0);
+  root.setProperty("--lp-hyph", layout.hyph ? "auto" : "manual");
+  root.setProperty("--lp-measure", `${layout.ms}px`);
+  root.setProperty("--lp-margin", `${layout.mg}px`);
+  el.book.classList.toggle("is-punct", layout.punct);
+  el.book.classList.toggle("is-ovr", layout.ovr);
+  el.book.classList.toggle("is-color", layout.color);
+
+  // 控件回填
+  el.sizeVal.textContent = layout.size;
+  el.lsVal.textContent = layout.ls > 0 ? `+${layout.ls}` : layout.ls;
+  el.lhVal.textContent = layout.lh.toFixed(2);
+  el.paraVal.textContent = layout.para;
+  el.mgVal.textContent = layout.mg;
+  el.msVal.textContent = layout.ms;
+
+  seg("#familySeg", "f", layout.family);
+  seg("#alignSeg", "a", layout.align);
+  seg("#breakSeg", "b", layout.breakMode);
+  syncRange("#ls", layout.ls, RANGE.ls);
+  syncRange("#lh", layout.lh, RANGE.lh);
+  syncRange("#para", layout.para, RANGE.para);
+  syncRange("#mg", layout.mg, RANGE.mg);
+  syncRange("#ms", layout.ms, RANGE.ms);
+
+  // 段距只在「段间距」模式下露出滑杆与数值
+  const bySpace = layout.breakMode === "space";
+  el.paraRow.hidden = !bySpace;
+  el.paraField.hidden = !bySpace;
+
+  // 字号到头了就禁用步进按钮
+  document.querySelectorAll("#sizeStep button").forEach((b) => {
+    const next = layout.size + Number(b.dataset.d);
+    b.disabled = next < RANGE.size[0] || next > RANGE.size[1];
+  });
+
+  sw("#spreadSw", layout.spread);
+  sw("#hyphSw", layout.hyph);
+  sw("#punctSw", layout.punct);
+  sw("#ovrSw", layout.ovr);
+  sw("#colorSw", layout.color);
+  $("#colorSw").disabled = !layout.ovr;
+
+  // 预设高亮
+  const active = activePreset();
+  document.querySelectorAll(".lp-preset[data-preset]").forEach((b) => {
+    b.classList.toggle("is-on", b.dataset.preset === active);
+  });
+  el.customTag.hidden = Boolean(active);
+}
+
+function seg(sel, key, value) {
+  document.querySelectorAll(`${sel} button`).forEach((b) => {
+    b.classList.toggle("is-on", b.dataset[key] === String(value));
+  });
+}
+function sw(sel, on) {
+  const node = $(sel);
+  node.classList.toggle("is-on", Boolean(on));
+  node.setAttribute("aria-checked", String(Boolean(on)));
+}
+function syncRange(sel, value, [min, max]) {
+  const node = $(sel);
+  node.value = value;
+  node.style.setProperty("--fill", `${((value - min) / (max - min)) * 100}%`);
+}
+
+/* ---------- 落盘模拟：只改数字，不弹提示，符合「静默保存」的产品习惯 ---------- */
+let saveTimer = 0;
+function touch() {
+  paint();
+  el.saved.textContent = "保存中…";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { el.saved.textContent = "已保存"; }, 380);
+}
+
+/* ---------- 交互 ---------- */
+$("#presetRow").addEventListener("click", (event) => {
+  const btn = event.target.closest("[data-preset]");
+  if (!btn) return;
+  Object.assign(layout, PRESETS[btn.dataset.preset]);
+  touch();
+});
+
+$("#familySeg").addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-f]");
+  if (!btn) return;
+  layout.family = btn.dataset.f;
+  touch();
+});
+
+$("#sizeStep").addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-d]");
+  if (!btn) return;
+  const next = layout.size + Number(btn.dataset.d);
+  layout.size = Math.min(RANGE.size[1], Math.max(RANGE.size[0], next));
+  touch();
+});
+
+$("#breakSeg").addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-b]");
+  if (!btn) return;
+  layout.breakMode = btn.dataset.b;
+  touch();
+});
+
+$("#alignSeg").addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-a]");
+  if (!btn) return;
+  layout.align = btn.dataset.a;
+  touch();
+});
+
+["ls", "lh", "para", "mg", "ms"].forEach((id) => {
+  const key = { ls: "ls", lh: "lh", para: "para", mg: "mg", ms: "ms" }[id];
+  $(`#${id}`).addEventListener("input", (event) => {
+    layout[key] = Number(event.target.value);
+    touch();
+  });
+});
+
+[["spreadSw", "spread"], ["hyphSw", "hyph"], ["punctSw", "punct"], ["ovrSw", "ovr"], ["colorSw", "color"]]
+  .forEach(([sel, key]) => {
+    $(`#${sel}`).addEventListener("click", () => {
+      layout[key] = !layout[key];
+      // 关掉排版覆盖时，配色覆盖一并失效——它本来就是排版覆盖的下级
+      if (key === "ovr" && !layout.ovr) layout.color = false;
+      touch();
+    });
+  });
+
+$("#lpReset").addEventListener("click", () => {
+  Object.assign(layout, DEFAULTS);
+  touch();
+});
+
+/* ---------- 面板开合 ---------- */
+function openPanel(open) {
+  el.lp.hidden = !open;
+  el.backdrop.classList.toggle("is-on", open && document.body.classList.contains("is-narrow"));
+}
+$("#lpClose").addEventListener("click", () => openPanel(false));
+el.backdrop.addEventListener("click", () => openPanel(false));
+addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !el.lp.hidden) openPanel(false);
+});
+
+/* ---------- 原型专用：主题 / 窗口宽度 / 固定版面 ---------- */
+$("#themeSeg").addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-t]");
+  if (!btn) return;
+  document.documentElement.dataset.theme = btn.dataset.t;
+  document.querySelectorAll("#themeSeg button").forEach((b) => b.classList.toggle("is-on", b === btn));
+});
+
+$("#widthSeg").addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-w]");
+  if (!btn) return;
+  document.querySelectorAll("#widthSeg button").forEach((b) => b.classList.toggle("is-on", b === btn));
+  el.stage.style.paddingRight = btn.dataset.w === "narrow" ? "calc((100% - 820px))" : "";
+  document.body.classList.toggle("is-narrow", btn.dataset.w === "narrow");
+  el.backdrop.classList.toggle("is-on", btn.dataset.w === "narrow" && !el.lp.hidden);
+});
+
+$("#fixedChk").addEventListener("change", (event) => {
+  const fixed = event.target.checked;
+  el.book.hidden = fixed;
+  $("#fixedArt").hidden = !fixed;
+  el.page.classList.toggle("is-fixed", fixed);
+  el.lp.classList.toggle("is-disabled", fixed);
+  el.note.hidden = !fixed;
+  el.sub.textContent = fixed ? "固定版面：排版由出版方决定" : "只作用于电子书，改动即时生效";
+});
+
+/* 原型里面板常开，方便对照 */
+paint();
+openPanel(true);
+document.getElementById("hint").textContent = "Esc 关闭面板";
+</script>
+</body>
+</html>

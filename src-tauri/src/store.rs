@@ -135,14 +135,33 @@ pub struct Settings {
     pub ebook_font_size: u32,
     /// 电子书行高倍数
     pub ebook_line_height: f64,
-    /// 电子书页边距（px），映射到分页器的 `--_margin`
+    /// 电子书页边距（px），映射到分页器的 `margin` 属性
     pub ebook_margin: u32,
     /// 电子书字体：serif | sans | kai
     pub ebook_family: String,
     /// 电子书对齐：left | justify
     pub ebook_align: String,
-    /// 强制覆盖书内样式：书自带的字体/行高/对齐/配色一律让位给上面的设置
+    /// 覆盖书内排版：书自带的字体/字号/行高/缩进一律让位给上面的设置
     pub ebook_override: bool,
+    /// 电子书字间距（px），可为负
+    pub ebook_letter_spacing: f64,
+    /// 首行缩进（字符数）：0 / 1 / 2。与 `ebook_para_spacing` 是二选一的分段策略
+    pub ebook_indent: u32,
+    /// 段间距（px）；只在「分段方式 = 段间距」时生效
+    pub ebook_para_spacing: u32,
+    /// 版心宽度（px），映射到分页器的 `max-inline-size`
+    pub ebook_measure: u32,
+    /// 列间距（百分比），映射到分页器的 `gap`
+    pub ebook_gap: f64,
+    /// 西文连字符
+    pub ebook_hyphenate: bool,
+    /// 标点挤压：中西文自动间隙 + 标点半角 + 标点不走行首
+    pub ebook_punctuate: bool,
+    /// 覆盖书内配色（字色 / 底色跟随应用主题）。独立于 `ebook_override`，缺省视为开。
+    ///
+    /// 用 `Option` 只是容错：旧版 state.json 没有这个键，读出来是 None，前端按「开」处理；
+    /// 万一哪份数据里是 null 也不会让整份设置反序列化失败。
+    pub ebook_override_color: Option<bool>,
 }
 
 impl Default for Settings {
@@ -159,12 +178,22 @@ impl Default for Settings {
             language: "zh".into(),
             auto_check_update: true,
             ebook_spread: true,
-            ebook_font_size: 18,
-            ebook_line_height: 1.8,
-            ebook_margin: 48,
+            // 这一组默认值 = 版式面板的「舒适中文」预设（见 reader/ebook-layout.js）：
+            // 出厂就落在某一套预设上，面板打开时第一眼是「已选中」，不是「自定义」
+            ebook_font_size: 19,
+            ebook_line_height: 1.85,
+            ebook_margin: 56,
             ebook_family: "serif".into(),
             ebook_align: "justify".into(),
             ebook_override: false,
+            ebook_letter_spacing: 0.25,
+            ebook_indent: 2,
+            ebook_para_spacing: 0,
+            ebook_measure: 660,
+            ebook_gap: 8.0,
+            ebook_hyphenate: false,
+            ebook_punctuate: true,
+            ebook_override_color: None,
         }
     }
 }

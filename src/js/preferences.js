@@ -67,15 +67,8 @@ function syncSettingsUI() {
   $$("#fontSizeSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.size) === settings.fontSize));
   $$("#lineHeightSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.lh) === settings.lineHeight));
   $$("#measureSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.measure) === settings.measure));
-  /* 电子书一组：字号是数字，字体与对齐是字符串，比较方式不同 */
-  $$("#ebookSizeSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.esize) === Number(settings.ebookFontSize)));
-  $$("#ebookLhSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.elh) === Number(settings.ebookLineHeight)));
-  $$("#ebookMarginSeg button").forEach((button) => button.classList.toggle("is-on", Number(button.dataset.emargin) === Number(settings.ebookMargin)));
-  $$("#ebookFamilySeg button").forEach((button) => button.classList.toggle("is-on", button.dataset.efamily === (settings.ebookFamily || "serif")));
-  $$("#ebookAlignSeg button").forEach((button) => button.classList.toggle("is-on", button.dataset.ealign === (settings.ebookAlign || "justify")));
-  const override = Boolean(settings.ebookOverride);
-  $("#switchEbookOverride").classList.toggle("is-on", override);
-  $("#switchEbookOverride").setAttribute("aria-checked", String(override));
+  /* 电子书版式不在这里同步：它有自己的面板（reader/ebook-layout-panel.js），
+     打开书时由工具栏的 Aa 调出来。通用设置里只留一行指路。 */
   $$("#langSeg button").forEach((button) => button.classList.toggle("is-on", button.dataset.lang === getLanguage()));
   $("#switchCtx").classList.toggle("is-on", settings.showCtx);
   $("#switchCtx").setAttribute("aria-checked", String(settings.showCtx));

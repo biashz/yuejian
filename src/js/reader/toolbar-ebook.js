@@ -15,13 +15,18 @@ import { t } from "../i18n.js";
  * @param {boolean} options.dead 打开失败：没有书可翻，只剩侧栏开关有意义
  * @param {boolean} options.marked 当前页是否已加书签
  * @param {boolean} options.ctxOpen 侧栏是否展开
+ * @param {boolean} options.layoutOpen 版式面板是否展开
  * @param {string} options.paneTools 分栏工具（双栏时才有）
  * @returns {string}
  */
-export function ebookToolbar({ fraction, spread, fixed, dead, marked, ctxOpen, paneTools }) {
+export function ebookToolbar({ fraction, spread, fixed, dead, marked, ctxOpen, layoutOpen, paneTools }) {
   const pct = Math.round((fraction || 0) * 100);
   const separator = '<span class="tool-sep"></span>';
+  // 版式入口对「打不开的书」也留着：用户可能只是这本书坏了，改完偏好再去开别的书。
+  // 它和侧栏开关放在一组，都是「界面怎么摆」这一类的按钮。
   const contents = `<div class="tool-group">
+        <button class="tool-btn ${layoutOpen ? "is-on" : ""}" data-act="ebook-layout"
+          title="${t("layout.title")}" aria-pressed="${Boolean(layoutOpen)}"><svg class="ic"><use href="#i-type"/></svg></button>
         <button class="tool-btn ${ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
       </div>${paneTools}`;
 

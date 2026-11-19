@@ -139,6 +139,7 @@ function renderToolbar() {
       dead: !pane?.ebook?.book,
       marked: state.ebookMarked,
       ctxOpen: state.ctxOpen,
+      layoutOpen: state.layoutOpen,
       paneTools,
     });
   } else {

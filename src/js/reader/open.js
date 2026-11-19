@@ -101,6 +101,9 @@ async function openBook(id, pane = activePane(), { encoding } = {}) {
   // 本栏文档变化后刷新工具栏：两栏是否同文档决定联动按钮的显示
   renderToolbar();
   updateStatus();
+  // 版式面板只对电子书有意义：换文档后要么刷新禁用态，要么直接收起。
+  // 动态 import 是为了不引入静态环（面板要 import 阅读器，阅读器又要 import 这里）
+  import("./ebook-layout-panel.js").then((mod) => mod.refreshLayoutPanel()).catch(() => {});
   // 分栏中新栏刚加载完：两栏同文档时立即对齐到活动栏位置，避免联动起点错位
   if (splitMode && pane.index !== activePaneIndex) syncToActivePane();
 }

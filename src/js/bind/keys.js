@@ -14,6 +14,7 @@ import { importDocuments } from "../actions.js";
 import { openPalette, closePalette, paletteItems, renderPalette, runPalette } from "../palette.js";
 import { flushProgress } from "../reader/progress.js";
 import { ebookStep, ebookChapter } from "../reader/ebook-open.js";
+import { setLayoutPanel } from "../reader/ebook-layout-panel.js";
 import { toggleBookmark } from "../reader/bookmarks.js";
 
 export function bindKeyEvents() {
@@ -54,6 +55,8 @@ export function bindKeyEvents() {
       if (zoomMenuOpen) setZoomMenu(false);
       else if (paletteOpen) closePalette();
       else if (settingsOpen) closeSettings();
+      // 版式面板在「退出阅读」之前收：它是阅读视图里的一层，Esc 应该先关这一层
+      else if (state.layoutOpen) setLayoutPanel(false);
       else if (state.view === "reading") setView("library");
       return;
     }

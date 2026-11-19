@@ -31,6 +31,9 @@ const state = {
   ebookFraction: 0,
   /* 当前页是否已加书签：工具栏按钮的亮灭读它，写入只发生在 bookmarks.js 与 relocate */
   ebookMarked: false,
+  /* 版式面板是否展开。放这里而不是面板模块内部，是为了让工具栏直接读，
+     不必反向 import 面板（面板要 import 阅读器，阅读器又要 import 工具栏，会成环） */
+  layoutOpen: false,
   findQuery: "",
   paletteIndex: 0,
 };

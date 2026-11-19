@@ -9,8 +9,16 @@ import { bindPanelEvents } from "./panels.js";
 import { bindKeyEvents } from "./keys.js";
 import { bindCategoryEvents } from "./category.js";
 import { bindBookDrag } from "./book-drag.js";
+import { mountLayoutPanel } from "../reader/ebook-layout-panel.js";
+import { $ } from "../core/dom.js";
 
 export function bind() {
+  // 先把版式面板挂进阅读区（只建 DOM，不显示）：它的事件绑在自己身上，
+  // 不依赖下面的委托，放最前面省得漏
+  mountLayoutPanel();
+  // 工具栏搬进阅读区里：`.read-toolbar` 是 `left: 50%` 居中的，留在整行里的话，
+  // 右侧面板一开就会有一部分压在面板底栏上（「恢复默认」直接被盖住点不到）
+  $(".reader-panes").append($("#readToolbar"));
   bindShelfEvents();
   bindReaderEvents();
   bindPanelEvents();

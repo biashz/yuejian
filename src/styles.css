@@ -852,7 +852,9 @@ body.is-book-dragging .book-card { cursor: grabbing; }
 
 .reader-body { flex: 1; min-height: 0; display: flex; position: relative; }
 /* 双栏阅读：左右各占一半，中缝用 1px 分隔线 */
-.reader-panes { flex: 1; min-width: 0; display: flex; }
+/* 相对定位是给浮动工具栏用的：它要居中于「阅读区」而不是整行，
+   否则右侧开了版式 / 目录面板之后，居中的工具栏会压到面板底栏上 */
+.reader-panes { flex: 1; min-width: 0; display: flex; position: relative; }
 .reader-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 .reader-pane[hidden] { display: none; }
 .reader-panes.is-split .reader-pane + .reader-pane { border-left: 1px solid var(--line); }
@@ -1605,6 +1607,192 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 }
 .present-hint.is-hidden { opacity: 0; }
 .present-page { right: 22px; }
+
+/* ---------------- 版式面板（电子书） ----------------
+ * 与通用设置分开：那些是「装完机调一次」的，这块是看书时反复调的。
+ * 宽窗口下它**参与布局**（把阅读区挤窄 332px），因为调的就是文字的宽窄疏密，
+ * 盖住正文等于让人闭着眼睛调；窄窗口退回抽屉 + 遮罩。
+ */
+.layout-panel {
+  width: 332px;
+  flex: none;
+  min-height: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 92%, var(--surface));
+  overflow: hidden;
+  transition: width 240ms var(--ease), opacity 180ms var(--ease);
+}
+/* 收起来时宽度归零，不是 display:none——留出 240ms 的过渡，视觉上「滑走」而不是「跳没」 */
+.layout-panel.is-hidden { width: 0; opacity: 0; border-left: 0; }
+/* 收合动画期间内容不跟着重排：三块各自钉住 332px，由外层 overflow 裁 */
+.lp-head, .lp-body, .lp-foot { min-width: 332px; }
+
+.lp-head {
+  flex: none; display: flex; align-items: flex-start; gap: 10px;
+  padding: 14px 14px 12px 16px; border-bottom: 1px solid var(--line);
+}
+.lp-title { flex: 1; min-width: 0; }
+.lp-head .eyebrow {
+  margin: 0 0 3px; font-family: var(--font-mono); font-size: 9px;
+  letter-spacing: 0.18em; color: var(--ink-3);
+}
+.lp-head h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+.lp-sub { margin: 4px 0 0; font-size: 11px; color: var(--ink-3); line-height: 1.45; }
+
+.lp-body {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 2px 16px 18px;
+}
+.lp-body::-webkit-scrollbar { width: 10px; }
+.lp-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink-3) 30%, transparent);
+  border: 3px solid transparent; background-clip: content-box; border-radius: 99px;
+}
+.lp-body:hover::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink-3) 58%, transparent); }
+
+.lp-notice {
+  margin: 12px 0 0; padding: 8px 10px; border-radius: var(--r-sm);
+  background: var(--accent-weak); color: var(--accent-ink);
+  font-size: 11px; line-height: 1.5;
+}
+
+.lp-group { padding: 14px 0 2px; border-top: 1px solid var(--line); }
+.lp-group:first-of-type { border-top: 0; }
+.lp-group h3 {
+  margin: 0 0 10px; font-family: var(--font-mono); font-size: 9px; font-weight: 500;
+  letter-spacing: 0.18em; color: var(--ink-3);
+}
+
+/* 预设 chip */
+.lp-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.lp-chip {
+  padding: 5px 10px; border-radius: var(--r-pill);
+  border: 1px solid var(--line-strong); color: var(--ink-2);
+  font-size: 11.5px; line-height: 1.4;
+  transition: border-color 140ms var(--ease), color 140ms var(--ease);
+}
+.lp-chip:hover { border-color: var(--ink-3); color: var(--ink); }
+.lp-chip.is-on { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.lp-chip.is-custom { border-style: dashed; color: var(--ink-3); cursor: default; }
+.lp-chip.is-custom:hover { border-color: var(--line-strong); color: var(--ink-3); }
+.lp-chip[hidden] { display: none; }
+
+/* 一行：标签在左、控件在右 */
+.lp-row { display: flex; align-items: center; gap: 10px; min-height: 28px; margin-bottom: 10px; }
+.lp-label { flex: 1; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
+.lp-label small { display: block; margin-top: 1px; font-size: 10.5px; color: var(--ink-3); line-height: 1.4; }
+.lp-val {
+  flex: none; min-width: 38px; text-align: right;
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+/* 隐藏必须压过 .lp-row 的 display:flex，否则 UA 的 [hidden] 会被它盖掉 */
+.lp-row[hidden] { display: none; }
+.lp-body > [hidden] { display: none; }
+
+.lp-seg { display: flex; flex: none; border: 1px solid var(--line-strong); border-radius: var(--r-sm); overflow: hidden; }
+.lp-seg button {
+  padding: 4px 8px; font-size: 11.5px; line-height: 1.4;
+  color: var(--ink-2); background: var(--surface);
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+.lp-seg button + button { border-left: 1px solid var(--line); }
+.lp-seg button:hover:not(.is-on):not(:disabled) { background: var(--surface-2); }
+.lp-seg button.is-on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.lp-seg.is-block { display: flex; width: 100%; margin: 0 0 10px; }
+.lp-seg.is-block button { flex: 1; text-align: center; padding: 5px 4px; }
+
+/* 字号步进 */
+.lp-step { display: flex; flex: none; align-items: center; border: 1px solid var(--line-strong); border-radius: var(--r-sm); overflow: hidden; }
+.lp-step button {
+  width: 26px; height: 26px; display: grid; place-items: center;
+  font-size: 12.5px; color: var(--ink-2);
+}
+.lp-step button:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+.lp-step button:disabled { opacity: 0.32; cursor: default; }
+.lp-num {
+  min-width: 28px; text-align: center;
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 滑杆 */
+.lp-range {
+  -webkit-appearance: none; appearance: none;
+  display: block; width: 100%; height: 18px; margin: 0 0 12px;
+  background: transparent;
+}
+.lp-range::-webkit-slider-runnable-track {
+  height: 2px; border-radius: 2px;
+  background: linear-gradient(to right, var(--ink) var(--_fill, 50%), var(--line-strong) var(--_fill, 50%));
+}
+.lp-range::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5px;
+  border-radius: 50%; background: var(--surface); border: 1.5px solid var(--ink);
+  transition: transform 120ms var(--ease);
+}
+.lp-range:hover::-webkit-slider-thumb { transform: scale(1.12); }
+.lp-range:active::-webkit-slider-thumb { background: var(--ink); }
+.lp-range:disabled { opacity: 0.4; }
+
+/* 开关 */
+.lp-switch {
+  flex: none; width: 34px; height: 19px; padding: 2px;
+  display: flex; align-items: center; justify-content: flex-start;
+  border-radius: var(--r-pill); background: var(--line-strong);
+  transition: background 180ms var(--ease);
+}
+.lp-switch i {
+  display: block; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--surface); box-shadow: var(--shadow-sm);
+  transition: transform 180ms var(--ease);
+}
+.lp-switch.is-on { background: var(--accent); }
+.lp-switch.is-on i { transform: translateX(15px); }
+.lp-switch:disabled { opacity: 0.4; cursor: default; }
+
+/* 固定版面（CBZ / FXL）：整块正文压暗且不可点，说明条留在最上面 */
+.layout-panel.is-fixed .lp-body > *:not(.lp-notice) { opacity: 0.42; pointer-events: none; }
+
+.lp-foot {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border-top: 1px solid var(--line);
+}
+.lp-reset {
+  padding: 5px 11px; border-radius: var(--r-sm); border: 1px solid var(--line-strong);
+  font-size: 11.5px; color: var(--ink-2);
+}
+.lp-reset:hover { border-color: var(--ink-3); color: var(--ink); }
+.lp-saved { margin-left: auto; font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.04em; }
+
+/* 窄窗口：浮成抽屉，配一层遮罩；此时不再挤占阅读区 */
+.layout-scrim { display: none; }
+@media (max-width: 1023px) {
+  .layout-panel {
+    position: absolute; top: 0; right: 0; bottom: 0; z-index: 22;
+    width: min(332px, calc(100% - 40px));
+    border-left: 1px solid var(--line-strong);
+    box-shadow: var(--shadow-lg);
+    transition: transform 240ms var(--ease), opacity 180ms var(--ease);
+  }
+  .layout-panel.is-hidden {
+    width: min(332px, calc(100% - 40px));
+    border-left: 1px solid var(--line-strong);
+    opacity: 1; transform: translateX(100%);
+  }
+  .lp-head, .lp-body, .lp-foot { min-width: 0; }
+  .layout-scrim {
+    display: block; position: absolute; inset: 0; z-index: 21;
+    background: color-mix(in srgb, var(--paper) 40%, rgba(20, 16, 12, 0.42));
+    opacity: 0; pointer-events: none;
+    transition: opacity 200ms var(--ease);
+  }
+  .layout-scrim.is-on { opacity: 1; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .layout-panel, .layout-scrim, .lp-switch, .lp-switch i, .lp-range::-webkit-slider-thumb { transition: none; }
+}
 
 /* 目录面板 */
 .context-panel {

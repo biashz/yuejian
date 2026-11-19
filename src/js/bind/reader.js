@@ -13,6 +13,7 @@ import { setCtxOpen, switchCtxTab, renderCtx } from "../reader/ctx.js";
 import { listOf, removeHighlight } from "../reader/highlight.js";
 import { refreshTextView, openBook } from "../reader/open.js";
 import { ebookStep, ebookSeek, toggleEbookSpread } from "../reader/ebook-open.js";
+import { toggleLayoutPanel } from "../reader/ebook-layout-panel.js";
 import { toggleBookmark, removeBookmark } from "../reader/bookmarks.js";
 import { scrollToLine } from "../reader-bigtext.js";
 import { presenting, presentEntering, enterPresent, exitPresent, presentStep, handlePresentWheel, schedulePresentPaint } from "../reader/present.js";
@@ -183,6 +184,7 @@ export function bindReaderEvents() {
     if (act === "ebook-prev") ebookStep(-1);
     if (act === "ebook-next") ebookStep(1);
     if (act === "ebook-spread") toggleEbookSpread();
+    if (act === "ebook-layout") toggleLayoutPanel();
     if (act === "ebook-mark") {
       const pane = activePane();
       toggleBookmark(pane).then((marked) => {

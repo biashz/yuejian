@@ -37,6 +37,8 @@
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
     <symbol id="i-file-text" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></symbol>
+    <!-- 版式面板入口：一个「A」，与 Kindle / Apple Books 的 Aa 同一语义 -->
+    <symbol id="i-type" viewBox="0 0 24 24"><path d="M5 19 11 5l6 14"/><path d="M7.5 14h7"/></symbol>
     <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
@@ -371,52 +373,7 @@
 
       <section class="setting-group">
         <h3 data-i18n="settings.ebook">电子书</h3>
-        <p class="setting-note" data-i18n="settings.ebookNote">以下几项只作用于 EPUB，与上面 PDF / 文本的排版互不影响。</p>
-        <div class="setting-row">
-          <label data-i18n="settings.fontSize">正文字号</label>
-          <div class="segmented" id="ebookSizeSeg">
-            <button data-esize="16">16</button>
-            <button data-esize="18" class="is-on">18</button>
-            <button data-esize="20">20</button>
-            <button data-esize="22">22</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <label data-i18n="settings.lineHeight">行高</label>
-          <div class="segmented" id="ebookLhSeg">
-            <button data-elh="1.6" data-i18n="settings.compact">紧凑</button>
-            <button data-elh="1.8" class="is-on" data-i18n="settings.standard">标准</button>
-            <button data-elh="2.1" data-i18n="settings.loose">宽松</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <label data-i18n="settings.ebookMargin">页边距</label>
-          <div class="segmented" id="ebookMarginSeg">
-            <button data-emargin="24" data-i18n="settings.narrow">窄</button>
-            <button data-emargin="48" class="is-on" data-i18n="settings.standard">标准</button>
-            <button data-emargin="72" data-i18n="settings.wide">宽</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <label data-i18n="settings.ebookFamily">字体</label>
-          <div class="segmented" id="ebookFamilySeg">
-            <button data-efamily="serif" data-i18n="settings.ebookSerif">宋体</button>
-            <button data-efamily="sans" data-i18n="settings.ebookSans">黑体</button>
-            <button data-efamily="kai" data-i18n="settings.ebookKai">楷体</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <label data-i18n="settings.ebookAlign">对齐</label>
-          <div class="segmented" id="ebookAlignSeg">
-            <button data-ealign="left" data-i18n="settings.ebookLeft">左对齐</button>
-            <button data-ealign="justify" data-i18n="settings.ebookJustify">两端对齐</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <label data-i18n="settings.ebookOverride">强制覆盖书内样式</label>
-          <button class="switch" id="switchEbookOverride" role="switch" aria-checked="false"><span></span></button>
-        </div>
-        <p class="setting-note" data-i18n="settings.ebookOverrideNote">开启后，书里自带的字体、字号与配色都会让位给上面的设置；夜读模式下白底书页也会一并压成深色。</p>
+        <p class="setting-note" data-i18n="settings.ebookMoved">电子书的版式设置已移到阅读工具栏的「Aa」。</p>
       </section>
 
       <section class="setting-group">

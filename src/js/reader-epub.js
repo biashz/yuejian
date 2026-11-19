@@ -38,6 +38,16 @@ function importFoliate() {
   return foliate;
 }
 
+/**
+ * 分页器此刻能不能安全地重排。
+ *
+ * `render()` 会往**当前章节文档**的 `documentElement` / `body` 上写样式，而切书、
+ * 载入章节的空档里 iframe 的文档可能已经有 `<html>` 还没有 `<body>`——这时
+ * `setAttribute("max-inline-size")` 触发的内部 `render()` 就会以
+ * 「destructure 一个 null」告终。查一下它的 `getContents()` 里有没有能排版的文档。
+ */
+const paginatorReady = (renderer) => Boolean(renderer?.getContents?.()?.[0]?.doc?.body);
+
 export class EbookReader {
   /**
    * @param {object} options
@@ -58,9 +68,9 @@ export class EbookReader {
     this.onAnnotation = onAnnotation;
     /* 用户选的版式；真正的列数写在 renderer 的 max-column-count 上 */
     this.spread = spread;
-    /* 注入给章节文档的版式 CSS 与页边距，换书后由 `open()` 再贴一次 */
+    /* 注入给章节文档的版式 CSS 与页面参数（页边距/版心/列距），换书后由 `open()` 再贴一次 */
     this.css = "";
-    this.margin = null;
+    this.layout = {};
     this.view = null;
     this.book = null;
     this.path = "";
@@ -126,7 +136,12 @@ export class EbookReader {
     guardBook(this.book);
 
     view.addEventListener("relocate", (event) => this.handleRelocate(event.detail));
-    view.addEventListener("load", (event) => this.onContent?.(event.detail?.doc));
+    view.addEventListener("load", (event) => {
+      // 换章的空档里 `applyLayout` 可能整段跳过（文档还没 body），这里补一次：
+      // 只写属性不重排，紧接着分页器自己就会 render
+      if (this.css) this.applyLayout(this.css, this.layout, { render: false });
+      this.onContent?.(event.detail?.doc);
+    });
     // 外链交给系统浏览器：留在应用里会把当前阅读页顶掉，而且 WebView 里也没有返回按钮
     view.addEventListener("external-link", (event) => {
       event.preventDefault();
@@ -148,7 +163,7 @@ export class EbookReader {
     // 而 `#top` 是第一次 render 才建出来的，早设一步就是空引用
     this.setSpread(this.spread);
     // 版式同理：`setStyles` 要写当前文档的 `<style>`，而那张表是 `afterLoad` 才建的
-    if (this.css) this.applyTypography(this.css, this.margin);
+    if (this.css) this.applyLayout(this.css, this.layout);
   }
 
   /**
@@ -166,13 +181,20 @@ export class EbookReader {
     if (this.fixed) return;
     const renderer = this.view?.renderer;
     if (!renderer) return;
+    // 没就绪就别设：列数属性会连带触发一次 render()，空档里调会崩（见 paginatorReady）
+    if (!paginatorReady(renderer)) return;
     renderer.setAttribute("max-column-count", this.spread ? "2" : "1");
     renderer.render?.();
   }
 
   /**
-   * 版式设置：字号 / 行高 / 字体 / 对齐走章节文档里追加的那张样式表，
-   * 页边距走分页器自己的 `--_margin` 变量——它只参与算版心，不下发给书里的 DOM。
+   * 版式设置：字号 / 行高 / 字体 / 对齐 / 缩进 / 段距 / 标点走章节文档里追加的那张样式表，
+   * 页边距 / 版心宽度 / 列间距走分页器自己的属性——它们参与「每栏多宽、每页几栏」的计算，
+   * 不下发给书里的 DOM。
+   *
+   * 为什么用 `setAttribute` 而不是 `style.setProperty("--_margin")`：那几个 CSS 变量
+   * 是写在分页器 `#top` 元素自己的规则里的，宿主元素上的同名内联变量只会**被继承**，
+   * 输给 `#top` 自己那份声明。属性回调才是写进 `#top.style` 的正路。
    *
    * 两样都记在实例上：换书会重建 `<foliate-view>`，重开之后要能原样贴回去。
    * 改动会改变每页容下多少字，所以最后必须重排一次，否则页码还按旧版式算。
@@ -180,15 +202,22 @@ export class EbookReader {
    * 固定版面不吃这套：书页尺寸与排版是出版方定的，改字号只会把图放大，
    * 所以照存不照做（换成回流体裁的书再贴上去）。
    */
-  applyTypography(css, margin) {
+  applyLayout(css, layout = {}, { render = true } = {}) {
     this.css = css;
-    this.margin = margin;
+    this.layout = { ...this.layout, ...layout };
     if (this.fixed) return;
     const renderer = this.view?.renderer;
     if (!renderer) return;
-    if (Number.isFinite(margin)) renderer.style.setProperty("--_margin", `${margin}px`);
+    // 样式表可以先贴：分页器把它存起来，下次 `afterLoad` 会自己写进去
     if (css) renderer.setStyles?.(css);
-    renderer.render?.();
+    // 页面参数与重排必须等文档就绪：`max-inline-size` 会由分页器内部触发一次
+    // `render()`，绕不过外面这层判断（值已经记在 `this.layout` 上，下一章载入时补）
+    if (!paginatorReady(renderer)) return;
+    const { margin, measure, gap } = this.layout;
+    if (Number.isFinite(margin)) renderer.setAttribute("margin", `${margin}px`);
+    if (Number.isFinite(measure)) renderer.setAttribute("max-inline-size", `${measure}px`);
+    if (Number.isFinite(gap)) renderer.setAttribute("gap", `${gap}%`);
+    if (render) renderer.render?.();
   }
 
   /** 贴一份划线列表（增删都由 `highlight.js` 整份重贴，这里只存下来再画一遍） */

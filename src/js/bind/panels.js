@@ -17,18 +17,7 @@ import { importDocuments } from "../actions.js";
 import { openPalette, closePalette, renderPalette, paletteItems, runPalette } from "../palette.js";
 import { updater, handleUpdateAction, installUpdate, hideInstallPrompt } from "../update-ui.js";
 import { refreshEbookStyles } from "../reader/ebook-open.js";
-
-/**
- * 电子书版式的五个分段选择器：选择器 / data 属性 / 写入哪个字段。
- * 写成表是因为处理逻辑一模一样——改值、重贴样式、同步按钮、落盘。
- */
-const EBOOK_SEGS = [
-  ["#ebookSizeSeg", "esize", (v) => { state.settings.ebookFontSize = Number(v); }],
-  ["#ebookLhSeg", "elh", (v) => { state.settings.ebookLineHeight = Number(v); }],
-  ["#ebookMarginSeg", "emargin", (v) => { state.settings.ebookMargin = Number(v); }],
-  ["#ebookFamilySeg", "efamily", (v) => { state.settings.ebookFamily = v; }],
-  ["#ebookAlignSeg", "ealign", (v) => { state.settings.ebookAlign = v; }],
-];
+import { syncLayoutPanel } from "../reader/ebook-layout-panel.js";
 
 export function bindPanelEvents() {
   // 命令面板
@@ -98,23 +87,7 @@ export function bindPanelEvents() {
     renderToolbar();
     persistSettings();
   });
-  // 电子书版式：五个分段选择器只有字段不同，绑一次就够
-  for (const [selector, attr, set] of EBOOK_SEGS) {
-    $(selector).addEventListener("click", (event) => {
-      const button = event.target.closest(`[data-${attr}]`);
-      if (!button) return;
-      set(button.dataset[attr]);
-      refreshEbookStyles();
-      syncSettingsUI();
-      persistSettings();
-    });
-  }
-  $("#switchEbookOverride").addEventListener("click", () => {
-    state.settings.ebookOverride = !state.settings.ebookOverride;
-    refreshEbookStyles();
-    syncSettingsUI();
-    persistSettings();
-  });
+  // 电子书版式不再绑在这里：它有自己的面板（reader/ebook-layout-panel.js）
   $("#switchCtx").addEventListener("click", () => {
     state.settings.showCtx = !state.settings.showCtx;
     setCtxOpen(state.settings.showCtx);
@@ -142,6 +115,8 @@ export function bindPanelEvents() {
     setTheme("paper", true);
     applySettings();
     refreshEbookStyles();
+    // 版式面板开着的时候一并刷：它读的是同一份 settings，不刷就停在旧值上
+    syncLayoutPanel();
     syncSettingsUI();
     renderToolbar();
     updateStatus();
