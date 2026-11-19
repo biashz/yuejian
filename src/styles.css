@@ -702,6 +702,15 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
   gap: 30px 24px;
 }
+/* 筛完一份都不剩：提示铺满整行，落在「全部文档」空出来的那一片里，居中且略偏上。
+   padding-bottom 比顶部多留一截，把视觉中心抬到偏上三分之一处——正中的话，
+   上面顶着标题、下面一大片空白，反而显得是没渲染完 */
+.book-grid.is-empty {
+  flex: 1;
+  align-content: center;
+  padding-bottom: clamp(40px, 9vh, 120px);
+}
+.book-grid.is-empty > .ctx-empty { grid-column: 1 / -1; }
 .book-card {
   cursor: pointer;
   animation: rise 560ms var(--ease) both;

@@ -96,6 +96,8 @@ function renderBookList(books) {
 
 function renderGrid(books) {
   const grid = $("#bookGrid");
+  // 筛空时给网格一个标记：空态要铺满整行、在「全部文档」剩下的空间里居中（见 styles.css）
+  grid.classList.toggle("is-empty", books.length === 0);
   if (!books.length) {
     grid.innerHTML = state.books.length ? `<div class="ctx-empty">${emptyStateText()}</div>` : "";
     return;

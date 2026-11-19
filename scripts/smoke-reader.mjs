@@ -569,6 +569,46 @@ async function main() {
     await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length >= 8", "书架渲染");
     check("启动完成，书架渲染 8 本书", true);
 
+    // 筛完一份不剩时，提示要落在「全部文档」空出来的那一片中间、且略偏上：
+    // 铺满整行 + 垂直居中 + 底部多留白。挑一个当前确实没有文档的类型来筛
+    const emptyLayout = await evaluate(ws, `(async () => {
+      // 直接改 state 再重绘：这里只验空态摆法，不依赖筛选按钮的监听是否已绑上
+      const { state } = await import("/js/core/session.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      const emptyKind = ["pdf", "markdown", "text", "ebook"]
+        .find((kind) => !state.books.some((book) => book.kind === kind));
+      if (emptyKind) state.filter = emptyKind;
+      else state.query = "zzz-没有这本书";
+      renderLibrary();
+      const grid = document.querySelector("#bookGrid");
+      const hint = grid.querySelector(".ctx-empty");
+      const head = document.querySelector("#gridHead");
+      const view = document.querySelector("#view-library");
+      if (!hint) return { found: false, trigger: emptyKind || "query",
+        books: state.books.length, cards: document.querySelectorAll("#bookGrid .book-card").length };
+      const g = grid.getBoundingClientRect(), h = hint.getBoundingClientRect();
+      const hr = head.getBoundingClientRect(), v = view.getBoundingClientRect();
+      return { found: true, trigger: emptyKind || "query",
+        cards: document.querySelectorAll("#bookGrid .book-card").length,
+        dx: Math.round(h.left + h.width / 2 - (g.left + g.width / 2)),
+        spans: h.width >= g.width - 4,
+        // 提示中心在「抬头底 → 视图底」这段里的相对位置：0 贴顶、1 贴底、0.5 正中
+        ratio: +(((h.top + h.height / 2) - hr.bottom) / (v.bottom - hr.bottom)).toFixed(2) };
+    })()`);
+    check("筛空时提示在「全部文档」里居中偏上",
+      emptyLayout.found && emptyLayout.cards === 0 && emptyLayout.spans
+        && Math.abs(emptyLayout.dx) <= 2 && emptyLayout.ratio > 0.25 && emptyLayout.ratio < 0.5,
+      `触发 ${emptyLayout.trigger} · 卡片 ${emptyLayout.cards}，水平差 ${emptyLayout.dx}px，` +
+      `铺满整行 ${emptyLayout.spans}，垂直落点 ${emptyLayout.ratio}（0.25–0.5 为偏上）`);
+    await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      state.filter = "all";
+      state.query = "";
+      renderLibrary();
+    })()`);
+    await sleep(180);
+
     // CSP：既确认策略按 tauri.conf.json 下发，也确认它真的生效（内联脚本被拦）
     const sentCsp = await fetch(`${origin}/`).then((res) => res.headers.get("content-security-policy"));
     const inlineBlocked = await evaluate(ws, `(async () => {
