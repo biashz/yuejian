@@ -9,6 +9,7 @@
 import { $, escapeHtml } from "../core/dom.js";
 import { t } from "../i18n.js";
 import { activePane } from "./panes.js";
+import { marksToolsHtml } from "./marks-tools.js";
 
 function renderMarks() {
   const body = $("#ctxBody");
@@ -19,7 +20,8 @@ function renderMarks() {
     return;
   }
   body.innerHTML = `
-    <div class="mark-count">${t("reader.markCount", { count: marks.length })}</div>
+    <div class="mark-count"><span>${t("reader.markCount", { count: marks.length })}</span>${
+      marksToolsHtml(true)}</div>
     ${marks.map((mark, index) => `
       <div class="mark-row">
         <button class="find-hit mark-main" data-mark-hit="${index}">

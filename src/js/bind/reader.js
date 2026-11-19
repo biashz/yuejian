@@ -15,6 +15,7 @@ import { refreshTextView, openBook } from "../reader/open.js";
 import { ebookStep, ebookSeek, toggleEbookSpread } from "../reader/ebook-open.js";
 import { toggleLayoutPanel } from "../reader/ebook-layout-panel.js";
 import { toggleBookmark, removeBookmark } from "../reader/bookmarks.js";
+import { exportMarks, copyMarks } from "../reader/marks-export.js";
 import { scrollToLine } from "../reader-bigtext.js";
 import { presenting, presentEntering, enterPresent, exitPresent, presentStep, handlePresentWheel, schedulePresentPaint } from "../reader/present.js";
 import { applySettings, syncSettingsUI, persistSettings, toggleZen } from "../preferences.js";
@@ -96,6 +97,16 @@ export function bindReaderEvents() {
       if (goto.dataset.kind === "pdf") goPage(Number(goto.dataset.goto));
       else if (goto.dataset.kind === "ebook") activePane()?.ebook?.goTo(goto.dataset.goto);
       else if (activePane()) scrollToHeading(activePane().scrollArea, goto.dataset.goto);
+      return;
+    }
+    // 摘录的两个出口。放在书签/划线的列表项之前判：这两个按钮是列表的兄弟
+    // 节点而不是列表项内部，顺序其实无妨，但先判「页级动作」更符合阅读顺序
+    if (event.target.closest("[data-export-marks]")) {
+      exportMarks();
+      return;
+    }
+    if (event.target.closest("[data-copy-marks]")) {
+      copyMarks();
       return;
     }
     // 书签：跳过去 / 删掉。两者是兄弟节点，先判删除，免得被上一条抢走

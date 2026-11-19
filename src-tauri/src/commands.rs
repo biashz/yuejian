@@ -728,6 +728,39 @@ pub fn set_highlight(
     Ok(updated)
 }
 
+/// 把前端拼好的摘录写到用户选定的文件。
+///
+/// 内容由前端生成（`reader/export-marks.js`）：那是纯字符串处理，单元边界清楚，
+/// 冒烟能直接断言输出形状；Rust 这边只负责弹保存框与落盘，不掺和格式。
+///
+/// 三个约定：
+/// ① **取消返回空串**，不返回 Err——用户按「取消」不是失败，前端据此不弹提示；
+/// ② 写 UTF-8 **无 BOM**：Markdown 是给别的软件读的，BOM 会被部分解析器当成正文；
+/// ③ 走 `spawn_blocking`：`rfd` 的保存框是阻塞调用，直接在命令线程里开会卡住 IPC。
+#[tauri::command]
+pub async fn save_text_file(default_name: String, content: String) -> Result<String, String> {
+    let fallback = "excerpt.md".to_string();
+    let name = {
+        let trimmed = default_name.trim();
+        if trimmed.is_empty() { fallback } else { trimmed.to_string() }
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("保存摘录")
+            .set_file_name(name)
+            .add_filter("Markdown", &["md"])
+            .add_filter("文本文件", &["txt"])
+            .save_file()
+        else {
+            return Ok(String::new());
+        };
+        fs::write(&path, content.as_bytes()).map_err(|err| format!("写入失败：{err}"))?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
 #[tauri::command]
 pub fn toggle_favorite(state: State<'_, StoreState>, id: String) -> Result<Book, String> {
     let mut data = lock(&state)?;

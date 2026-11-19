@@ -19,4 +19,12 @@ export function convertFileSrc(path) {
   return tauri.core.convertFileSrc(path);
 }
 
+/**
+ * 弹系统保存框写入一段文本，返回落盘路径。
+ * 用户取消时返回空串——取消不是错误，调用方据此不必弹提示。
+ */
+export function saveTextFile(defaultName, content) {
+  return invoke("save_text_file", { defaultName, content });
+}
+
 export const currentWindow = tauri?.window?.getCurrentWindow?.() ?? null;

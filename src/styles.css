@@ -1110,11 +1110,26 @@ body.is-book-dragging .book-card { cursor: grabbing; }
 
 /* 书签列表：一行一个，右侧删除按钮常态半透明，hover 才明显 */
 .mark-count {
+  /* 计数在左、导出与复制在右：这一行是页签的标题行，两个动作不该另起一行占高度 */
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 10px 2px 8px;
   font-family: var(--font-mono);
   font-size: 9.5px; letter-spacing: 0.12em;
   color: var(--ink-3);
 }
+/* 摘录出口：小号文字按钮，不加底色——侧栏本身已经够密，再加两块实心按钮会抢正文 */
+.mark-tools { display: flex; gap: 2px; flex: none; }
+.mark-tool {
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px; letter-spacing: 0.08em;
+  color: var(--ink-3);
+  transition: color 140ms var(--ease), border-color 140ms var(--ease), background 140ms var(--ease);
+}
+.mark-tool:hover { color: var(--ink); border-color: var(--line); background: var(--surface-2); }
+.mark-tool:active { border-color: var(--line-strong); }
 .mark-row { position: relative; display: flex; align-items: stretch; }
 .mark-row .mark-main { flex: 1; min-width: 0; }
 .mark-del {

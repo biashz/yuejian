@@ -9,6 +9,7 @@ import { $, escapeHtml } from "../core/dom.js";
 import { t } from "../i18n.js";
 import { activePane } from "./panes.js";
 import { colorValue, listOf } from "./highlight.js";
+import { marksToolsHtml } from "./marks-tools.js";
 
 function renderNotes() {
   const body = $("#ctxBody");
@@ -19,7 +20,8 @@ function renderNotes() {
     return;
   }
   body.innerHTML = `
-    <div class="mark-count">${t("reader.noteCount", { count: notes.length })}</div>
+    <div class="mark-count"><span>${t("reader.noteCount", { count: notes.length })}</span>${
+      marksToolsHtml(true)}</div>
     ${notes.map((note, index) => `
       <div class="mark-row note-row">
         <button class="find-hit mark-main" data-note-hit="${index}">

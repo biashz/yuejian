@@ -261,6 +261,11 @@ function stubSource() {
             (moved.has(book.id) ? { ...book, categoryId: args.categoryId } : book))));
         }
         if (command === "app_version") return Promise.resolve("0.0.0-smoke");
+        // 摘录导出：不弹真对话框，把默认文件名与正文留下来给断言看
+        if (command === "save_text_file") {
+          window.__exported = { name: args.defaultName, content: args.content };
+          return Promise.resolve("/tmp/" + args.defaultName);
+        }
         if (command === "open_book") {
           window.__encCalls.push(args.encoding === undefined ? null : args.encoding);
           if (args.id === "b-pdf") return Promise.resolve(clone({ kind: "pdf", path: "/fixtures/sample.pdf", pages: 3, size: 4000 }));
@@ -2083,6 +2088,68 @@ async function main() {
       notePane.rows === 1 && notePane.dot && /第一章/.test(notePane.label) && notePane.text.length > 0,
       `${notePane.rows} 行 · ${notePane.label} · 「${notePane.text}…」`);
 
+    /* ---- 摘录导出 ---- */
+    const tools = await evaluate(ws, `(() => ({
+      buttons: document.querySelectorAll("#ctxBody .mark-tools .mark-tool").length,
+      labels: [...document.querySelectorAll("#ctxBody .mark-tool")].map((b) => b.textContent.trim()),
+      insideHead: Boolean(document.querySelector("#ctxBody .mark-count .mark-tools")),
+    }))()`);
+    check("划线页计数行右侧出现「复制 / 导出」",
+      tools.buttons === 2 && tools.insideHead, tools.labels.join(" / ") || "没有按钮");
+
+    await evaluate(ws, `document.querySelector("#ctxBody [data-export-marks]").click()`);
+    await sleep(600);
+    const exported = await evaluate(ws, `window.__exported || null`);
+    const md = exported?.content || "";
+    check("导出交出整份摘录：标题、计数、引用块与出处行",
+      exported?.name === "冒烟样本-摘录.md"
+        && /^# 冒烟样本$/m.test(md)
+        && /1 条划线/.test(md)
+        && /^## 划线$/m.test(md)
+        && /^> /m.test(md)
+        && /^—— .*第一章.*靛青$/m.test(md)
+        // 这本书没有书签，就不该出现空的书签小节
+        && !/^## 书签$/m.test(md),
+      `${exported?.name || "未触发"} · ${md.split("\n").length} 行`);
+
+    // 复制走同一份内容：这里替换掉 navigator.clipboard，避免无头环境里权限不可用
+    await evaluate(ws, `(() => {
+      window.__copied = null;
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: (text) => { window.__copied = text; return Promise.resolve(); } },
+      });
+      document.querySelector("#ctxBody [data-copy-marks]").click();
+    })()`);
+    await sleep(400);
+    const copied = await evaluate(ws, `window.__copied`);
+    check("复制与导出是同一份内容", Boolean(copied) && copied === md,
+      copied ? `${copied.split("\n").length} 行，与导出${copied === md ? "一致" : "不一致"}` : "没写进剪贴板");
+
+    // 纯函数边界：多行原文的块级转义、无时间的书签、非法文件名、空摘录
+    const pure = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/export-marks.js");
+      const md = mod.buildMarksMarkdown({
+        title: "边界样本", author: "某人",
+        bookmarks: [{ cfi: "m1", label: "第三章", createdAt: 0 }],
+        highlights: [{ cfi: "h1", text: "- 列表开头\\n# 标题开头\\n普通行", color: "amber", label: "" }],
+      }, { now: new Date(2026, 10, 19, 14, 30) });
+      return { md, name: mod.suggestFileName({ title: "A/B: C" }),
+        none: mod.hasMarks({ highlights: [], bookmarks: [] }) };
+    })()`);
+    check("多行原文按引用块转义，书签缺时间不补空行，文件名滤掉非法字符",
+      /^> \\- 列表开头$/m.test(pure.md)
+        && /^> \\# 标题开头$/m.test(pure.md)
+        && /^> 普通行$/m.test(pure.md)
+        // 没有章节名的划线落到「正文」，不是空字符串
+        && /^—— 正文 .*琥珀$/m.test(pure.md)
+        && /^## 书签$/m.test(pure.md)
+        && /^- 第三章$/m.test(pure.md)
+        && /导出于 2026-11-19 14:30/.test(pure.md)
+        && pure.name === "A B C-摘录.md"
+        && pure.none === false,
+      `${pure.name} · ${pure.md.split("\n").length} 行`);
+
     // 点列表里的条目：跳过去，并把那条的色板浮出来（带删除）
     await evaluate(ws, `document.querySelector("#ctxBody [data-note-hit]").click()`);
     await sleep(900);
@@ -2110,6 +2177,21 @@ async function main() {
     check("删掉之后正文与侧栏一起清掉",
       hlGone.count === 0 && hlGone.rects === 0 && hlGone.rows === 0,
       `${hlGone.count} 条 · ${hlGone.rects} 个矩形 · ${hlGone.rows} 行`);
+
+    // 摘录清空之后，两个页签都不该再摆出「导出 / 复制」——空列表上挂着必然失败的按钮最误导
+    const notesTools = await evaluate(ws, `(() => {
+      const count = document.querySelectorAll("#ctxBody .mark-tools").length;
+      document.querySelector('#ctxTabs [data-ctx="marks"]').click();
+      return count;
+    })()`);
+    await sleep(400);
+    const marksTools = await evaluate(ws, `(async () => {
+      const toolsRow = document.querySelectorAll("#ctxBody .mark-tools").length;
+      document.querySelector('#ctxTabs [data-ctx="notes"]').click();
+      return toolsRow;
+    })()`);
+    check("没有摘录时两个页签都不显示导出入口",
+      notesTools === 0 && marksTools === 0, `划线页 ${notesTools} · 书签页 ${marksTools}`);
 
     /* ---- 图片放大 ---- */
     await switchBook("b-cbz");
