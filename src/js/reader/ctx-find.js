@@ -59,6 +59,10 @@ async function runFind() {
 
   const mine = ++token;
   const book = pane?.book;
+  // 从书架命中区点进来时带的位置：用一次就清掉，否则之后每次重绘都会把
+  // 旧位置重新标一遍，看起来像「搜索还停在上一处」
+  const focus = pane?.findFocus || null;
+  if (focus) pane.findFocus = null;
   summary.textContent = book?.kind === "pdf" ? t("reader.findFullText") : t("reader.findSearching");
 
   const mark = (text) => {
@@ -75,9 +79,11 @@ async function runFind() {
       ? `${t("reader.findMatches", { count: hits.length })}${hits.length >= 60 ? t("reader.findMatchesTrunc") : ""}`
       : t("reader.findNone");
     hitsWrap.innerHTML = hits.map((hit, index) => `
-      <button class="find-hit" data-hit="${index}" data-page="${hit.page}" data-kind="pdf">
+      <button class="find-hit ${focus?.page && hit.page === focus.page ? "is-focus" : ""}"
+        data-hit="${index}" data-page="${hit.page}" data-kind="pdf">
         <span class="hit-page">${t("reader.pageN", { page: hit.page })}</span>${mark(hit.text)}
       </button>`).join("");
+    scrollFocusIntoView(hitsWrap);
     pane.hits = [];
     return;
   }
@@ -149,9 +155,11 @@ async function runFind() {
       ? `${t("reader.findMatches", { count: lines.length })}${lines.length >= 60 ? t("reader.findMatchesTrunc") : ""}`
       : t("reader.findNone");
     hitsWrap.innerHTML = lines.map((hit, index) => `
-      <button class="find-hit" data-hit="${index}" data-kind="line">
+      <button class="find-hit ${focus?.line && hit.line === focus.line ? "is-focus" : ""}"
+        data-hit="${index}" data-kind="line">
         <span class="hit-page">${t("reader.findLine", { line: hit.line })}</span>${mark(hit.text)}
       </button>`).join("");
+    scrollFocusIntoView(hitsWrap);
     return;
   }
 
@@ -167,6 +175,11 @@ async function runFind() {
       <span class="hit-page">${label}</span>${mark(snippet)}
     </button>`;
   }).join("");
+}
+
+/** 把「刚才点的那一条」滚进侧栏视野：命中有几十条时，它在列表外面很常见 */
+function scrollFocusIntoView(wrap) {
+  wrap.querySelector(".find-hit.is-focus")?.scrollIntoView({ block: "center" });
 }
 
 export { renderFind, runFind };

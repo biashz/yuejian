@@ -369,7 +369,10 @@ function stubSource() {
         }
         if (command === "search_text") {
           window.__calls.push("search_text");
-          if (args.query !== "zebra") {
+          // zebra 只在超大日志里出现：其余文本文件返回空，用来验证跨书检索
+          // 不会因为「每本书都命中同样几行」而分不清来源
+          const isHuge = String(args.path || "").endsWith("huge.log");
+          if (args.query !== "zebra" || !isHuge) {
             // 跨书检索：任何文本 / Markdown 都能搜到「共鸣」，两行命中用来验证
             // 「一本书列几条」与「片段带 <mark>」
             if (args.query === "共鸣") {
@@ -748,8 +751,15 @@ async function main() {
     // 索引与片段的纯函数：这几处最容易在重构里悄悄错，单独钉住
     const indexPure = await evaluate(ws, `(async () => {
       const { joinItems, isFresh } = await import("/js/library-index.js");
-      const { snippet } = await import("/js/library-search.js");
+      const { snippet, searchIndexed } = await import("/js/library-search.js");
       const source = "甲".repeat(60) + "关键词" + "乙".repeat(60);
+      // 一个 PDF 单元（带页码）与一个电子书单元（带章节 href）：位置三件套要原样带出去
+      const units = { units: [
+        { label: "", page: 7, href: "", text: "第七页写了关键词" },
+        { label: "第二章", page: 0, href: "OEBPS/ch2.xhtml", text: "这一节也有关键词" },
+        { label: "", page: 9, href: "", text: "没有命中的一页" },
+      ] };
+      const found = searchIndexed(units, "关键词", { cancelled: false });
       return {
         joined: joinItems([
           { str: "Hello" }, { str: "world" }, { str: "你好" },
@@ -760,6 +770,7 @@ async function main() {
         stale: isFresh({ v: 1, size: 10, mtime: 5 }, { size: 10, mtime: 6 }),
         // mtime 取不到（旧数据）时一律当过期，否则永远不重建
         zeroMtime: isFresh({ v: 1, size: 10, mtime: 0 }, { size: 10, mtime: 0 }),
+        located: found.map((hit) => ({ page: hit.page, line: hit.line, href: hit.href })),
       };
     })()`);
     check("PDF 文本拼接补空格、片段带省略号、索引按体积与 mtime 判过期",
@@ -768,6 +779,11 @@ async function main() {
         && indexPure.cut.pre.startsWith("…") && indexPure.cut.post.endsWith("…")
         && indexPure.fresh === true && indexPure.stale === false && indexPure.zeroMtime === false,
       `拼接「${indexPure.joined.replace("\n", "⏎")}」· fresh ${indexPure.fresh}/${indexPure.stale}/${indexPure.zeroMtime}`);
+    check("命中带上定位三件套：PDF 页码、电子书章节 href、文本行号（此处为 0）",
+      indexPure.located.length === 2
+        && indexPure.located[0].page === 7 && indexPure.located[0].href === "" && indexPure.located[0].line === 0
+        && indexPure.located[1].page === 0 && indexPure.located[1].href === "OEBPS/ch2.xhtml",
+      indexPure.located.map((hit) => `${hit.page || "-"}/${hit.href || "-"}`).join(" , "));
 
     // 复原筛选，后面的用例还要看到全部书
     await evaluate(ws, `(async () => {
@@ -1377,6 +1393,77 @@ async function main() {
     errs = await errors();
     check("大文件搜索无未捕获异常", errs.length === 0, errs.join(" | "));
     await shot(ws, "text-huge-search");
+
+    /* --- 命中定位：从书架命中直接落到那一行，并在侧栏标出对应条目 ---
+       放在大文件用例之后：这里要真的重开一次 b-huge，才能覆盖 openText 里
+       那个「用 rAF 恢复进度」的时序——它晚于打开动作，会把过早设定的滚动位置冲掉 */
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-txt"]').click()`);
+    await sleep(600);
+    await evaluate(ws, `(async () => {
+      const { setView } = await import("/js/view.js");
+      setView("library");
+    })()`);
+    await sleep(200);
+    await evaluate(ws, `document.querySelector('#filterRow [data-filter="text"]').click()`);
+    await sleep(200);
+    await evaluate(ws, `(() => {
+      const input = document.querySelector("#libSearch");
+      input.value = "zebra";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    await sleep(1200);
+    const lineHit = await evaluate(ws, `(() => {
+      const row = document.querySelector("#libHits .hits-row");
+      return row ? {
+        book: row.dataset.hitBook,
+        line: Number(row.dataset.hitLine) || 0,
+        page: Number(row.dataset.hitPage) || 0,
+        href: row.dataset.hitHref || "",
+        groups: document.querySelectorAll("#libHits .hits-group").length,
+        rows: document.querySelectorAll("#libHits .hits-row").length,
+      } : null;
+    })()`);
+    check("文本命中带上行号，且只有真正含关键词的那一本出结果",
+      Boolean(lineHit) && lineHit.book === "b-huge" && lineHit.line === 1201
+        && lineHit.page === 0 && lineHit.groups === 1 && lineHit.rows === 2,
+      lineHit ? `${lineHit.groups} 本 / ${lineHit.rows} 行 · ${lineHit.book} · 第 ${lineHit.line} 行` : "没有命中");
+
+    await evaluate(ws, `document.querySelector("#libHits .hits-row").click()`);
+    await sleep(1500);
+    const lineJump = await evaluate(ws, `(async () => {
+      const { activePane } = await import("/js/reader/panes.js");
+      const { LINE_HEIGHT } = await import("/js/reader-bigtext.js");
+      const pane = activePane();
+      const top = pane?.scrollArea?.scrollTop || 0;
+      const rows = [...document.querySelectorAll("#ctxBody .find-hit")];
+      const focused = rows.find((row) => row.classList.contains("is-focus"));
+      return {
+        book: pane?.book?.id || "",
+        line: Math.round(top / LINE_HEIGHT) + 1,
+        top,
+        focus: Boolean(focused),
+        focusLabel: (focused?.textContent || "").replace(/\\s+/g, " ").trim(),
+      };
+    })()`);
+    check("点文本命中重开这本书并直接落到那一行，侧栏也标出对应条目",
+      lineJump.book === "b-huge" && lineJump.top === 1200 * 20 && lineJump.focus
+        && /1201/.test(lineJump.focusLabel),
+      `${lineJump.book} · 滚到 ${lineJump.top}px（第 ${lineJump.line} 行）· 侧栏「${lineJump.focusLabel.slice(0, 16)}」`);
+
+    // 复原：后续用例还要按书 id 从书架点书
+    await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { setView } = await import("/js/view.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      setView("library");
+      state.filter = "all";
+      state.query = "";
+      document.querySelector("#libSearch").value = "";
+      document.querySelectorAll("#filterRow .chip")
+        .forEach((chip) => chip.classList.toggle("is-on", chip.dataset.filter === "all"));
+      renderLibrary();
+    })()`);
+    await sleep(240);
 
     /* --- 电子书：打开、分页、目录、CFI 续读、书内脚本不执行 --- */
     await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-epub"]').click()`);

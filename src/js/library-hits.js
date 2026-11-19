@@ -69,8 +69,11 @@ function renderHits(result) {
         ${group.hits.map((hit) => {
           // PDF 的单元标签是空的，位置靠页码；电子书反过来，有章节名没页码
           const where = hit.label || (hit.page ? t("reader.pageN", { page: hit.page }) : "");
+          // 位置三件套一起带出去：点哪一条就落到哪一处，不用界面再猜
           return `
-          <button class="hits-row" data-hit-book="${escapeHtml(group.book.id)}" data-hit-page="${hit.page || 0}">
+          <button class="hits-row" data-hit-book="${escapeHtml(group.book.id)}"
+            data-hit-page="${hit.page || 0}" data-hit-line="${hit.line || 0}"
+            data-hit-href="${escapeHtml(hit.href || "")}">
             ${where ? `<span class="hits-where">${escapeHtml(where)}</span>` : ""}
             <span class="hits-text">${escapeHtml(hit.pre)}<mark>${escapeHtml(hit.hit)}</mark>${escapeHtml(hit.post)}</span>
           </button>`;

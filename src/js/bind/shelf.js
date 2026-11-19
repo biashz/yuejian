@@ -55,7 +55,12 @@ export function bindShelfEvents() {
     }
     const hitRow = event.target.closest("[data-hit-book]");
     if (hitRow) {
-      openHit(hitRow.dataset.hitBook, Number(hitRow.dataset.hitPage) || 0);
+      // 位置三件套原样交给调度层：按书的类型挑一个用
+      openHit(hitRow.dataset.hitBook, {
+        page: Number(hitRow.dataset.hitPage) || 0,
+        line: Number(hitRow.dataset.hitLine) || 0,
+        href: hitRow.dataset.hitHref || "",
+      });
       return;
     }
     const bookEl = event.target.closest("[data-book]");

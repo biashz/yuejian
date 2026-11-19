@@ -5,8 +5,11 @@
  * - 文本 / Markdown / CSV / 代码 → Rust `search_text`，按行流式扫，不必先建全文副本；
  * - PDF / 电子书 → 先取索引（`library-index.js`），再在单元里找子串。
  *
- * 对上层只暴露一种结果：`{ book, hits: [{ label, page, pre, hit, post }] }`。
+ * 对上层只暴露一种结果：`{ book, hits: [{ label, page, line, href, pre, hit, post }] }`。
  * 界面因此不需要知道哪本书走的是哪条路。
+ *
+ * `page` / `line` / `href` 是定位信息，三选一有效：PDF 有页码、文本有行号、
+ * 电子书有章节 href。点命中时按书的类型挑一个用，谁有就用谁。
  *
  * 抗抖动的前提是「结果可作废」：输入框每敲一下都会发起一轮，慢的那轮可能后到。
  * 调用方传 `token`，每完成一本书就查一次 `cancelled`，一旦作废立刻停手——
@@ -32,6 +35,9 @@ function searchPlain(book, query, token) {
     .then((lines) => (token.cancelled ? [] : lines.map((line) => ({
       label: t("reader.findLine", { line: line.line }),
       page: 0,
+      // 行号带着走：点命中时可以直接滚到那一行，不必再让侧栏搜一遍
+      line: Number(line.line) || 0,
+      href: "",
       ...snippet(line.text, query),
     }))))
     // 单本书读失败（文件被删、编码崩）不该让整轮检索失败
@@ -49,6 +55,9 @@ function searchIndexed(index, query, token) {
     hits.push({
       label: unit.label || "",
       page: Number(unit.page) || 0,
+      line: 0,
+      // 电子书的章节 href 是跳转依据：有它才能落到那一节，而不是只把关键词填进搜索
+      href: unit.href || "",
       ...snippet(unit.text, query, at),
     });
     if (hits.length >= PER_BOOK) break;
@@ -128,4 +137,4 @@ async function searchLibrary({ query, books, onProgress, token = { cancelled: fa
   return { query: keyword, groups, total, skipped, cancelled: Boolean(token.cancelled) };
 }
 
-export { searchLibrary, snippet, MIN_QUERY, PER_BOOK, MAX_BOOKS };
+export { searchLibrary, searchIndexed, snippet, MIN_QUERY, PER_BOOK, MAX_BOOKS };

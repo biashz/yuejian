@@ -1895,6 +1895,12 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
   border-left: 2px solid transparent;
 }
 .find-hit:hover { background: var(--surface-2); border-left-color: var(--accent); color: var(--ink); }
+/* 从书架命中区点进来的那一条：与 hover 同一套强调，但不靠鼠标也能认出来 */
+.find-hit.is-focus {
+  background: var(--accent-weak);
+  border-left-color: var(--accent);
+  color: var(--ink);
+}
 .find-hit mark { background: var(--accent-weak); color: var(--accent); padding: 0 2px; border-radius: 2px; }
 .find-hit .hit-page { font-family: var(--font-mono); font-size: 9px; color: var(--ink-3); display: block; margin-bottom: 2px; }
 
