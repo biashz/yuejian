@@ -107,6 +107,12 @@ pub struct Book {
     /// 电子书划线；同样只有电子书会有内容
     #[serde(default)]
     pub highlights: Vec<Highlight>,
+    /// 文件修改时间（毫秒）。用于判断检索索引是否过期。
+    ///
+    /// 旧版 state.json 没有这个字段，读出来是 0；0 与任何真实 mtime 都不相等，
+    /// 因此天然被当作「索引可能过期」，下次检索重建一次即可，不需要迁移代码。
+    #[serde(default)]
+    pub mtime: u64,
     pub progress: Progress,
 }
 
@@ -223,6 +229,15 @@ pub struct StoreState {
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 文件修改时间（毫秒）。取不到就返回 0——0 表示「不知道」，索引那边按过期处理。
+pub fn mtime_ms(meta: &std::fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }

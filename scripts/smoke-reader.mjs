@@ -369,12 +369,33 @@ function stubSource() {
         }
         if (command === "search_text") {
           window.__calls.push("search_text");
-          if (args.query !== "zebra") return Promise.resolve([]);
+          if (args.query !== "zebra") {
+            // 跨书检索：任何文本 / Markdown 都能搜到「共鸣」，两行命中用来验证
+            // 「一本书列几条」与「片段带 <mark>」
+            if (args.query === "共鸣") {
+              return Promise.resolve(clone([
+                { line: 12, text: "第一部分讲的是共鸣，用来验证跨书检索能落到片段上。" },
+                { line: 88, text: "第二处共鸣：一本书最多列五条，多的不收。" },
+              ]));
+            }
+            return Promise.resolve([]);
+          }
           // 命中行必须真的含关键词，否则侧栏里的 <mark> 标记根本出不来
           return Promise.resolve(clone([
             { line: 1201, text: hugeLine(1201).replace("lorem", "zebra") },
             { line: 190000, text: hugeLine(190000).replace("lorem", "zebra") },
           ]));
+        }
+        // 检索索引：内存里存一份，够验证「读到了就复用、没读到就重建」
+        if (command === "read_search_index") {
+          window.__calls.push("read_search_index:" + args.id);
+          return Promise.resolve(clone(window.__searchIndex?.[args.id] || null));
+        }
+        if (command === "write_search_index") {
+          window.__calls.push("write_search_index:" + args.id);
+          window.__searchIndex = window.__searchIndex || {};
+          window.__searchIndex[args.id] = args.index;
+          return Promise.resolve(null);
         }
         return Promise.resolve(null);
       },
@@ -645,6 +666,121 @@ async function main() {
       renderLibrary();
     })()`);
     await sleep(180);
+
+    /* --- 跨书检索：正文命中单独成区，不与书名筛选混排 --- */
+    // 先收到 MARKDOWN 类型：范围里只剩 b-md，检索路径确定（走 search_text，不碰索引）
+    await evaluate(ws, `document.querySelector('#filterRow [data-filter="markdown"]').click()`);
+    await sleep(200);
+    await evaluate(ws, `(() => {
+      const input = document.querySelector("#libSearch");
+      input.value = "共鸣";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    // 320ms 防抖 + 一轮异步检索，留足余量
+    await sleep(1100);
+
+    const libHitsSeen = await evaluate(ws, `(() => {
+      const box = document.querySelector("#libHits");
+      return {
+        visible: Boolean(box && !box.hidden),
+        state: box?.dataset.state || "",
+        groups: box?.querySelectorAll(".hits-group").length || 0,
+        rows: box?.querySelectorAll(".hits-row").length || 0,
+        mark: box?.querySelector(".hits-text mark")?.textContent || "",
+        bookTitle: box?.querySelector(".hits-book-title")?.textContent || "",
+        where: (box?.querySelector(".hits-where")?.textContent || "").trim(),
+        head: (box?.querySelector(".hits-head")?.textContent || "").replace(/\\s+/g, " ").trim(),
+        searched: window.__calls.filter((c) => c === "search_text").length,
+        indexed: window.__calls.filter((c) => c.startsWith("read_search_index")).length,
+        // 命中区必须在书网格之后，而不是塞进书列表里
+        afterGrid: Boolean(box && box.previousElementSibling?.id === "bookGrid"),
+        // 书名一个都没匹配上时，书网格的空态不能再说「没有匹配的文档」
+        gridHint: (document.querySelector("#bookGrid .ctx-empty")?.textContent || "").replace(/\\s+/g, " ").trim(),
+      };
+    })()`);
+    check("正文命中单独成区：书名 + 行号 + 带 <mark> 的片段",
+      libHitsSeen.visible && libHitsSeen.state === "done" && libHitsSeen.groups === 1 && libHitsSeen.rows === 2
+        && libHitsSeen.mark === "共鸣" && libHitsSeen.bookTitle === "示例 Markdown"
+        && /12/.test(libHitsSeen.where) && libHitsSeen.head.includes("全文命中") && libHitsSeen.afterGrid,
+      `${libHitsSeen.groups} 组 / ${libHitsSeen.rows} 行 · ${libHitsSeen.bookTitle} · ${libHitsSeen.where} · 抬头「${libHitsSeen.head}」`);
+    check("书名没匹配、正文有命中时，空态指向下方命中区",
+      libHitsSeen.gridHint.includes("书名里没有匹配") && libHitsSeen.gridHint.includes("正文命中见下方"),
+      `空态「${libHitsSeen.gridHint}」`);
+    check("文本类走 search_text，不读也不写检索索引",
+      libHitsSeen.searched >= 1 && libHitsSeen.indexed === 0,
+      `search_text ${libHitsSeen.searched} 次 · 读索引 ${libHitsSeen.indexed} 次`);
+
+    // 点一条命中：打开这本书，并把关键词填进侧栏搜索框
+    await evaluate(ws, `document.querySelector("#libHits .hits-row").click()`);
+    await sleep(900);
+    const libSearchJump = await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { activePane } = await import("/js/reader/panes.js");
+      return {
+        view: state.view,
+        current: state.currentId || "",
+        query: activePane()?.query || "",
+        inputValue: document.querySelector("#findInput")?.value || "",
+        ctxOpen: !document.querySelector("#ctxPanel")?.classList.contains("is-hidden"),
+      };
+    })()`);
+    check("点命中打开这本书，并把关键词填进侧栏搜索",
+      libSearchJump.view === "reading" && libSearchJump.current === "b-md" && libSearchJump.query === "共鸣"
+        && libSearchJump.inputValue === "共鸣" && libSearchJump.ctxOpen,
+      `${libSearchJump.view} · ${libSearchJump.current} · 侧栏「${libSearchJump.inputValue}」`);
+
+    // 清空关键词：命中区要整段收起，不留一个「没有命中」的空壳
+    await evaluate(ws, `(async () => {
+      const { setView } = await import("/js/view.js");
+      setView("library");
+      const input = document.querySelector("#libSearch");
+      input.value = "";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    await sleep(420);
+    const libHitsCleared = await evaluate(ws, `(() => {
+      const box = document.querySelector("#libHits");
+      return { hidden: box ? box.hidden : true, html: box ? box.innerHTML.length : 0 };
+    })()`);
+    check("清空关键词后命中区收起", libHitsCleared.hidden && libHitsCleared.html === 0,
+      `隐藏 ${libHitsCleared.hidden} · 残留 ${libHitsCleared.html} 字符`);
+
+    // 索引与片段的纯函数：这几处最容易在重构里悄悄错，单独钉住
+    const indexPure = await evaluate(ws, `(async () => {
+      const { joinItems, isFresh } = await import("/js/library-index.js");
+      const { snippet } = await import("/js/library-search.js");
+      const source = "甲".repeat(60) + "关键词" + "乙".repeat(60);
+      return {
+        joined: joinItems([
+          { str: "Hello" }, { str: "world" }, { str: "你好" },
+          { str: "世界", hasEOL: true }, { str: "next" },
+        ]),
+        cut: snippet(source, "关键词"),
+        fresh: isFresh({ v: 1, size: 10, mtime: 5 }, { size: 10, mtime: 5 }),
+        stale: isFresh({ v: 1, size: 10, mtime: 5 }, { size: 10, mtime: 6 }),
+        // mtime 取不到（旧数据）时一律当过期，否则永远不重建
+        zeroMtime: isFresh({ v: 1, size: 10, mtime: 0 }, { size: 10, mtime: 0 }),
+      };
+    })()`);
+    check("PDF 文本拼接补空格、片段带省略号、索引按体积与 mtime 判过期",
+      indexPure.joined === "Hello world你好世界\nnext"
+        && indexPure.cut.hit === "关键词"
+        && indexPure.cut.pre.startsWith("…") && indexPure.cut.post.endsWith("…")
+        && indexPure.fresh === true && indexPure.stale === false && indexPure.zeroMtime === false,
+      `拼接「${indexPure.joined.replace("\n", "⏎")}」· fresh ${indexPure.fresh}/${indexPure.stale}/${indexPure.zeroMtime}`);
+
+    // 复原筛选，后面的用例还要看到全部书
+    await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      state.filter = "all";
+      state.query = "";
+      document.querySelector("#libSearch").value = "";
+      document.querySelectorAll("#filterRow .chip")
+        .forEach((chip) => chip.classList.toggle("is-on", chip.dataset.filter === "all"));
+      renderLibrary();
+    })()`);
+    await sleep(200);
 
     /* --- 拖拽归类：HTML5 拖放在真机上时灵时不灵，改走指针事件（bind/book-drag.js） --- */
     const dragPoints = await evaluate(ws, `(() => {

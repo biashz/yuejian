@@ -2495,3 +2495,64 @@ body.is-dragging .view-library {
   outline: 2px dashed var(--accent);
   outline-offset: -10px;
 }
+
+/* ---------------- 跨书检索：全文命中 ---------------- */
+/* 独立成区，落在书网格下方：书名筛选与正文命中是两件事，混排会让人以为
+   「书名没匹配上 = 搜索没找到这本」 */
+.lib-hits {
+  flex: none;
+  margin-top: 30px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.hits-head {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 14px;
+  font-family: var(--font-mono);
+  font-size: 9.5px; letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+.hits-count { color: var(--ink-2); }
+/* 「几本没能参与检索」推到最右：它是补充说明，不该抢在总数前面 */
+.hits-skip { margin-left: auto; opacity: 0.8; }
+.hits-status {
+  padding: 4px 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+.hits-group + .hits-group { margin-top: 20px; }
+.hits-book {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 4px; padding: 0 10px;
+}
+.hits-book-title { font-size: 13px; color: var(--ink); }
+.hits-book-sub {
+  font-family: var(--font-mono);
+  font-size: 9px; letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+/* 每条命中都是一整行按钮：点哪儿都能打开，不必对准书名 */
+.hits-row {
+  display: block; width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  border-left: 2px solid transparent;
+  border-radius: 3px;
+  transition: background 140ms var(--ease), border-color 140ms var(--ease);
+}
+.hits-row:hover { background: var(--surface-2); border-left-color: var(--accent); }
+.hits-where {
+  display: block;
+  margin-bottom: 2px;
+  font-family: var(--font-mono);
+  font-size: 9px; letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+.hits-text { font-size: 12.5px; line-height: 1.55; color: var(--ink-2); }
+.hits-text mark {
+  padding: 0 2px;
+  border-radius: 2px;
+  background: var(--accent-weak);
+  color: var(--accent);
+}

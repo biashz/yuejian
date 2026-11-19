@@ -156,6 +156,7 @@ fn build_book(path: &Path) -> Result<Book, String> {
         encoding: String::new(),
         bookmarks: Vec::new(),
         highlights: Vec::new(),
+        mtime: store::mtime_ms(&meta),
         progress: Progress::default(),
     })
 }
@@ -218,6 +219,9 @@ pub fn import_files(state: State<'_, StoreState>, paths: Vec<String>) -> Result<
             if existing.pages == 0 && book.pages > 0 {
                 existing.pages = book.pages;
             }
+            // 重复导入往往是因为文件换过一版：体积与 mtime 变过就让检索索引重建
+            existing.size = book.size;
+            existing.mtime = book.mtime;
             continue;
         }
         data.books.push(book);
@@ -269,6 +273,12 @@ pub async fn open_book(
             return Err("书架中找不到这本书".into());
         };
         book.last_opened_at = store::now_ms();
+        // 打开时顺手校准体积与 mtime：文件被外部改动过，检索索引就得重建。
+        // 取不到（文件已删）就保持原值，由具体分支去报错
+        if let Ok(meta) = fs::metadata(&book.path) {
+            book.size = meta.len();
+            book.mtime = store::mtime_ms(&meta);
+        }
         // 手动选编码要跨会话有效：用户是为了「这份文件一直乱码」才来切的，
         // 重启后又回到自动检测，等于每次启动都让他重切一遍。
         // 先校验再落盘——存下一个解不出来的标签，这份文件以后每次打开都会失败，
@@ -778,7 +788,81 @@ pub fn remove_book(state: State<'_, StoreState>, id: String) -> Result<Vec<Book>
     let mut data = lock(&state)?;
     data.books.retain(|b| b.id != id);
     store::persist(&data, &state.dir)?;
+    // 检索索引跟着书走：留着只会让 data/search 越积越多，而且再也对不上任何一本书
+    let stale = search_dir(&state.dir).join(format!("{}.json", safe_id(&id)));
+    let _ = fs::remove_file(stale);
     Ok(data.books.clone())
+}
+
+/* ---------------- 跨书检索的正文索引 ---------------- */
+
+/// PDF 与电子书的正文不能像文本那样按需解码（一份是压缩流、一份是打包的 XHTML），
+/// 所以由前端抽一次、存在这里，检索时反复用。
+///
+/// 只存正文与位置标签，不存渲染结果；`size` 与 `mtime` 是失效判据——文件被改过
+/// 就得重建，否则搜到的会是旧内容。
+#[derive(Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndex {
+    /// 结构版本。将来改了单位形状就 +1，旧缓存自动作废，不必写迁移
+    pub v: u32,
+    pub size: u64,
+    pub mtime: u64,
+    pub units: Vec<SearchUnit>,
+}
+
+#[derive(Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchUnit {
+    /// 位置标签：PDF 是「第 12 页」，电子书是章节名
+    pub label: String,
+    /// PDF 的页码；其它格式为 0
+    #[serde(default)]
+    pub page: u32,
+    /// 电子书的章节 href；其它格式为空串。当前不参与跳转，留给第二期按位置命中
+    #[serde(default)]
+    pub href: String,
+    pub text: String,
+}
+
+fn search_dir(dir: &Path) -> PathBuf {
+    dir.join("search")
+}
+
+/// 索引文件名。`id` 是路径哈希（十六进制），理论上安全，仍然过一遍白名单——
+/// 这个值来自前端，不该直接拼进路径。
+fn safe_id(id: &str) -> String {
+    id.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(64)
+        .collect()
+}
+
+#[tauri::command]
+pub fn read_search_index(state: State<'_, StoreState>, id: String) -> Result<Option<SearchIndex>, String> {
+    let path = search_dir(&state.dir).join(format!("{}.json", safe_id(&id)));
+    let Ok(raw) = fs::read(&path) else {
+        // 没有缓存是常态（第一次检索），不是错误
+        return Ok(None);
+    };
+    // 解析失败按没有处理：宁可重建一次，也不要让一个坏文件永久卡住检索
+    Ok(serde_json::from_slice::<SearchIndex>(&raw).ok())
+}
+
+#[tauri::command]
+pub fn write_search_index(state: State<'_, StoreState>, id: String, index: SearchIndex) -> Result<(), String> {
+    let dir = search_dir(&state.dir);
+    fs::create_dir_all(&dir).map_err(|err| format!("写入索引失败：{err}"))?;
+    let stem = safe_id(&id);
+    if stem.is_empty() {
+        return Err("索引 id 无效".into());
+    }
+    let raw = serde_json::to_vec(&index).map_err(|err| err.to_string())?;
+    // 先写临时文件再改名：检索可能和写入并发（切书时常见），半截 JSON 会让下次
+    // 读取解析失败，然后把整本书重抽一遍
+    let tmp = dir.join(format!("{stem}.json.tmp"));
+    fs::write(&tmp, &raw).map_err(|err| format!("写入索引失败：{err}"))?;
+    fs::rename(&tmp, dir.join(format!("{stem}.json"))).map_err(|err| format!("写入索引失败：{err}"))
 }
 
 /* ---------------- 分类 ---------------- */

@@ -6,6 +6,7 @@ import { $ } from "../core/dom.js";
 import { state } from "../core/session.js";
 import { MAX_CATEGORIES } from "../core/constants.js";
 import { renderLibrary } from "../shelf.js";
+import { scheduleLibrarySearch } from "../library-search-ui.js";
 import {
   openCategoryDialog, closeCategoryDialog, submitCategoryDialog,
   syncCategoryDialogValidation, pickCategoryDialogColor, categoryDialogOpen,
@@ -43,6 +44,8 @@ export function bindCategoryEvents() {
     const next = value === "__all" ? null : value === "__none" ? "" : value;
     state.categoryId = state.categoryId === next && next !== null ? null : next;
     renderLibrary();
+    // 分类换了，正文检索的范围也跟着换；不重跑会留着上一个分类的命中
+    scheduleLibrarySearch();
   });
 
   $("#catAdd").addEventListener("click", () => {
@@ -103,6 +106,8 @@ export function bindCategoryEvents() {
     document.querySelectorAll("#filterRow .chip")
       .forEach((chip) => chip.classList.toggle("is-on", chip.dataset.filter === "all"));
     renderLibrary();
+    // 关键词被清空，命中区要跟着收起（scheduleLibrarySearch 内部判长度）
+    scheduleLibrarySearch();
   });
 
   /* ---------------- Esc 清空选中 ---------------- */

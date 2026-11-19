@@ -14,6 +14,7 @@ import { openBook } from "../reader/open.js";
 import { importDocuments, removeBook, toggleFavorite } from "../actions.js";
 import { openPalette } from "../palette.js";
 import { openSettings } from "../preferences.js";
+import { scheduleLibrarySearch, openHit } from "../library-search-ui.js";
 
 export function bindShelfEvents() {
   // 文档打开 / 收藏 / 移除
@@ -51,6 +52,11 @@ export function bindShelfEvents() {
         toast(t("toast.crossDoc"));
         return;
       }
+    }
+    const hitRow = event.target.closest("[data-hit-book]");
+    if (hitRow) {
+      openHit(hitRow.dataset.hitBook, Number(hitRow.dataset.hitPage) || 0);
+      return;
     }
     const bookEl = event.target.closest("[data-book]");
     if (bookEl) {
@@ -97,6 +103,7 @@ export function bindShelfEvents() {
   $("#libSearch").addEventListener("input", (event) => {
     state.query = event.target.value.trim();
     renderLibrary();
+    scheduleLibrarySearch();
   });
   $("#filterRow").addEventListener("click", (event) => {
     const chip = event.target.closest(".chip");
@@ -104,6 +111,8 @@ export function bindShelfEvents() {
     state.filter = chip.dataset.filter;
     $$("#filterRow .chip").forEach((item) => item.classList.toggle("is-on", item === chip));
     renderLibrary();
+    // 分类 / 类型换了，正文命中的范围也跟着变
+    scheduleLibrarySearch();
   });
 
   // 导入

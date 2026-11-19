@@ -8,18 +8,30 @@ import { KIND_CLASS, kindLabel } from "./core/constants.js";
 import { tintOf, percentOf, formatRelative, formatBytes } from "./core/format.js";
 import { matchCategory, categoryById } from "./categories.js";
 import { renderCategorySection, renderBatchBar } from "./category-ui.js";
+import { hasHits } from "./library-hits.js";
 
 /* ---------------- 书架渲染 ---------------- */
+
+/**
+ * 当前分类 / 类型筛选下的书，**不含关键词**。
+ *
+ * 单独拆出来是给跨书检索用的：书名筛选与正文检索是两条路，前者按关键词过滤，
+ * 后者要拿到「当前筛选范围内的全部书」再去搜正文。用同一个函数保证两边的
+ * 范围一致——否则会出现「筛了 PDF，正文结果里却冒出 EPUB」。
+ */
+function scopeBooks() {
+  return state.books.filter((book) => {
+    if (state.filter === "star" && !book.favorite) return false;
+    if (["pdf", "markdown", "text", "ebook"].includes(state.filter) && book.kind !== state.filter) return false;
+    if (!matchCategory(book)) return false;
+    return true;
+  });
+}
+
 function visibleBooks() {
   const query = state.query.toLowerCase();
-  return state.books
-    .filter((book) => {
-      if (state.filter === "star" && !book.favorite) return false;
-      if (["pdf", "markdown", "text", "ebook"].includes(state.filter) && book.kind !== state.filter) return false;
-      if (!matchCategory(book)) return false;
-      if (query && !`${book.title} ${book.author}`.toLowerCase().includes(query)) return false;
-      return true;
-    })
+  return scopeBooks()
+    .filter((book) => !query || `${book.title} ${book.author}`.toLowerCase().includes(query))
     .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
 }
 
@@ -53,7 +65,12 @@ function bookProgressText(book) {
  * 分类里有文档但被类型/关键词筛掉了，提示清除筛选，否则会误导用户以为分类是空的。
  */
 function emptyStateText() {
-  if (state.query) return `${t("library.noMatch")}<br>${t("library.tryAnother")}`;
+  if (state.query) {
+    // 书名一个都没匹配上、正文却搜到了：这时候还说「没有匹配的文档」是自相矛盾的，
+    // 命中区就在下方，得把话接上
+    if (hasHits()) return `${t("library.noTitleMatch")}<br>${t("library.textMatchBelow")}`;
+    return `${t("library.noMatch")}<br>${t("library.tryAnother")}`;
+  }
   if (state.categoryId !== null) {
     const inCategory = state.books.filter((book) => book.categoryId === state.categoryId).length;
     if (inCategory === 0) {
@@ -244,4 +261,4 @@ function renderLibrary() {
   $("#bookGrid").hidden = empty;
 }
 
-export { visibleBooks, bookProgressText, renderBookList, renderGrid, renderResume, renderStats, renderLibrary, syncSelection };
+export { visibleBooks, scopeBooks, bookProgressText, renderBookList, renderGrid, renderResume, renderStats, renderLibrary, syncSelection };

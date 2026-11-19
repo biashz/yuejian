@@ -59,6 +59,8 @@ pub fn run() {
             commands::read_pdf_range,
             commands::read_text_window,
             commands::search_text,
+            commands::read_search_index,
+            commands::write_search_index,
             commands::app_version,
             commands::download_update,
             commands::install_update,
