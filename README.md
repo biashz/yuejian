@@ -22,6 +22,7 @@
 - **跨书检索**：书架搜索框同时搜书名与正文。文本 / Markdown / CSV / 代码走 Rust 按行流式扫（不建索引），PDF 用 pdf.js 逐页抽文本、电子书用 foliate 逐节抽正文，结果缓存在 `data/search/`，文件的体积或 mtime 一变就重建；命中单独成区、带页码或章节名与关键词高亮，**点一下直接落到那一行 / 那一页 / 那一章**（侧栏同步标出对应条目）。单本书打不开只跳过它自己，抬头里会说明有几本没参与。
 - **侧栏四视图**：文档大纲跳章节、缩略图定位、文件信息（编码 / 行数 / 换行符 / 章节数）、全文档关键词搜索与高亮。
 - **摘录导出**：电子书的划线与书签可一键**复制**或**导出为 Markdown**（`书名-摘录.md`）。输出含标题、作者、计数与导出时间，每条摘录是引用块、出处单独一行并带颜色名；顺序按划的先后，行首的 `#` / `-` 会转义，直接粘进 Obsidian / Typora 不会散架。没有摘录时这两个按钮不出现。
+- **打印与导出**：阅读工具栏最右侧的「⋯」按文档类型给出可做的事——Markdown 与文本可**打印**（`Ctrl/Cmd + P`，纸上只有正文，没有工具栏与侧栏）或**导出为独立 HTML**（样式写在文件里、本地图片编码成 data URL，换台机器双击就能看，导出的就是屏幕上的排版）；PDF 与电子书只提供**另存原文件**——它们的版面由原件决定，重排一遍只会更差；超大文本因为只加载一个窗口，同样只给副本，并在菜单里写明原因。
 - **Markdown 阅读**：Rust 端 comrak 渲染 GFM（表格、任务列表、脚注、删除线、自动链接），标题自动生成目录锚点，代码块语法高亮。
 - **阅读排版**：纸白 / 夜读 / 护眼三套主题；正文字号 15 / 17 / 19 / 21px、行高 1.7 / 1.9 / 2.1、版心 620 / 720 / 820px；专注模式收起非正文元素。
 - **阅读进度**：页码、缩放与滚动位置自动保存，下次打开回到原处。
@@ -106,7 +107,7 @@ yuejian/
 │   │   │   ├── keys.js      # 键盘快捷键与退出落盘
 │   │   │   └── category.js  # 分类筛选、编辑弹层、批量与拖拽归类
 │   │   ├── core/            # dom / session / constants / format / feedback
-│   │   └── reader/          # panes / open / toolbar / ctx-* / present / progress / ebook-* / footnote / bookmarks / highlight / export-marks / marks-tools / marks-export
+│   │   └── reader/          # panes / open / toolbar / ctx-* / present / progress / ebook-* / footnote / bookmarks / highlight / export-marks / marks-tools / marks-export / doc-export / doc-print / doc-menu
 │   └── vendor/              # 由 npm run vendor 生成的离线资源
 ├── src-tauri/
 │   ├── src/
@@ -240,6 +241,7 @@ data/
 | [分类界面设计](docs/ui-categories.md) | 分类区规格、状态矩阵、配色 token 与文案 |
 | [摘录导出](docs/feature-export.md) | 摘录的数据来源、Markdown 输出格式、两个出口与边界 |
 | [跨书全文检索](docs/feature-search.md) | 两条取数路径、索引格式与失效、命中区交互与不做的事 |
+| [打印与导出](docs/feature-doc-export.md) | 按格式分流、打印舞台与平台差异、导出 HTML 的取数与图片内联 |
 
 ## 参与贡献
 

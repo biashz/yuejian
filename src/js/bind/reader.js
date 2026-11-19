@@ -9,6 +9,9 @@ import { scrollToHeading } from "../reader-md.js";
 import { activePane, splitMode, linkSync, setSplit, setLink, panes } from "../reader/panes.js";
 import { setView, updateStatus } from "../view.js";
 import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, fitPdfPage, fitPdfWidth, renderToolbar } from "../reader/toolbar.js";
+import { docMenuOpen, setDocMenu } from "../reader/doc-menu.js";
+import { exportHtml, saveCopy } from "../reader/doc-export.js";
+import { printDoc, clearPrintStage } from "../reader/doc-print.js";
 import { setCtxOpen, switchCtxTab, renderCtx } from "../reader/ctx.js";
 import { listOf, removeHighlight } from "../reader/highlight.js";
 import { refreshTextView, openBook } from "../reader/open.js";
@@ -169,6 +172,15 @@ export function bindReaderEvents() {
 
   // 阅读工具栏
   $("#readToolbar").addEventListener("click", (event) => {
+    // 文档操作菜单的项先于 [data-act] 处理（菜单项带的是 data-doc）
+    const docItem = event.target.closest("[data-doc]");
+    if (docItem) {
+      setDocMenu(false);
+      if (docItem.dataset.doc === "print") printDoc(activePane());
+      if (docItem.dataset.doc === "html") exportHtml(activePane());
+      if (docItem.dataset.doc === "copy") saveCopy(activePane());
+      return;
+    }
     // 缩放菜单里的选项先于 [data-act] 处理（菜单项没有 data-act）
     const preset = event.target.closest("[data-zoom]");
     if (preset) {
@@ -208,6 +220,7 @@ export function bindReaderEvents() {
     if (act === "zoom-in") zoomByStep(1);
     if (act === "zoom-out") zoomByStep(-1);
     if (act === "zoom-menu") setZoomMenu(!zoomMenuOpen);
+    if (act === "doc-menu") setDocMenu(!docMenuOpen);
     if (act === "ctx") {
       setCtxOpen(!state.ctxOpen);
       renderToolbar();
@@ -282,8 +295,12 @@ export function bindReaderEvents() {
     event.target.style.setProperty("--_fill", `${Math.round(value / 10)}%`);
   });
 
-  // 点工具栏以外的地方收起缩放比例菜单
+  // 点工具栏以外的地方收起缩放比例菜单与文档操作菜单
   document.addEventListener("click", (event) => {
     if (zoomMenuOpen && !event.target.closest(".zoom-anchor")) setZoomMenu(false);
+    if (docMenuOpen && !event.target.closest(".doc-anchor")) setDocMenu(false);
   });
+
+  // 打印对话框关闭后收掉舞台。事件不来也不影响观感：舞台在屏上始终不可见
+  window.addEventListener("afterprint", clearPrintStage);
 }

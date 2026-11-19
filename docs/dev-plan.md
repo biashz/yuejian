@@ -86,6 +86,7 @@ yuejian/
 | T12 | 文档分类：Rust `Category` 模型与 5 个命令、分类区 UI、拖拽 / 批量归类、配色 | T4,T5,T11 | 创建→归类→筛选→批量→改名改色→删除全链路可走通；旧 `state.json` 免迁移；见 [feature-categories.md](feature-categories.md) |
 | T13 | 摘录导出：`export-marks.js` 纯函数拼 Markdown、`marks-tools.js` 工具区、`marks-export.js` 两个出口、Rust `save_text_file` | T4,T11 | 有摘录时侧栏出现「复制 / 导出」；导出内容含标题、计数、引用块与出处行；无摘录不显示；见 [feature-export.md](feature-export.md) |
 | T14 | 跨书全文检索：`library-index.js`（PDF / 电子书抽文本并缓存）、`library-search.js`（两条取数路径）、`library-hits.js` + `library-search-ui.js`（命中区与调度）、Rust `read/write_search_index` 与 `Book.mtime` | T4,T5,T11 | 书架搜索两字以上搜正文；命中单独成区、带页码或章节名；点命中打开并填好侧栏搜索；索引按 size + mtime 失效；见 [feature-search.md](feature-search.md) |
+| T15 | 打印与导出当前文档：`doc-export.js`（能力判定 / 快照 / 图片内联 / 拼 HTML）、`doc-print.js`（打印舞台）、`doc-menu.js`（工具栏下拉）、Rust `save_file_copy` / `read_image_data_url` / `print_webview` 与 `save_text_file` 的 `ext` | T4,T11 | Markdown / 文本可打印并导出为独立 HTML（图片内联）；PDF / 电子书 / 大文件只交原文件副本；缺项写明原因；见 [feature-doc-export.md](feature-doc-export.md) |
 
 ## 4. 关键实现决策
 
@@ -150,6 +151,16 @@ yuejian/
     - **点命中：定位 + 高亮 + 聚焦三件事分开做**。定位用位置标识（PDF 页码、文本行号、电子书章节 href），高亮靠侧栏搜索，聚焦给侧栏对应条目加 `is-focus` 并滚进视野。Markdown 只做高亮——检索拿到的是**源码行号**，而渲染后的 DOM 与源码行没有对应关系（表格、脚注、代码块都会改变行数），按行号滚过去必然错位；宁可让侧栏去定位，也不给一个看着精确、实际错位的位置。普通文本（非窗口化）同理，行号换算成滚动位置只有窗口渲染那套有映射。
     - **定位必须延后两帧**。`openText` 在打开末尾用 `requestAnimationFrame` 把滚动位置恢复成上次进度，那一帧晚于打开动作完成；在 `.then()` 里立刻 `scrollToLine` 会被它冲掉，现象是「点了命中，书开了，却停在第一行」。PDF 恢复页码同理。两帧足够让这些收尾跑完，用户感知不到。
     - **单本失败只跳过它自己**，并在抬头报「N 本未能参与检索」。让整轮失败的话，书架里一本坏书就能让其余几十本都搜不了。
+
+23. **打印与导出：舞台打印、取屏幕排版、只交原文件**：三种格式的能力并不对称，硬凑成一套只会同时得到三份劣化品。
+    - **PDF / 电子书只交字节**。它们的版面由原文件决定（PDF 是写死的坐标与嵌入字体，电子书由自身 CSS 与阅读器共同排版），在前端重渲染一遍是更差的近似品，而用户并不知道手里这份是劣化的。顺带定下**不做「导出为 PDF」**：应用里没有 PDF 生成器，靠 `window.print()` 的另存为只能覆盖文本类，UI 上却会暗示所有文档都能变 PDF。
+    - **打印用舞台而不是就地打印**。阅读区是 `overflow: auto` 的容器，纸张没有视口，就地打印只有当前一屏。做法是克隆正文进 `#printStage`、给 `<body>` 挂 `is-printing`、`@media print` 里摘掉其余所有节点。三个必须处理的细节：①舞台屏上必须 `display: none`（否则阅读区里会看见一份重复正文，冒烟直接断言）；②舞台内 `animation: none`——`.md-doc` 的 `rise 600ms` 会把内容整体推下去，打印抓在动画中途就是错位的版式（与决策 18 的表格测量踩的是同一个坑）；③收摊交给 `afterprint`，命令返回时纸还没出，立刻清空会打出白纸。开关式（而非无条件）生效，是为了用户绕过菜单直接触发浏览器默认打印时还能打出界面，不会得到一张白纸。
+    - **平台分流放 Rust**。Tauri 文档自己写着「Currently only supported on macOS on wry. `window.print()` works on all platforms.」——macOS 的 WKWebView 不支持 `window.print()`（静默无反应），Windows / Linux 反过来只认它。判断写在 `print_webview` 的 `cfg(target_os)` 里，前端只发一个命令：平台判断散进界面代码是这类缺陷最常见的来源。
+    - **导出 HTML 取屏幕上的排版，不重跑解析**。克隆 `pane.mdDoc` 并带出容器类名（`is-text text-code show-gutter`）。屏幕上的排版里含着用户的选择（等宽/正文视图、行号、软换行、表格、高亮着色），另起一条渲染管线意味着同一个文件在应用里与导出文件里排版不一致，而这种不一致只在用户打开文件时才会发现。克隆体只清 `loading="lazy"`（离开应用后没人触发加载）、`is-broken`、`is-focus` 这类交互态。
+    - **图片内联是硬要求，路径从 `data-src` 拿**。应用内图片是 `asset://` 地址，只有本应用认；不内联，导出文件在别的机器上就是一排碎图标。`rewriteImages` 改写 `src` 时顺手把原样的相对路径记进 `data-src`——比事后反解 URL 可靠——解析仍走 `reader-md.js` 的 `resolvePath()`，不重复实现路径归一化。单张上限 8 MB，失败只让那一张失败并保留 `alt`，提示里报张数，不静默。
+    - **能力判定集中在 `docCapabilities()`**，菜单只管「有什么画什么」，缺项必须写原因（PDF 说明另存后用系统阅读器打印，大文件说明只加载了当前窗口）。少一项却不解释，用户只会以为功能坏了。
+    - **`doc-export.js` 不 import `panes.js`**。`panes` → `toolbar` → `doc-export` 已经是单向链，再加一条就从工具栏绕回 `panes` 成环；改成 `pane` 由调用方传入后依赖保持单向，顺带让这个模块在冒烟里不依赖界面状态。
+    - **base64 手写不引 crate**：规则只有一张 64 字符表和三条移位，二十行写完，Rust 单测覆盖三种补位长度；引依赖要多付版本、许可证与打包体积的账。
 
 ## 5. 风险与对策
 

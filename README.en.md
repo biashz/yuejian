@@ -22,6 +22,7 @@ A local-first desktop reader: a Rust + Tauri 2 shell, PDF rendering with pdf.js,
 - **Three sidebar views**: jump by document outline, locate by thumbnail, or search and highlight keywords across the whole document.
 - **Excerpt export**: an ebook's highlights and bookmarks can be **copied** or **exported as Markdown** (`<title>-excerpts.md`) in one click. The file carries the title, author, counts and export time; each excerpt is a blockquote with its source on a separate line plus the colour name, ordered by when you highlighted it, with leading `#` / `-` escaped so it pastes into Obsidian / Typora without falling apart. The buttons are absent when there is nothing to export.
 - **Text reading**: open `txt` / `log` / `csv` plus thirty-odd code and config extensions; prose, monospace, and table views, with line numbers and soft wrap; encoding resolved by BOM plus detection, so GBK files saved by Chinese Notepad do not turn into mojibake — and if detection gets it wrong, the info panel lets you re-open as GB18030 / Big5 / Shift_JIS and remembers the choice; code files are syntax-highlighted by extension, with highlighting switched off (and explained) above 200 KB; CSV / TSV are split per RFC 4180 with a sticky header and row-number column; **files over 8 MB load through a line index and a render window**, so a 100 MB log opens, scrolls to the end, and uses memory independent of file size.
+- **Print & export**: the `⋯` at the right end of the reading toolbar offers what the format allows — Markdown and text can be **printed** (`Ctrl/Cmd + P`, paper carries the text only, no toolbar or sidebar) or **exported as a standalone HTML file** (styles are inlined and local images are embedded as data URLs, so the file opens on any machine by double-click, and it reproduces the layout you see on screen); PDFs and ebooks only offer **Save a copy**, because their layout comes from the original file and re-rendering can only be worse; very large text files load one window at a time and get the same treatment, with the reason spelled out in the menu.
 - **Markdown reading**: comrak renders GFM on the Rust side (tables, task lists, footnotes, strikethrough, autolinks); headings get automatic outline anchors and code blocks are syntax-highlighted.
 - **Reading typography**: Paper / Night / Sepia themes; body size 15 / 17 / 19 / 21px, line height 1.7 / 1.9 / 2.1, measure 620 / 720 / 820px; Focus mode hides everything but the text.
 - **Reading progress**: page, zoom, and scroll position are saved automatically, so the next open returns to where you stopped.
@@ -214,6 +215,7 @@ data/
 | [Development plan](docs/dev-plan.md) | Milestones and implementation order |
 | [Excerpt export](docs/feature-export.md) | Where excerpts come from, Markdown output, the two exits and their limits |
 | [Cross-book search](docs/feature-search.md) | The two extraction paths, index format and invalidation, hit list, non-goals |
+| [Print & export](docs/feature-doc-export.md) | Per-format split, the print stage and platform differences, snapshotting and image inlining |
 
 ## Contributing
 

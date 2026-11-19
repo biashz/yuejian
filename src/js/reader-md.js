@@ -41,6 +41,9 @@ function rewriteImages(root, dir) {
   root.querySelectorAll("img").forEach((img) => {
     const src = img.getAttribute("src") || "";
     if (!src || EXTERNAL.test(src) || /^(data|blob):/i.test(src)) return;
+    // 原样的相对路径留在 data-src 上：src 会被改写成 asset:// 地址，而导出 HTML
+    // 时要把图片内联进来，需要的是磁盘路径。改写时顺手记下比事后反解 URL 可靠
+    img.dataset.src = src;
     img.src = convertFileSrc(resolvePath(dir, src));
     img.loading = "lazy";
     img.addEventListener("error", () => img.classList.add("is-broken"), { once: true });
@@ -108,3 +111,5 @@ export function scrollToHeading(scrollArea, id) {
   const offset = target.getBoundingClientRect().top - scrollArea.getBoundingClientRect().top;
   scrollArea.scrollTo({ top: scrollArea.scrollTop + offset - 24, behavior: "smooth" });
 }
+
+export { resolvePath };

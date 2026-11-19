@@ -1570,6 +1570,88 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 .zoom-item[aria-checked="true"] .zoom-check { opacity: 1; }
 .zoom-fit { width: 13px; height: 13px; }
 .zoom-menu-sep { display: block; height: 1px; margin: 5px 6px; background: var(--line); }
+
+/* 文档操作：打印 / 导出 / 另存副本。与缩放菜单同一套外观，右对齐——它在工具栏最右端，
+   居中对齐会伸到窗口外面去 */
+.doc-anchor { position: relative; display: inline-flex; }
+.doc-menu {
+  position: absolute;
+  bottom: calc(100% + 14px);
+  right: 0;
+  width: 216px; padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  animation: pop 160ms var(--ease) both;
+}
+.doc-menu[hidden] { display: none; }
+.doc-menu-head {
+  padding: 4px 8px 6px;
+  font-family: var(--font-mono);
+  font-size: 9px; letter-spacing: 0.18em;
+  color: var(--ink-3);
+}
+.doc-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; height: 30px; padding: 0 8px;
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+.doc-item-label { flex: 1; text-align: left; }
+.doc-item-hint {
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--ink-3); letter-spacing: 0.04em;
+}
+.doc-item:hover { background: var(--surface-2); color: var(--ink); }
+.doc-sep { display: block; height: 1px; margin: 5px 6px; background: var(--line); }
+/* 缺项的原因：不解释的话，用户只会以为菜单少了一项是坏了 */
+.doc-note {
+  margin: 4px 2px 2px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--line);
+  font-size: 11px; line-height: 1.5;
+  color: var(--ink-3);
+}
+
+/* 打印舞台：屏上不存在，纸上只留它。内容由 reader/doc-print.js 每次打印前填好 */
+#printStage { display: none; }
+@media print {
+  /* 打印时把应用外壳整层摘掉：工具栏、侧栏、文档栏、演示层全是噪音。
+     用 `body.is-printing` 这个开关而不是无条件生效——用户直接按 Ctrl+P 触发
+     浏览器默认打印时，至少还打得出界面，不会得到一张白纸 */
+  body.is-printing > *:not(#printStage) { display: none !important; }
+  /* 纸张上没有主题这回事：把舞台里的 token 一律改成黑字白底。
+     不做这一步，夜读主题（浅色字）打印出来就是一张白纸 */
+  body.is-printing #printStage {
+    --ink: #1a1a1a; --ink-2: #3a3a3a; --ink-3: #6a6a6a;
+    --line: #b9b9b9; --line-strong: #999999; --accent: #8e2c20;
+    --surface: #ffffff; --surface-2: #f1f1f1; --paper: #ffffff;
+    --read-size: 11.5pt; --read-lh: 1.75;
+    display: block;
+    padding: 0;
+    background: #ffffff;
+    color: #1a1a1a;
+  }
+  body.is-printing #printStage .tx-lines,
+  body.is-printing #printStage .tx-gutter,
+  body.is-printing #printStage pre { overflow: visible; white-space: pre-wrap; }
+  /* 进场动画（.md-doc 的 rise）会把刚插进去的内容整体推下去一截：
+     打印抓到的若是动画中途，版式就是错位的。舞台里一律不播放动画 */
+  body.is-printing #printStage,
+  body.is-printing #printStage * { animation: none !important; }
+  /* 图片与表格不要被拦腰截断；标题不要孤零零留在页底 */
+  body.is-printing #printStage img,
+  body.is-printing #printStage table,
+  body.is-printing #printStage pre { break-inside: avoid; }
+  body.is-printing #printStage h1,
+  body.is-printing #printStage h2,
+  body.is-printing #printStage h3 { break-after: avoid; }
+  @page { margin: 18mm 16mm; }
+}
+
 .page-input {
   width: 30px; height: 22px;
   text-align: center;

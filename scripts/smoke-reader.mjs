@@ -261,10 +261,26 @@ function stubSource() {
             (moved.has(book.id) ? { ...book, categoryId: args.categoryId } : book))));
         }
         if (command === "app_version") return Promise.resolve("0.0.0-smoke");
-        // 摘录导出：不弹真对话框，把默认文件名与正文留下来给断言看
+        // 摘录导出 / 文档导出：不弹真对话框，把默认文件名、正文与类型留下来给断言看
         if (command === "save_text_file") {
-          window.__exported = { name: args.defaultName, content: args.content };
+          window.__exported = { name: args.defaultName, content: args.content, ext: args.ext };
           return Promise.resolve("/tmp/" + args.defaultName);
+        }
+        // 导出 HTML 时把本地图片内联进来：记下每条路径，好断言「按文档目录解析成了绝对路径」
+        if (command === "read_image_data_url") {
+          window.__images = window.__images || [];
+          window.__images.push(args.path);
+          if (String(args.path).endsWith("missing.png")) return Promise.reject("读取失败");
+          return Promise.resolve("data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==");
+        }
+        if (command === "save_file_copy") {
+          window.__copied = { path: args.path, name: args.defaultName };
+          return Promise.resolve("/tmp/" + args.defaultName);
+        }
+        // 打印：真对话框会卡住无头浏览器，只数次数
+        if (command === "print_webview") {
+          window.__printed = (window.__printed || 0) + 1;
+          return Promise.resolve(null);
         }
         if (command === "open_book") {
           window.__encCalls.push(args.encoding === undefined ? null : args.encoding);
@@ -2510,6 +2526,149 @@ async function main() {
 
     errs = await errors();
     check("电子书阅读无未捕获异常", errs.length === 0, errs.join(" | "));
+
+    /* --- 文档导出与打印：文本类出独立 HTML，其余交原文件副本 --- */
+    await switchBook("b-md");
+    await waitFor(ws, `Boolean(document.querySelector("#readToolbar [data-act='doc-menu']"))`, "Markdown 打开（文档操作）", 20000);
+    await sleep(500);
+
+    const menuOpen = await evaluate(ws, `(() => {
+      document.querySelector('[data-act="doc-menu"]').click();
+      const menu = document.querySelector(".doc-menu");
+      return {
+        hidden: menu?.hidden ?? null,
+        items: [...document.querySelectorAll(".doc-menu [data-doc]")].map((el) => el.dataset.doc),
+        note: Boolean(menu?.querySelector(".doc-note")),
+        expanded: document.querySelector('[data-act="doc-menu"]').getAttribute("aria-expanded"),
+      };
+    })()`);
+    check("Markdown 的文档操作菜单：打印 / 导出 HTML / 另存副本，没有多余的说明",
+      menuOpen.hidden === false && menuOpen.expanded === "true"
+        && menuOpen.items.join("/") === "print/html/copy" && menuOpen.note === false,
+      `${menuOpen.items.join("/") || "空菜单"}${menuOpen.note ? "（多了一行说明）" : ""}`);
+
+    // 正文里的图片在应用内是 asset:// 地址，只有本应用认：导出时必须内联成 data URL。
+    // 顺带塞一张读不出来的图，验证「一张失败不拖垮整份导出」
+    await evaluate(ws, `(() => {
+      const doc = document.querySelector(".md-doc");
+      const ok = document.createElement("img");
+      ok.setAttribute("src", "pic.png");
+      ok.dataset.src = "pic.png";
+      ok.alt = "示意图";
+      const missing = document.createElement("img");
+      missing.setAttribute("src", "missing.png");
+      missing.dataset.src = "missing.png";
+      missing.alt = "缺失的图";
+      doc.append(ok, missing);
+    })()`);
+    await evaluate(ws, `document.querySelector('.doc-menu [data-doc="html"]').click()`);
+    await sleep(700);
+    const exportedHtml = await evaluate(ws, `window.__exported || null`);
+    const exportToast = await evaluate(ws,
+      `(document.querySelector("#toastWrap .toast:last-child")?.textContent || "").replace(/\\s+/g, " ")`);
+    const imagePaths = await evaluate(ws, `(window.__images || []).slice()`);
+    check("导出 HTML：默认文件名、html 过滤器、一份完整文档",
+      exportedHtml?.ext === "html" && exportedHtml.name === "示例 Markdown.html"
+        && exportedHtml.content.startsWith("<!DOCTYPE html>")
+        && exportedHtml.content.includes("<title>示例 Markdown</title>")
+        && exportedHtml.content.includes("导出于"),
+      `${exportedHtml?.name || "未导出"}（ext=${exportedHtml?.ext}）`);
+    check("正文取自当前渲染结果，图片内联成 data URL，失败的图不带走",
+      exportedHtml.content.includes("第一章")
+        && exportedHtml.content.includes('<article class="md-doc">')
+        && exportedHtml.content.includes("data:image/png;base64,")
+        && !exportedHtml.content.includes("asset.")
+        && !exportedHtml.content.includes("missing.png"),
+      exportedHtml ? `内联 ${exportedHtml.content.includes("data:image/")} · 残留 asset ${exportedHtml.content.includes("asset.")}` : "无内容");
+    check("图片路径按文档目录拼成绝对路径",
+      imagePaths.length === 2
+        && imagePaths.every((path) => path.includes("fixtures"))
+        && imagePaths[0].endsWith("pic.png") && imagePaths[1].endsWith("missing.png"),
+      imagePaths.join(" | ") || "没有读图");
+    check("有一张图没能内联时，提示里说清张数",
+      /1 张图片未能内联/.test(exportToast), exportToast || "没有提示");
+
+    const printed = await evaluate(ws, `(async () => {
+      document.querySelector('[data-act="doc-menu"]').click();
+      document.querySelector('.doc-menu [data-doc="print"]').click();
+      await new Promise((done) => setTimeout(done, 300));
+      const stage = document.getElementById("printStage");
+      return {
+        count: window.__printed || 0,
+        printing: document.body.classList.contains("is-printing"),
+        text: (stage?.textContent || "").length,
+        cls: stage?.className || "",
+        onScreen: stage ? getComputedStyle(stage).display : null,
+        menuHidden: document.querySelector(".doc-menu")?.hidden ?? null,
+      };
+    })()`);
+    check("打印：正文搬进舞台、只留纸张上可见的一份，屏幕上不占位",
+      printed.count === 1 && printed.printing && printed.text > 800
+        && printed.cls === "md-doc" && printed.onScreen === "none",
+      `打印 ${printed.count} 次 · 舞台 ${printed.text} 字 · 屏上 display=${printed.onScreen}`);
+    check("点了打印之后菜单自动收起", printed.menuHidden === true, String(printed.menuHidden));
+
+    const afterPrint = await evaluate(ws, `(() => {
+      window.dispatchEvent(new Event("afterprint"));
+      return {
+        printing: document.body.classList.contains("is-printing"),
+        text: (document.getElementById("printStage")?.textContent || "").length,
+      };
+    })()`);
+    check("打印结束收掉舞台，下次不会打到旧内容",
+      afterPrint.printing === false && afterPrint.text === 0,
+      `is-printing=${afterPrint.printing} · 残留 ${afterPrint.text} 字`);
+
+    const ctrlP = await evaluate(ws, `(() => {
+      const before = window.__printed || 0;
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "p", ctrlKey: true, bubbles: true }));
+      return { before, after: window.__printed || 0 };
+    })()`);
+    check("Ctrl+P 走同一条打印路径", ctrlP.after === ctrlP.before + 1, `${ctrlP.before} → ${ctrlP.after}`);
+    await evaluate(ws, `window.dispatchEvent(new Event("afterprint"))`);
+
+    // PDF：版面由原文件决定，重排一遍只会更差——只能另存副本
+    await switchBook("b-pdf");
+    await waitFor(ws, `Boolean(document.querySelector("#readToolbar [data-act='doc-menu']"))`, "PDF 打开", 20000);
+    await sleep(700);
+    const pdfMenu = await evaluate(ws, `(() => {
+      document.querySelector('[data-act="doc-menu"]').click();
+      const menu = document.querySelector(".doc-menu");
+      return {
+        items: [...menu.querySelectorAll("[data-doc]")].map((el) => el.dataset.doc),
+        note: (menu.querySelector(".doc-note")?.textContent || "").trim(),
+      };
+    })()`);
+    check("PDF 只给「另存原文件」，并说明为什么不能在这里打印",
+      pdfMenu.items.join("/") === "copy" && pdfMenu.note.length > 0,
+      `${pdfMenu.items.join("/") || "空菜单"} · ${pdfMenu.note.slice(0, 20)}`);
+    await evaluate(ws, `document.querySelector('.doc-menu [data-doc="copy"]').click()`);
+    await sleep(400);
+    const pdfCopy = await evaluate(ws, `window.__copied || null`);
+    check("另存副本交给后端的是原文件路径与同名目标",
+      pdfCopy?.path === "/fixtures/sample.pdf" && pdfCopy?.name === "示例 PDF.pdf",
+      JSON.stringify(pdfCopy));
+
+    // 大文件只渲染一个窗口，整篇导出必然缺内容：宁可只留另存副本
+    await switchBook("b-huge");
+    await waitFor(ws, `(async () => (await import("/js/reader/panes.js")).activePane()?.doc?.windowed === true)`,
+      "大文件打开（文档操作）", 30000);
+    await sleep(600);
+    const hugeMenu = await evaluate(ws, `(() => {
+      document.querySelector('[data-act="doc-menu"]').click();
+      const menu = document.querySelector(".doc-menu");
+      return {
+        items: [...menu.querySelectorAll("[data-doc]")].map((el) => el.dataset.doc),
+        note: (menu.querySelector(".doc-note")?.textContent || "").trim(),
+      };
+    })()`);
+    check("大文件只留「另存原文件」，并说明整篇导出不可用",
+      hugeMenu.items.join("/") === "copy" && hugeMenu.note.length > 0,
+      `${hugeMenu.items.join("/") || "空菜单"} · ${hugeMenu.note.slice(0, 20)}`);
+    await evaluate(ws, `document.querySelector('[data-act="doc-menu"]').click()`);
+
+    errs = await errors();
+    check("文档导出与打印无未捕获异常", errs.length === 0, errs.join(" | "));
 
     /* --- 更新安装提示：非模态卡片，可稍后，点立即安装才走安装命令 --- */
     await evaluate(ws, `(async () => {

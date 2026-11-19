@@ -8,6 +8,8 @@ import { activePane, activeReader, splitMode, setSplit } from "../reader/panes.j
 import { setView } from "../view.js";
 import { closeSettings, toggleZen } from "../preferences.js";
 import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, renderToolbar } from "../reader/toolbar.js";
+import { docMenuOpen, setDocMenu } from "../reader/doc-menu.js";
+import { printDoc } from "../reader/doc-print.js";
 import { setCtxOpen, renderCtx } from "../reader/ctx.js";
 import { presenting, enterPresent, exitPresent, presentStep } from "../reader/present.js";
 import { importDocuments } from "../actions.js";
@@ -53,6 +55,7 @@ export function bindKeyEvents() {
     }
     if (event.key === "Escape") {
       if (zoomMenuOpen) setZoomMenu(false);
+      else if (docMenuOpen) setDocMenu(false);
       else if (paletteOpen) closePalette();
       else if (settingsOpen) closeSettings();
       // 版式面板在「退出阅读」之前收：它是阅读视图里的一层，Esc 应该先关这一层
@@ -82,6 +85,13 @@ export function bindKeyEvents() {
     if (state.view !== "reading") return;
     if (document.activeElement?.tagName === "INPUT") return;
 
+    // Ctrl+P：打印当前文档。只放在「阅读视图」之后判——在书架页按 Ctrl+P
+    // 不该把书架的界面打印机出来，那和用户想印的文档没有关系
+    if (modifier && event.key.toLowerCase() === "p") {
+      event.preventDefault();
+      printDoc(activePane());
+      return;
+    }
     if (event.key === "ArrowRight" && state.current?.kind === "pdf") {
       event.preventDefault();
       goPage(state.pdfPage + 1);

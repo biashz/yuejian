@@ -33,4 +33,19 @@ function formatBytes(size) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export { tintOf, percentOf, formatRelative, formatBytes };
+/** 一位补零：`9` → `09` */
+const pad = (value) => String(value).padStart(2, "0");
+
+/**
+ * `2026-11-19 14:30`：日期完整、时间到分钟。
+ *
+ * 导出的文件里要写「导出于什么时候」——摘录的 Markdown 与正文的 HTML 都用这一种，
+ * 免得两份导出文件写着两种格式的时间。不用 `toLocaleString`：它跟随系统区域设置，
+ * 同一个用户在不同机器上导出的文件会长得不一样。
+ */
+function stampDateTime(date = new Date()) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export { tintOf, percentOf, formatRelative, formatBytes, stampDateTime };

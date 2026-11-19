@@ -193,6 +193,24 @@ try {
   check("书名回填自 OPF 元数据", state.title === "真机样本", state.title || "(空)");
   check("目录来自书内 NAV", state.toc.join("/") === "第一章 起点/第二章 展开/第三章 收束", state.toc.join("/"));
 
+  // 文档操作菜单：真机上也得画得出来。只断言结构与「按格式取舍」，
+  // 不点打印 / 另存——那两个会弹系统对话框，把无人值守的真机测试挂死
+  const docMenu = await evaluate(ws, `(() => {
+    document.querySelector('[data-act="doc-menu"]').click();
+    const menu = document.querySelector(".doc-menu");
+    const items = [...menu.querySelectorAll("[data-doc]")].map((el) => el.dataset.doc);
+    const looked = { hidden: menu.hidden, display: getComputedStyle(menu).display,
+      width: Math.round(menu.getBoundingClientRect().width) };
+    document.querySelector('[data-act="doc-menu"]').click();
+    return { items, note: Boolean(menu.querySelector(".doc-note")), ...looked,
+      closed: menu.hidden };
+  })()`);
+  check("真机里文档操作菜单按格式取舍：电子书只给另存副本",
+    docMenu.items.join("/") === "copy" && docMenu.note === true
+      && docMenu.hidden === false && docMenu.display === "block" && docMenu.width > 150
+      && docMenu.closed === true,
+    `${docMenu.items.join("/") || "空"} · ${docMenu.width}px · 备注 ${docMenu.note}`);
+
   // 章节正文在 blob iframe 里，从 CDP 帧树进去读。
   // 第一屏往往是封面（只有图、没有字），所以先跳到第一个正文章节再读
   await evaluate(ws, `(async () => {

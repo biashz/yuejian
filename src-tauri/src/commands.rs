@@ -738,30 +738,45 @@ pub fn set_highlight(
     Ok(updated)
 }
 
-/// 把前端拼好的摘录写到用户选定的文件。
+/// 把前端拼好的文本写到用户选定的文件（摘录 .md、导出的 .html 都走这里）。
 ///
-/// 内容由前端生成（`reader/export-marks.js`）：那是纯字符串处理，单元边界清楚，
-/// 冒烟能直接断言输出形状；Rust 这边只负责弹保存框与落盘，不掺和格式。
+/// 内容由前端生成（`reader/export-marks.js`、`reader/doc-export.js`）：那是纯字符串
+/// 处理，单元边界清楚，冒烟能直接断言输出形状；Rust 这边只负责弹保存框与落盘，
+/// 不掺和格式。
 ///
 /// 三个约定：
 /// ① **取消返回空串**，不返回 Err——用户按「取消」不是失败，前端据此不弹提示；
-/// ② 写 UTF-8 **无 BOM**：Markdown 是给别的软件读的，BOM 会被部分解析器当成正文；
+/// ② 写 UTF-8 **无 BOM**：Markdown / HTML 都是给别的软件读的，BOM 会被部分解析器当成正文；
 /// ③ 走 `spawn_blocking`：`rfd` 的保存框是阻塞调用，直接在命令线程里开会卡住 IPC。
+///
+/// `ext` 决定对话框的标题与文件类型过滤器，省略即 Markdown（摘录导出的老调用点
+/// 不传这个参数，serde 对缺失的 `Option` 落 `None`，所以老路径一个字都不用改）。
 #[tauri::command]
-pub async fn save_text_file(default_name: String, content: String) -> Result<String, String> {
-    let fallback = "excerpt.md".to_string();
+pub async fn save_text_file(
+    default_name: String,
+    content: String,
+    ext: Option<String>,
+) -> Result<String, String> {
+    let ext = ext.unwrap_or_default().to_ascii_lowercase();
+    let (title, fallback, filters): (&str, &str, Vec<(&str, &[&str])>) = match ext.as_str() {
+        "html" => ("导出为 HTML", "document.html", vec![("HTML 文档", &["html", "htm"][..])]),
+        "txt" => ("保存文本", "document.txt", vec![("文本文件", &["txt"][..])]),
+        _ => (
+            "保存摘录",
+            "excerpt.md",
+            vec![("Markdown", &["md"][..]), ("文本文件", &["txt"][..])],
+        ),
+    };
     let name = {
         let trimmed = default_name.trim();
-        if trimmed.is_empty() { fallback } else { trimmed.to_string() }
+        if trimmed.is_empty() { fallback.to_string() } else { trimmed.to_string() }
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(path) = rfd::FileDialog::new()
-            .set_title("保存摘录")
-            .set_file_name(name)
-            .add_filter("Markdown", &["md"])
-            .add_filter("文本文件", &["txt"])
-            .save_file()
-        else {
+        let mut dialog = rfd::FileDialog::new().set_title(title).set_file_name(name);
+        for (label, extensions) in filters {
+            dialog = dialog.add_filter(label, extensions);
+        }
+        let Some(path) = dialog.save_file() else {
             return Ok(String::new());
         };
         fs::write(&path, content.as_bytes()).map_err(|err| format!("写入失败：{err}"))?;
@@ -769,6 +784,124 @@ pub async fn save_text_file(default_name: String, content: String) -> Result<Str
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+/// 另存一份**原文件副本**（PDF / 电子书用）。
+///
+/// 不重排版、不转格式：PDF 的版面与电子书的排版都由原文件本身决定，前端再
+/// 「渲染」一遍只会得到一份更差的近似品——图丢了、字体换了、分页全乱。真正的
+/// 需求是「把这本书带出去」，那就把原样的字节交出去。
+///
+/// 与 `save_text_file` 同一套约定：取消回空串、`spawn_blocking` 避开阻塞。
+#[tauri::command]
+pub async fn save_file_copy(path: String, default_name: String) -> Result<String, String> {
+    let source = PathBuf::from(&path);
+    if !source.is_file() {
+        return Err("文件已不在原位置".into());
+    }
+    let fallback = source
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "copy".to_string());
+    let name = {
+        let trimmed = default_name.trim();
+        if trimmed.is_empty() { fallback } else { trimmed.to_string() }
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let ext = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let mut dialog = rfd::FileDialog::new().set_title("另存副本").set_file_name(name);
+        if !ext.is_empty() {
+            dialog = dialog.add_filter(ext.to_uppercase(), &[ext.as_str()]);
+        }
+        let Some(target) = dialog.save_file() else {
+            return Ok(String::new());
+        };
+        fs::copy(&source, &target).map_err(|err| format!("复制失败：{err}"))?;
+        Ok(target.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// 读取一张本地图片并编码成 data URL，供「导出为 HTML」把图片内联进去。
+///
+/// 导出的 HTML 会被拿到别的机器上打开：`asset://` 只在应用内有效，不内联就是
+/// 一排碎图标。上限 8MB——内联会让 HTML 膨胀 4/3 倍，更大的图片更适合外链。
+#[tauri::command]
+pub fn read_image_data_url(path: String) -> Result<String, String> {
+    const MAX_INLINE_IMAGE: u64 = 8 * 1024 * 1024;
+    let meta = fs::metadata(&path).map_err(|err| format!("读取失败：{err}"))?;
+    if meta.len() > MAX_INLINE_IMAGE {
+        return Err("图片超过 8MB".into());
+    }
+    let bytes = fs::read(&path).map_err(|err| format!("读取失败：{err}"))?;
+    Ok(format!("data:{};base64,{}", image_mime(&path), base64(&bytes)))
+}
+
+/// 打印当前 WebView 的内容。
+///
+/// 平台差异必须在这里抹平，前端只认这一个命令：
+/// - **macOS**：WKWebView 不支持 `window.print()`（调用后静默无反应，连错误都没有），
+///   只能走 wry 暴露的原生打印（`NSPrintOperation`）；
+/// - **Windows / Linux**：反过来——wry 的 `print()` 只有 macOS 实现，`window.print()`
+///   才是通路（WebView2 的 `PrintAsync`、WebKitGTK 的打印对话框）。
+///
+/// 两边都遵守 `@media print`，所以「只打印正文、不打印工具栏」这件事交给 CSS，
+/// 这里不拼任何内容。
+#[tauri::command]
+pub fn print_webview(window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        window.print().map_err(|err| format!("打印失败：{err}"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.eval("window.print()").map_err(|err| format!("打印失败：{err}"))
+    }
+}
+
+/// 扩展名 → MIME。内联图片只需要覆盖常见的几种，认不出的按二进制流交出去
+fn image_mime(path: &str) -> &'static str {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "avif" => "image/avif",
+        _ => "application/octet-stream",
+    }
+}
+
+/// 标准 base64（RFC 4648，带 `=` 补位）。
+///
+/// 只为内联图片写这二十行，不引依赖：Base64 的规则只有一张 64 字符表和三条移位，
+/// 而引一个 crate 就要多一份版本、许可证与打包体积的账。
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let packed = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(packed >> 18) as usize & 63] as char);
+        out.push(TABLE[(packed >> 12) as usize & 63] as char);
+        // 不足三字节的尾部用 `=` 补位，解码端据此知道哪几位是填充
+        out.push(if chunk.len() > 1 { TABLE[(packed >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[packed as usize & 63] as char } else { '=' });
+    }
+    out
 }
 
 #[tauri::command]
@@ -1394,5 +1527,25 @@ mod tests {
         assert_eq!(parse_proxy_reg_query(HEADER), None);
         let empty_server = format!("{HEADER}\n    ProxyEnable    REG_DWORD    0x1\n");
         assert_eq!(parse_proxy_reg_query(&empty_server), None);
+    }
+
+    #[test]
+    fn encodes_base64_with_padding() {
+        // 三种尾部长度各取一个：无补位、补一个 `=`、补两个 `=`。
+        // 内联图片的字节数几乎总不是 3 的倍数，补位错了整张图就解不出来
+        assert_eq!(super::base64(b"Man"), "TWFu");
+        assert_eq!(super::base64(b"Ma"), "TWE=");
+        assert_eq!(super::base64(b"M"), "TQ==");
+        assert_eq!(super::base64(b""), "");
+        // 0xFB 0xFF：全部落在表的末段，用来验证移位后没越界
+        assert_eq!(super::base64(&[0xfb, 0xff]), "+/8=");
+    }
+
+    #[test]
+    fn maps_image_extension_to_mime() {
+        assert_eq!(super::image_mime("C:/a/b.png"), "image/png");
+        assert_eq!(super::image_mime("C:/a/b.JPEG"), "image/jpeg");
+        assert_eq!(super::image_mime("C:/a/b.unknown"), "application/octet-stream");
+        assert_eq!(super::image_mime("C:/a/b"), "application/octet-stream");
     }
 }

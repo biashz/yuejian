@@ -10,16 +10,11 @@
  * 在多行原文下不会把每行都变成一个列表项。
  */
 import { t } from "../i18n.js";
+import { stampDateTime } from "../core/format.js";
 import { colorOf } from "./highlight.js";
 
 /** 一位补零：`9` → `09`，用于时间戳 */
 const pad = (value) => String(value).padStart(2, "0");
-
-/** `2026-11-19 14:30`：日期完整、时间到分钟，够定位「哪天导的」 */
-function stamp(date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
-    + `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 /** `11-19 14:30`：逐条的时间只留月日，与侧栏书签列表同一口径 */
 function shortStamp(createdAt) {
@@ -76,7 +71,7 @@ function buildMarksMarkdown(book, { now = new Date() } = {}) {
   const counts = [];
   if (highlights.length) counts.push(t("reader.noteCount", { count: highlights.length }));
   if (bookmarks.length) counts.push(t("reader.markCount", { count: bookmarks.length }));
-  if (counts.length) counts.push(t("reader.exportAt", { time: stamp(now) }));
+  if (counts.length) counts.push(t("reader.exportAt", { time: stampDateTime(now) }));
   if (counts.length) head.push("", counts.join(" · "));
 
   const sections = [];

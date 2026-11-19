@@ -8,6 +8,8 @@ import { ZOOM_STEPS, ZOOM_PRESETS } from "../core/constants.js";
 import { ZOOM_MIN, ZOOM_MAX } from "../reader-pdf.js";
 import { activePane, activeReader, canLinkPanes, splitMode, linkSync, setSplit, setLink } from "./panes.js";
 import { ebookToolbar } from "./toolbar-ebook.js";
+import { docCapabilities } from "./doc-export.js";
+import { docMenuHtml, setDocMenu } from "./doc-menu.js";
 import { toast } from "../core/feedback.js";
 import { updateStatus } from "../view.js";
 
@@ -41,14 +43,15 @@ function zoomMenuHtml() {
 function renderToolbar() {
   const book = state.current;
   const bar = $("#readToolbar");
-  // 工具栏整体重建，缩放菜单随之关闭
+  // 工具栏整体重建，缩放菜单与文档操作菜单随之关闭
   zoomMenuOpen = false;
   if (!book) {
     bar.innerHTML = "";
     return;
   }
 
-  // 双栏开关对所有文档生效；联动开关只在两栏同文档时出现
+  // 双栏开关对所有文档生效；联动开关只在两栏同文档时出现。
+  // 「文档操作」四类格式都有——只是菜单里的项按格式取舍
   const paneTools = `
       <span class="tool-sep"></span>
       <div class="tool-group">
@@ -58,6 +61,11 @@ function renderToolbar() {
         ${canLinkPanes() ? `<button class="tool-btn ${linkSync ? "is-on" : ""}" data-act="link" title="${t("reader.link")}">
           <svg class="ic"><use href="#i-link"/></svg>
         </button>` : ""}
+        <span class="doc-anchor">
+          <button class="tool-btn" data-act="doc-menu" aria-haspopup="menu" aria-expanded="false"
+            title="${t("reader.docMenu")}"><svg class="ic"><use href="#i-more"/></svg></button>
+          ${docMenuHtml(docCapabilities(activePane()))}
+        </span>
       </div>`;
 
   if (book.kind === "pdf") {
@@ -160,6 +168,8 @@ function renderToolbar() {
         <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
       </div>${paneTools}`;
   }
+  // 工具栏刚重建，新菜单默认收起；状态跟着走，否则 Esc / 外点会对着「已经关了」的菜单空转
+  setDocMenu(false);
   updateToolbarPage();
 }
 
