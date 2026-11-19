@@ -874,6 +874,12 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   background-clip: content-box;
   border-radius: 99px;
 }
+/* 条本身很淡：鼠标压上去加重一点，至少让人看得出「这段还能往下走」 */
+.scroll-area:hover::-webkit-scrollbar-thumb, .book-list:hover::-webkit-scrollbar-thumb,
+.ctx-body:hover::-webkit-scrollbar-thumb, .sheet-body:hover::-webkit-scrollbar-thumb,
+.palette-list:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink-3) 58%, transparent);
+}
 
 /* PDF（pdf.js 真实渲染） */
 .pdf-stack {
@@ -1016,6 +1022,62 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   color: var(--ink-3); font-size: 14px; line-height: 1;
 }
 .ebook-note-close:hover { background: var(--surface-2); color: var(--ink); }
+
+/* ---------- 划线：取色小窗 ---------- */
+/* 一条胶囊浮在选中文字上方：五个色点，点已有划线时右侧多一个「删除划线」 */
+.hl-menu {
+  position: fixed; z-index: 72;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 9px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-lg);
+  animation: pop 140ms var(--ease) both;
+}
+.hl-menu[hidden] { display: none; }
+.hl-menu-colors { display: flex; align-items: center; gap: 7px; }
+.hl-dot {
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--_dot);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.1);
+  transition: transform 120ms var(--ease);
+}
+.hl-dot:hover { transform: scale(1.16); }
+/* 当前那条划线的颜色：用书页底色描一圈，比加粗更好认 */
+.hl-dot.is-on { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px var(--_dot); }
+.hl-menu-sep { width: 1px; height: 15px; background: var(--line); }
+.hl-del { padding: 0 4px; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.hl-del:hover { color: var(--ink); }
+
+/* 侧栏划线列表：行首一个颜色点，后面才是章节名与原文 */
+.note-dot {
+  display: inline-block; width: 7px; height: 7px; margin-right: 5px;
+  border-radius: 50%; background: var(--_dot); vertical-align: middle;
+}
+.note-row .mark-main { line-height: 1.62; }
+
+/* ---------- 图片放大 ---------- */
+/* 整屏一层，深底把图衬出来；图片本身按窗口缩放，放大之后靠容器滚动 */
+.img-view {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 24px;
+  background: rgb(20 16 13 / 0.88);
+  overflow: auto;
+  animation: fade 140ms var(--ease) both;
+  cursor: zoom-out;
+}
+.img-view[hidden] { display: none; }
+.img-view-stage { margin: 0; display: flex; align-items: center; justify-content: center; }
+.img-view img { display: block; max-width: 100%; border-radius: 4px; box-shadow: var(--shadow-lg); }
+.img-view img.is-fit { max-height: calc(100vh - 96px); }
+.img-view-hint {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: 0.1em;
+  color: rgb(255 255 255 / 0.7);
+}
 
 /* 书签列表：一行一个，右侧删除按钮常态半透明，hover 才明显 */
 .mark-count {
@@ -1759,8 +1821,12 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
   /* 高度用视口单位而不是 100%：这里是网格项目，行高由内容撑出来，
      百分比高度会退化成 auto，设置项多起来整面板就顶出窗口、按钮也跟着走丢 */
   height: 100vh;
+  height: 100dvh;
   max-height: 100vh;
+  max-height: 100dvh;
   display: flex; flex-direction: column;
+  /* 兜底：万一哪层祖先把高度算歪了，也不让面板把底栏甩到窗口外 */
+  overflow: hidden;
   background: var(--surface);
   border-left: 1px solid var(--line);
   box-shadow: var(--shadow-lg);
@@ -1768,6 +1834,7 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 }
 #settingsOverlay { place-items: stretch; justify-items: end; }
 .sheet-head {
+  flex: none;
   display: flex; align-items: flex-start; justify-content: space-between;
   padding: 22px 22px 16px;
   border-bottom: 1px solid var(--line);
@@ -1776,7 +1843,7 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
   font-family: var(--font-display);
   font-size: 24px; font-weight: 400; letter-spacing: 0.06em;
 }
-.sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 22px 24px; }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px 22px 24px; }
 .setting-group { padding: 18px 0; border-bottom: 1px solid var(--line); }
 .setting-group:last-child { border-bottom: 0; }
 .setting-group h3 {
@@ -1914,6 +1981,7 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 }
 
 .sheet-foot {
+  flex: none;
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 22px;
   border-top: 1px solid var(--line);

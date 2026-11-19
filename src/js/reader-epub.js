@@ -13,7 +13,6 @@
  *    再由 tauri.conf.json 的 CSP 兜底。两道，缺一道都不算完。
  */
 import { convertFileSrc, invoke } from "./api.js";
-import { clamp } from "./core/dom.js";
 import { t } from "./i18n.js";
 import { formatBytes } from "./core/format.js";
 import { stripActiveContent } from "./reader/ebook-sanitize.js";
@@ -23,6 +22,9 @@ import { flattenToc, countChapters } from "./reader/ebook-toc.js";
 import { detectDrm } from "./reader/ebook-drm.js";
 import { hardenBook } from "./reader/ebook-harden.js";
 import { ebookFormat } from "./core/constants.js";
+import { guardBook } from "./reader/ebook-guard.js";
+import { bindAnnotations, paintAnnotations, selectionCfi } from "./reader/ebook-annotations.js";
+import { toLocation, stepBook, chapterStep, goToFraction } from "./reader/ebook-nav.js";
 
 /** 超过这个体积就不读了：整份进内存，再大只会把进程拖死 */
 const MAX_BYTES = 512 * 1024 * 1024;
@@ -46,12 +48,14 @@ export class EbookReader {
    * @param {(detail: {a: HTMLElement, href: string}) => void} [options.onLink]  书内链接交给调用方处理
    * @param {boolean} [options.spread]  是否双页（窗口变窄时由分页器自己降为单页）
    */
-  constructor({ stack, onRelocate, onContent, onEdge, onLink, spread = true }) {
+  constructor({ stack, onRelocate, onContent, onEdge, onLink, onAnnotation, spread = true }) {
     this.stack = stack;
     this.onRelocate = onRelocate;
     this.onContent = onContent;
     this.onEdge = onEdge;
     this.onLink = onLink;
+    /* 点中已有划线时回调；与 onLink 同一层，都是「库里判定命中、界面决定怎么做」 */
+    this.onAnnotation = onAnnotation;
     /* 用户选的版式；真正的列数写在 renderer 的 max-column-count 上 */
     this.spread = spread;
     /* 注入给章节文档的版式 CSS 与页边距，换书后由 `open()` 再贴一次 */
@@ -70,6 +74,9 @@ export class EbookReader {
     this.toc = [];
     /* 章节文档缓存（脚注解析用）——key 是 spine 下标 */
     this.docs = new Map();
+    /* 这本书的划线；真正画在 overlayer 上的是 `painted` 里那几个 */
+    this.highlights = [];
+    this.painted = new Set();
   }
 
   /**
@@ -116,7 +123,7 @@ export class EbookReader {
     this.book = view.book;
     this.chapters = countChapters(this.book?.toc);
     this.toc = flattenToc(this.book?.toc);
-    this.guard(view);
+    guardBook(this.book);
 
     view.addEventListener("relocate", (event) => this.handleRelocate(event.detail));
     view.addEventListener("load", (event) => this.onContent?.(event.detail?.doc));
@@ -128,6 +135,8 @@ export class EbookReader {
     // 书内链接一律先拦下：`link` 事件是可取消的，库里看 `dispatchEvent` 的返回值
     // 决定要不要自己 `goTo`。脚注要读另一章才能判断是不是注，是异步的，
     // 没法同步给答案——所以先拦，再由回调决定跳转还是弹窗
+    // 划线：重建 overlayer 时重贴、按颜色画、点中时回调（细节在 ebook-annotations.js）
+    bindAnnotations(this, view);
     view.addEventListener("link", (event) => {
       if (!this.onLink) return;
       event.preventDefault();
@@ -140,26 +149,6 @@ export class EbookReader {
     this.setSpread(this.spread);
     // 版式同理：`setStyles` 要写当前文档的 `<style>`，而那张表是 `afterLoad` 才建的
     if (this.css) this.applyTypography(this.css, this.margin);
-  }
-
-  /**
-   * 挂上资源钩子。两个事件都在库内部（`book.transformTarget`，即 loader 的 eventTarget）：
-   *
-   * - `load`：允许/拒绝某个清单项。脚本类直接拒掉，连字节都不读。
-   * - `data`：资源字节在变成 blob URL 之前的最后一道，用来清洗 HTML/CSS。
-   */
-  guard(view) {
-    const target = this.book?.transformTarget;
-    if (!target) return;
-    target.addEventListener("load", (event) => {
-      if (event.detail?.isScript) event.detail.allow = false;
-    });
-    target.addEventListener("data", (event) => {
-      const type = String(event.detail?.type || "");
-      if (!/xhtml|html|svg/i.test(type)) return;
-      event.detail.data = Promise.resolve(event.detail.data)
-        .then((bytes) => stripActiveContent(bytes, type));
-    });
   }
 
   /**
@@ -202,63 +191,43 @@ export class EbookReader {
     renderer.render?.();
   }
 
-  handleRelocate(detail) {
-    const href = detail?.tocItem?.href || "";
-    const loc = {
-      cfi: typeof detail?.cfi === "string" ? detail.cfi : "",
-      fraction: clamp(Number(detail?.fraction) || 0, 0, 1),
-      label: detail?.tocItem?.label || "",
-      href,
-    };
-    this.location = loc;
-    this.onRelocate?.(loc);
+  /** 贴一份划线列表（增删都由 `highlight.js` 整份重贴，这里只存下来再画一遍） */
+  setHighlights(list) {
+    this.highlights = Array.isArray(list) ? list : [];
+    paintAnnotations(this);
   }
 
   /**
-   * 翻页并判断是不是已经到头。
+   * 跳到某条划线，并让库把这次命中派发出去（侧栏点条目时用）。
    *
-   * 库在首尾处是静默 no-op（`prev()` 直接 resolve，什么也不发生），用户按了没反应
-   * 只会以为卡了。这里比前后 CFI：没变就是没动，回一句提示。
-   * 留一帧再比——`relocate` 是在渲染完成后才派发的，紧跟着读可能还没更新。
+   * 走的不是 `goTo` + 自己算位置：`showAnnotation` 会先导航到 CFI 再补一次
+   * `show-annotation`，这里的小窗正好挂在那一个回调上，两件事就都不用重写。
    */
-  async step(direction) {
-    const before = this.location?.cfi || "";
-    if (direction > 0) await this.view?.next();
-    else await this.view?.prev();
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    const after = this.location?.cfi || "";
-    if (before && after && before === after) this.onEdge?.(direction > 0 ? "end" : "start");
+  showAnnotation(annotation) {
+    if (!annotation?.cfi) return undefined;
+    return this.view?.showAnnotation({ value: annotation.cfi });
+  }
+
+  /** 选中文字的 CFI；固定版面没有字符流，返回空串 */
+  selectionCfi(range) {
+    return selectionCfi(this, range);
+  }
+
+  handleRelocate(detail) {
+    this.location = toLocation(detail);
+    this.onRelocate?.(this.location);
   }
 
   next() {
-    return this.step(1);
+    return stepBook(this, 1);
   }
 
   prev() {
-    return this.step(-1);
+    return stepBook(this, -1);
   }
 
-  /**
-   * 上一章 / 下一章。按目录顺序走，不按 spine——读者心里的「章」是目录里的那一条，
-   * 而 spine 里的分节可能只是排版切分。
-   */
   chapterStep(direction) {
-    const items = this.toc;
-    if (!items.length) return;
-    const href = this.location?.href || "";
-    const file = href.split("#")[0];
-    let index = -1;
-    items.forEach((item, i) => {
-      if (item.href === href) index = i;
-      else if (index < 0 && item.href.split("#")[0] === file) index = i;
-    });
-    if (index < 0) return;
-    const target = items[index + direction];
-    if (!target) {
-      this.onEdge?.(direction > 0 ? "end" : "start");
-      return;
-    }
-    return this.view?.goTo(target.href);
+    return chapterStep(this, direction);
   }
 
   /**
@@ -300,21 +269,9 @@ export class EbookReader {
     return this.view?.goTo(target);
   }
 
-  /**
-   * 按比例跳转。
-   *
-   * 回流的书交给库（`#sectionProgress` 把字符位置折算成节内锚点）。固定版面
-   * 没有字符位置可折算——那本书的「比例」就是一页占多少，直接按节数取整，
-   * 别去碰库里的私有进度表（漫画能走 `goToFraction`，KF8 固定版面不一定）。
-   */
+  /** 按比例跳转（0–1）；固定版面按节数取整，回流的书交给库 */
   goToFraction(fraction) {
-    const ratio = clamp(fraction, 0, 1);
-    if (this.fixed) {
-      const total = this.book?.sections?.length || 0;
-      if (!total) return undefined;
-      return this.view?.goTo(Math.min(total - 1, Math.round(ratio * (total - 1))));
-    }
-    return this.view?.goToFraction(ratio);
+    return goToFraction(this, fraction);
   }
 
   destroy() {
@@ -333,6 +290,7 @@ export class EbookReader {
     this.format = "epub";
     this.fixed = false;
     this.docs.clear();
+    this.painted.clear();
     this.stack.hidden = true;
     this.stack.innerHTML = "";
   }

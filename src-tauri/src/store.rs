@@ -57,6 +57,24 @@ pub struct Bookmark {
     pub created_at: u64,
 }
 
+/// 电子书划线。
+///
+/// 与书签同一个位置模型（CFI），区别是它跨一段文字而不是落到一点：`cfi` 是
+/// 一个 Range CFI，`text` 是选中时的原文快照。原文必须存——重排之后 CFI 仍然
+/// 指得准，但侧栏列表要能一眼看出划了哪句，为此去解析 CFI 再打开章节文档不值得。
+///
+/// `color` 是色板键（amber | olive | indigo | plum | ink），只影响画出来的颜色，
+/// 不参与定位。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Highlight {
+    pub cfi: String,
+    pub text: String,
+    pub color: String,
+    pub label: String,
+    pub created_at: u64,
+}
+
 /// 书架条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +104,9 @@ pub struct Book {
     /// 电子书书签；只有 `kind == "ebook"` 会有内容
     #[serde(default)]
     pub bookmarks: Vec<Bookmark>,
+    /// 电子书划线；同样只有电子书会有内容
+    #[serde(default)]
+    pub highlights: Vec<Highlight>,
     pub progress: Progress,
 }
 

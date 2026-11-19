@@ -1,5 +1,5 @@
 use crate::markdown;
-use crate::store::{self, Book, Bookmark, Category, Progress, Settings, StoreState};
+use crate::store::{self, Book, Bookmark, Category, Highlight, Progress, Settings, StoreState};
 use crate::text;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -20,6 +20,9 @@ const MAX_PDF_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_RANGE_BYTES: u64 = 256 * 1024 * 1024;
 /// 一本书的书签上限：超出来不再是「书签」而是笔记系统，那是另一件事
 const MAX_BOOKMARKS: usize = 200;
+/// 一本书的划线上限。比书签宽一些——一次阅读划十几条很正常，
+/// 但仍然要有上限：侧栏列表与每章重绘的代价都跟着条数走
+const MAX_HIGHLIGHTS: usize = 500;
 
 /// 大文件的行索引缓存。
 ///
@@ -152,6 +155,7 @@ fn build_book(path: &Path) -> Result<Book, String> {
         category_id: String::new(),
         encoding: String::new(),
         bookmarks: Vec::new(),
+        highlights: Vec::new(),
         progress: Progress::default(),
     })
 }
@@ -664,6 +668,60 @@ pub fn set_bookmark(
         }
     } else {
         book.bookmarks.retain(|m| m.cfi != cfi);
+    }
+    let updated = book.clone();
+    store::persist(&data, &state.dir)?;
+    Ok(updated)
+}
+
+/// 划线：加一条或删一条。
+///
+/// 与 `set_bookmark` 同一套形状（幂等、返回整本书），因为前端两处的调用方式一样：
+/// 画完立刻拿到新的整本书，直接塞回 `pane.book`，不必再发一次 `get_library`。
+///
+/// `text` 是选中时的原文快照。空原文仍然接受——固定版面上偶尔能选中图片替代文字，
+/// 但拒绝空 CFI：没有位置信息的划线画不出来，也不能用来跳转。
+#[tauri::command]
+pub fn set_highlight(
+    state: State<'_, StoreState>,
+    id: String,
+    cfi: String,
+    text: String,
+    color: String,
+    label: String,
+    on: bool,
+) -> Result<Book, String> {
+    let mut data = lock(&state)?;
+    let Some(book) = data.books.iter_mut().find(|b| b.id == id) else {
+        return Err("书架中找不到这本书".into());
+    };
+    if cfi.trim().is_empty() {
+        return Err("没有选中文字，无法划线".into());
+    }
+    if on {
+        // 同一条再说一次是「改色 / 改原文」，不是再加一条：前端点已有划线换颜色走的就是这里。
+        // 先取下标再改：`if let Some(x) = iter_mut()...` 的 else 分支里还要写这个 Vec，
+        // 借用会一直占到 else，编译器不让
+        match book.highlights.iter().position(|m| m.cfi == cfi) {
+            Some(index) => {
+                let existing = &mut book.highlights[index];
+                existing.color = color;
+                if !text.is_empty() {
+                    existing.text = text;
+                }
+                if !label.is_empty() {
+                    existing.label = label;
+                }
+            }
+            None => {
+                if book.highlights.len() >= MAX_HIGHLIGHTS {
+                    return Err(format!("一本书最多 {MAX_HIGHLIGHTS} 条划线，先删几条"));
+                }
+                book.highlights.push(Highlight { cfi, text, color, label, created_at: store::now_ms() });
+            }
+        }
+    } else {
+        book.highlights.retain(|m| m.cfi != cfi);
     }
     let updated = book.clone();
     store::persist(&data, &state.dir)?;

@@ -24,8 +24,10 @@ const WHEEL_COOLDOWN = 320;
  * @param {(direction: 1|-1) => void} handlers.onStep
  * @param {(where: "start"|"end") => void} [handlers.onJump]    Home / End 跳到书首 / 书尾
  * @param {(direction: 1|-1) => void} [handlers.onChapter]    上一章 / 下一章
+ * @param {(range: Range) => void} [handlers.onSelect]        选中一段文字（划线的入口）
+ * @param {(img: HTMLImageElement) => void} [handlers.onImage] 点中图片（放大的入口）
  */
-export function bindEbookGestures(target, { onStep, onJump, onChapter }) {
+export function bindEbookGestures(target, { onStep, onJump, onChapter, onSelect, onImage }) {
   if (!target || target.__yuejianGesture) return () => {};
   target.__yuejianGesture = true;
 
@@ -38,6 +40,13 @@ export function bindEbookGestures(target, { onStep, onJump, onChapter }) {
   /* ---------------- 点击半屏 ---------------- */
   const onClick = (event) => {
     if (event.button !== 0) return;
+    // 图片先于翻页判断：整页漫画点哪儿都是图，按半屏规则会变成「点一下翻一页」
+    const img = event.target.closest?.("img");
+    if (img && onImage) {
+      event.preventDefault();
+      onImage(img);
+      return;
+    }
     if (event.target.closest?.("a[href], button, input, textarea, select")) return;
     const selection = (isDoc ? view : window)?.getSelection?.();
     if (selection && String(selection).trim()) return;
@@ -71,6 +80,8 @@ export function bindEbookGestures(target, { onStep, onJump, onChapter }) {
 
   /* ---------------- 键盘 ---------------- */
   const onKeyDown = (event) => {
+    // Shift+方向键是在扩选，不是翻页：拦下来就等于把键盘选区废了
+    if (event.shiftKey && !event.ctrlKey && !event.metaKey) return;
     if (event.ctrlKey || event.metaKey || event.altKey) {
       // Ctrl+←/→ 跳章，与目录里的「上一章 / 下一章」等价
       if (event.ctrlKey && onChapter && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
@@ -93,13 +104,40 @@ export function bindEbookGestures(target, { onStep, onJump, onChapter }) {
     }
   };
 
+  /* ---------------- 选中文字 ---------------- */
+  const selected = () => {
+    const selection = view?.getSelection?.();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+    const range = selection.getRangeAt(0);
+    if (!String(selection).trim()) return null;
+    // 拖到 iframe 之外时选区起点可能落在容器上，那种不算「选书里的字」
+    const root = view.document?.documentElement;
+    if (!root || !root.contains(range.startContainer)) return null;
+    return range;
+  };
+  const onSelectionEnd = (event) => {
+    if (event.type === "mouseup" && event.button !== 0) return;
+    // 选区在 mouseup 这一刻可能还没定下来，等一拍再读
+    setTimeout(() => {
+      const range = selected();
+      if (range) onSelect?.(range);
+    }, 0);
+  };
+
   target.addEventListener("click", onClick);
   target.addEventListener("wheel", onWheel, { passive: false });
   target.addEventListener("keydown", onKeyDown);
+  // 只在章节文档上听选区：主文档里没有可选的正文
+  if (isDoc) {
+    target.addEventListener("mouseup", onSelectionEnd);
+    target.addEventListener("keyup", onSelectionEnd);
+  }
   return () => {
     target.removeEventListener("click", onClick);
     target.removeEventListener("wheel", onWheel);
     target.removeEventListener("keydown", onKeyDown);
+    target.removeEventListener("mouseup", onSelectionEnd);
+    target.removeEventListener("keyup", onSelectionEnd);
     target.__yuejianGesture = false;
   };
 }

@@ -152,6 +152,9 @@ body.ctx-open .stage{padding-right:var(--ctx-w)}
 /* ============ 6. 设置浮层 ============ */
 .settings{
   position:absolute; right:18px; bottom:46px; width:326px; z-index:30;
+  /* 窗口一矮，抽屉会一路长到窗口外：给个上限，超了自己滚 */
+  max-height:min(560px, calc(100vh - 108px));
+  overflow-y:auto; overscroll-behavior:contain;
   background:var(--surface); border:1px solid var(--line); border-radius:var(--r-lg);
   box-shadow:var(--shadow-lg); padding:6px 0 4px;
 }

@@ -47,6 +47,7 @@ pub fn run() {
             commands::open_book,
             commands::save_progress,
             commands::set_bookmark,
+            commands::set_highlight,
             commands::toggle_favorite,
             commands::remove_book,
             commands::create_category,

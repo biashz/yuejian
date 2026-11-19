@@ -327,6 +327,27 @@ function stubSource() {
           }
           return Promise.resolve(clone(book));
         }
+        if (command === "set_highlight") {
+          window.__calls.push("set_highlight:" + (args.on ? "on" : "off") + ":" + args.color);
+          // 与 set_bookmark 同一套语义；差别是同一条再来一次是「改色」而不是「加一条」
+          const book = BOOKS.find((item) => item.id === args.id);
+          if (!book) return Promise.reject("书架中找不到这本书");
+          book.highlights = book.highlights || [];
+          const existing = book.highlights.find((mark) => mark.cfi === args.cfi);
+          if (args.on) {
+            if (existing) {
+              existing.color = args.color;
+              if (args.text) existing.text = args.text;
+              if (args.label) existing.label = args.label;
+            } else {
+              book.highlights.push({ cfi: args.cfi, text: args.text, color: args.color,
+                label: args.label, createdAt: Date.now() });
+            }
+          } else {
+            book.highlights = book.highlights.filter((mark) => mark.cfi !== args.cfi);
+          }
+          return Promise.resolve(clone(book));
+        }
         if (command === "search_text") {
           window.__calls.push("search_text");
           if (args.query !== "zebra") return Promise.resolve([]);
@@ -563,7 +584,10 @@ async function main() {
     check("CSP 真的生效：内联脚本被拦下", inlineBlocked, inlineBlocked ? "未执行" : "内联脚本执行了");
 
     const pane = '[data-pane-root="0"]';
-    const errors = () => evaluate(ws, "window.__errors.slice()");
+    // 引擎在「主动改视口」时必然会补一条 ResizeObserver 通知没送完的抱怨——那是浏览器
+    // 自己的排版提示，不是应用抛的异常。只滤这一句，其余异常照旧一条都算失败
+    const errors = () => evaluate(ws,
+      `(window.__errors || []).filter((e) => !/ResizeObserver loop/.test(e))`);
 
     /* --- 打开 Markdown：覆盖 openMarkdown 末尾的进度恢复 --- */
     await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-md"]').click()`);
@@ -1478,6 +1502,35 @@ async function main() {
       panel.footInside && panel.scrolls && panel.sheetH <= panel.winH + 1,
       `面板 ${panel.sheetH}px / 窗口 ${panel.winH}px，按钮在窗口内 ${panel.footInside}，正文可滚 ${panel.scrolls}`);
 
+    // 窗口压到 420 高再验一遍：面板必须整块收在窗口里，正文滚到底、底栏永远看得见。
+    // 早先 `.sheet` 用 `height: 100%`，网格项目的百分比高度会退化成 auto，
+    // 面板比窗口还高——正文没有可滚的余量，底栏直接掉到窗口外，谁也点不到「完成」
+    await send(ws, "Emulation.setDeviceMetricsOverride",
+      { width: 820, height: 420, deviceScaleFactor: 1, mobile: false });
+    await sleep(300);
+    const shortPanel = await evaluate(ws, `(() => {
+      const sheet = document.querySelector("#settingsOverlay .sheet");
+      const body = sheet.querySelector(".sheet-body");
+      const foot = sheet.querySelector(".sheet-foot");
+      const last = [...sheet.querySelectorAll(".setting-group")].pop();
+      body.scrollTop = 0;
+      const before = body.scrollTop;
+      body.scrollTop = body.scrollHeight;
+      return { winH: innerHeight,
+        sheetBottom: Math.round(sheet.getBoundingClientRect().bottom),
+        footBottom: Math.round(foot.getBoundingClientRect().bottom),
+        scrolls: body.scrollHeight > body.clientHeight + 1,
+        moved: body.scrollTop > before,
+        lastInside: last.getBoundingClientRect().bottom <= body.getBoundingClientRect().bottom + 1 };
+    })()`);
+    check("窗口压到 420 高时面板仍收在窗口内，正文能滚到底",
+      shortPanel.sheetBottom <= shortPanel.winH + 1 && shortPanel.footBottom <= shortPanel.winH + 1
+        && shortPanel.scrolls && shortPanel.moved && shortPanel.lastInside,
+      `面板底 ${shortPanel.sheetBottom} / 窗口 ${shortPanel.winH}，底栏底 ${shortPanel.footBottom}，` +
+      `可滚 ${shortPanel.scrolls}，滚到底 ${shortPanel.moved}，末组可见 ${shortPanel.lastInside}`);
+    await send(ws, "Emulation.clearDeviceMetricsOverride");
+    await sleep(250);
+
     await evaluate(ws, `(() => {
       document.querySelector('#ebookSizeSeg [data-esize="22"]').click();
       document.querySelector('#ebookLhSeg [data-elh="2.1"]').click();
@@ -1675,6 +1728,147 @@ async function main() {
       cbzPage.images === 1 && cbzPage.natural[0] === 600 && cbzPage.width > 200
         && cbzPage.height / cbzPage.width > 1.3,
       `${cbzPage.images} 张，源 ${cbzPage.natural.join("×")}，画在 ${cbzPage.width}×${cbzPage.height}`);
+
+    /* ---- 划线批注与图片放大 ---- */
+
+    await switchBook("b-epub");
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return Boolean(mod.activePane()?.ebook?.location?.cfi);
+    })()`, "回到 EPUB 划线", 20000);
+    // 先落到第一章：那里有脚注与够长的正文，划得开
+    await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      await mod.activePane()?.ebook?.goTo("OEBPS/ch1.xhtml");
+    })()`);
+    await sleep(1200);
+
+    // 在章节 iframe 里造一个真选区再派发 mouseup：手势层就是这么收线的
+    frameCtx = await blobFrameContext(ws);
+    const hlText = await evaluate(ws, `(() => {
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let node = null;
+      while ((node = walker.nextNode())) {
+        if (node.textContent.replace(/\\s/g, "").length >= 12) break;
+      }
+      if (!node) return "";
+      const range = document.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, Math.min(12, node.textContent.length));
+      const selection = document.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      return range.toString();
+    })()`, frameCtx);
+    await sleep(320);
+    const hlSwatch = await evaluate(ws, `(() => {
+      const box = document.querySelector("#hlMenu");
+      return { open: Boolean(box && !box.hidden),
+        dots: box ? box.querySelectorAll("[data-hl-color]").length : 0,
+        remove: Boolean(box && box.querySelector("[data-hl-remove]")) };
+    })()`);
+    await shot(ws, "ebook-hlmenu");
+    check("选中正文弹出取色小窗（五个颜色，未划过的没有删除项）",
+      Boolean(hlText) && hlSwatch.open && hlSwatch.dots === 5 && !hlSwatch.remove,
+      `选中「${hlText}」· ${hlSwatch.dots} 个色点`);
+
+    await evaluate(ws, `document.querySelector('#hlMenu [data-hl-color="indigo"]').click()`);
+    await sleep(700);
+    const hlDrawn = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      const first = (pane?.book?.highlights || [])[0] || {};
+      const parts = pane?.ebook?.view?.renderer?.getContents?.() || [];
+      const svg = parts.find((item) => item.overlayer)?.overlayer?.element;
+      const group = svg?.querySelector("g");
+      return { count: (pane?.book?.highlights || []).length, color: first.color || "",
+        cfi: first.cfi || "", text: first.text || "",
+        rects: group ? group.querySelectorAll("rect").length : 0,
+        fill: group?.getAttribute("fill") || "",
+        menu: Boolean(document.querySelector("#hlMenu") && !document.querySelector("#hlMenu").hidden) };
+    })()`);
+    await shot(ws, "ebook-highlight");
+    check("选色之后划线落盘，并画在正文上（颜色与矩形都对）",
+      hlDrawn.count === 1 && hlDrawn.color === "indigo" && hlDrawn.cfi.startsWith("epubcfi(")
+        && hlDrawn.rects > 0 && hlDrawn.fill === "#6a7bb8" && !hlDrawn.menu,
+      `${hlDrawn.count} 条 · ${hlDrawn.color} · ${hlDrawn.rects} 个矩形 · ${hlDrawn.fill}`);
+
+    await evaluate(ws, `document.querySelector('#ctxTabs [data-ctx="notes"]').click()`);
+    await sleep(400);
+    const notePane = await evaluate(ws, `(() => ({
+      rows: document.querySelectorAll("#ctxBody [data-note-hit]").length,
+      dot: Boolean(document.querySelector("#ctxBody .note-dot")),
+      label: (document.querySelector("#ctxBody .hit-page")?.textContent || "").trim(),
+      text: (document.querySelector("#ctxBody .mark-main")?.textContent || "").trim().slice(0, 16),
+    }))()`);
+    check("侧栏「划线」页列出条目：颜色点 + 章节名 + 原文",
+      notePane.rows === 1 && notePane.dot && /第一章/.test(notePane.label) && notePane.text.length > 0,
+      `${notePane.rows} 行 · ${notePane.label} · 「${notePane.text}…」`);
+
+    // 点列表里的条目：跳过去，并把那条的色板浮出来（带删除）
+    await evaluate(ws, `document.querySelector("#ctxBody [data-note-hit]").click()`);
+    await sleep(900);
+    const hlAgain = await evaluate(ws, `(() => {
+      const box = document.querySelector("#hlMenu");
+      if (!box || box.hidden) return { open: false };
+      return { open: true, remove: Boolean(box.querySelector("[data-hl-remove]")),
+        on: box.querySelector(".hl-dot.is-on")?.dataset.hlColor || "" };
+    })()`);
+    check("点侧栏条目跳到那条划线并浮出它的色板",
+      hlAgain.open && hlAgain.remove && hlAgain.on === "indigo",
+      hlAgain.open ? `当前色 ${hlAgain.on}` : "没弹出来");
+
+    await evaluate(ws, `document.querySelector("#hlMenu [data-hl-remove]").click()`);
+    await sleep(700);
+    const hlGone = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      const parts = pane?.ebook?.view?.renderer?.getContents?.() || [];
+      const svg = parts.find((item) => item.overlayer)?.overlayer?.element;
+      return { count: (pane?.book?.highlights || []).length,
+        rects: svg ? svg.querySelectorAll("g rect").length : 0,
+        rows: document.querySelectorAll("#ctxBody [data-note-hit]").length };
+    })()`);
+    check("删掉之后正文与侧栏一起清掉",
+      hlGone.count === 0 && hlGone.rects === 0 && hlGone.rows === 0,
+      `${hlGone.count} 条 · ${hlGone.rects} 个矩形 · ${hlGone.rows} 行`);
+
+    /* ---- 图片放大 ---- */
+    await switchBook("b-cbz");
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.format === "cbz" && Boolean(mod.activePane()?.ebook?.location?.cfi);
+    })()`, "CBZ 打开（图片放大）", 20000);
+    await sleep(700);
+    const cfiBefore = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.location?.cfi || "";
+    })()`);
+    frameCtx = await blobFrameContext(ws);
+    await evaluate(ws, `document.querySelector("img").click()`, frameCtx);
+    await sleep(500);
+    const hlLight = await evaluate(ws, `(() => {
+      const box = document.querySelector("#imgView");
+      const img = box?.querySelector("img");
+      return { open: Boolean(box && !box.hidden),
+        src: (img?.getAttribute("src") || "").slice(0, 5), natural: img?.naturalWidth || 0,
+        hint: (box?.querySelector(".img-view-hint")?.textContent || "") };
+    })()`);
+    await shot(ws, "ebook-image");
+    check("点漫画页把图放大到整屏（不是把 iframe 再排一次版）",
+      hlLight.open && hlLight.src === "blob:" && hlLight.natural === 600 && hlLight.hint.length > 0,
+      `${hlLight.natural}px · ${hlLight.hint}`);
+    const cfiAfter = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return mod.activePane()?.ebook?.location?.cfi || "";
+    })()`);
+    check("点图片不翻页", cfiAfter === cfiBefore, `${cfiBefore} → ${cfiAfter}`);
+
+    await evaluate(ws, `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`);
+    await sleep(250);
+    const imgClosed = await evaluate(ws, `document.querySelector("#imgView")?.hidden ?? null`);
+    check("Esc 关掉放大视图", imgClosed === true, String(imgClosed));
 
     // DRM：拦下并说清是哪一种方案
     await switchBook("b-drm");

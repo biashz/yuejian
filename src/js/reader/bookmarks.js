@@ -7,8 +7,8 @@
  */
 import { invoke } from "../api.js";
 import { t } from "../i18n.js";
-import { state } from "../core/session.js";
 import { toast } from "../core/feedback.js";
+import { applyBook } from "./book-state.js";
 
 /** 当前页的 CFI；还没定位到时为空串 */
 function currentCfi(pane) {
@@ -19,18 +19,6 @@ function isBookmarked(pane) {
   const cfi = currentCfi(pane);
   if (!cfi) return false;
   return (pane.book?.bookmarks || []).some((mark) => mark.cfi === cfi);
-}
-
-/**
- * 把后端返回的整本书写回所有持有它的地方。
- *
- * 用就地合并而不是替换引用：`state.books`、`state.current` 与两栏的 `pane.book`
- * 都指向同一个对象，替换会让某处悄悄留在旧对象上（收藏功能当初就踩过这个坑）。
- */
-function applyBook(updated) {
-  const target = state.books.find((book) => book.id === updated.id);
-  if (target) Object.assign(target, updated);
-  if (state.current?.id === updated.id) Object.assign(state.current, updated);
 }
 
 /** 加 / 删书签；返回操作后的状态，界面据此刷新 */

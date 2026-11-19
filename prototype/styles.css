@@ -627,6 +627,12 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   background-clip: content-box;
   border-radius: 99px;
 }
+/* 条本身很淡：鼠标压上去加重一点，至少让人看得出「这段还能往下走」 */
+.scroll-area:hover::-webkit-scrollbar-thumb, .book-list:hover::-webkit-scrollbar-thumb,
+.ctx-body:hover::-webkit-scrollbar-thumb, .sheet-body:hover::-webkit-scrollbar-thumb,
+.palette-list:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink-3) 58%, transparent);
+}
 
 /* PDF */
 .pdf-stack {
@@ -1068,10 +1074,15 @@ html[data-theme="night"] .tok-fn { color: #b9a6d8; }
 
 .sheet {
   width: min(460px, 92vw);
-  max-height: 86vh;
   margin-left: auto;
   align-self: stretch;
-  height: 100%;
+  /* 高度用视口单位而不是 100%：网格项目的百分比高度会退化成 auto，
+     再加上 max-height 一夹，正文就顶破面板、既看不见也滚不动 */
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow: hidden;
   display: flex; flex-direction: column;
   background: var(--surface);
   border-left: 1px solid var(--line);
@@ -1080,6 +1091,7 @@ html[data-theme="night"] .tok-fn { color: #b9a6d8; }
 }
 #settingsOverlay { place-items: stretch; justify-items: end; }
 .sheet-head {
+  flex: none;
   display: flex; align-items: flex-start; justify-content: space-between;
   padding: 22px 22px 16px;
   border-bottom: 1px solid var(--line);
@@ -1088,7 +1100,8 @@ html[data-theme="night"] .tok-fn { color: #b9a6d8; }
   font-family: var(--font-display);
   font-size: 24px; font-weight: 400; letter-spacing: 0.06em;
 }
-.sheet-body { flex: 1; overflow-y: auto; padding: 8px 22px 24px; }
+/* min-height: 0 是关键：默认的 auto 会让正文拒绝缩到内容高度以下，滚不出条 */
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px 22px 24px; }
 .setting-group { padding: 18px 0; border-bottom: 1px solid var(--line); }
 .setting-group:last-child { border-bottom: 0; }
 .setting-group h3 {
@@ -1152,6 +1165,7 @@ html[data-theme="night"] .tok-fn { color: #b9a6d8; }
 .switch.is-on span { transform: translateX(16px); }
 
 .sheet-foot {
+  flex: none;
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 22px;
   border-top: 1px solid var(--line);

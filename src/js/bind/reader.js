@@ -10,6 +10,7 @@ import { activePane, splitMode, linkSync, setSplit, setLink, panes } from "../re
 import { setView, updateStatus } from "../view.js";
 import { goPage, setZoom, setZoomMenu, zoomMenuOpen, zoomByStep, fitPdfPage, fitPdfWidth, renderToolbar } from "../reader/toolbar.js";
 import { setCtxOpen, switchCtxTab, renderCtx } from "../reader/ctx.js";
+import { listOf, removeHighlight } from "../reader/highlight.js";
 import { refreshTextView, openBook } from "../reader/open.js";
 import { ebookStep, ebookSeek, toggleEbookSpread } from "../reader/ebook-open.js";
 import { toggleBookmark, removeBookmark } from "../reader/bookmarks.js";
@@ -102,6 +103,24 @@ export function bindReaderEvents() {
       const pane = activePane();
       const mark = pane?.book?.bookmarks?.[Number(unmark.dataset.unmark)];
       if (mark) removeBookmark(pane, mark.cfi).then(() => renderCtx()).catch(() => {});
+      return;
+    }
+    const unnote = event.target.closest("[data-unnote]");
+    if (unnote) {
+      const pane = activePane();
+      // 列表是倒序渲染的，按下标取不到——用渲染时的顺序反推
+      const notes = [...listOf(pane)].reverse();
+      const note = notes[Number(unnote.dataset.unnote)];
+      if (note) removeHighlight(pane, note.cfi).then(() => renderCtx()).catch(() => {});
+      return;
+    }
+    const noteHit = event.target.closest("[data-note-hit]");
+    if (noteHit) {
+      const pane = activePane();
+      const notes = [...listOf(pane)].reverse();
+      const note = notes[Number(noteHit.dataset.noteHit)];
+      // 跳过去并把它标出来：一屏上可能有好几处划线，光「跳到了」分不出是哪一条
+      if (note) pane?.ebook?.showAnnotation?.(note);
       return;
     }
     const markHit = event.target.closest("[data-mark-hit]");

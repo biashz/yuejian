@@ -362,6 +362,81 @@ try {
     Boolean(clicked) && note.open && /青苔生于石阶/.test(note.text) && note.cfi === noteCfi,
     note.open ? `注文「${note.text.slice(0, 14)}…」` : "未弹出");
 
+  /* ---- 划线：真机里拖选一段文字，走完「选中 → 色板 → 落盘 → 画出来」 ---- */
+
+  // 选区要真的拖出来：CDP 的输入事件打在坐标上，落到哪个文档由浏览器自己判
+  const spot = noteWorld ? await evaluate(ws, `(() => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node = null;
+    while ((node = walker.nextNode())) {
+      if (node.textContent.replace(/\\s/g, "").length >= 20) break;
+    }
+    if (!node) return null;
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, Math.min(8, node.textContent.length));
+    const box = range.getBoundingClientRect();
+    const frame = window.frameElement.getBoundingClientRect();
+    if (!box.width) return null;
+    return { from: frame.left + box.left + 2, to: frame.left + box.left + Math.min(140, box.width - 4),
+      y: frame.top + box.top + box.height / 2 };
+  })()`, noteWorld) : null;
+
+  if (spot) {
+    await send(ws, "Input.dispatchMouseEvent", { type: "mousePressed", x: spot.from, y: spot.y, button: "left", clickCount: 1, buttons: 1 });
+    for (const step of [0.4, 0.75, 1]) {
+      await send(ws, "Input.dispatchMouseEvent", { type: "mouseMoved", x: spot.from + (spot.to - spot.from) * step, y: spot.y, button: "left", buttons: 1 });
+      await sleep(60);
+    }
+    await send(ws, "Input.dispatchMouseEvent", { type: "mouseReleased", x: spot.to, y: spot.y, button: "left", clickCount: 1, buttons: 0 });
+    await sleep(500);
+  }
+  const swatch = await evaluate(ws, `(() => {
+    const box = document.querySelector("#hlMenu");
+    return { open: Boolean(box && !box.hidden),
+      dots: box ? box.querySelectorAll("[data-hl-color]").length : 0 };
+  })()`);
+  check("真机拖选文字弹出取色小窗", swatch.open && swatch.dots === 5, `${swatch.dots} 个色点`);
+
+  if (swatch.open) {
+    await evaluate(ws, `document.querySelector('#hlMenu [data-hl-color="amber"]').click()`);
+    await sleep(700);
+    const painted = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      const first = (pane?.book?.highlights || [])[0] || {};
+      const parts = pane?.ebook?.view?.renderer?.getContents?.() || [];
+      const svg = parts.find((item) => item.overlayer)?.overlayer?.element;
+      const group = svg?.querySelector("g");
+      return { count: (pane?.book?.highlights || []).length, color: first.color || "",
+        cfi: first.cfi || "", rects: group ? group.querySelectorAll("rect").length : 0,
+        fill: group?.getAttribute("fill") || "" };
+    })()`);
+    check("真机划线画到正文上（颜色与矩形都对）",
+      painted.count === 1 && painted.color === "amber" && painted.cfi.startsWith("epubcfi(")
+        && painted.rects > 0 && painted.fill === "#d8a13a",
+      `${painted.count} 条 · ${painted.color} · ${painted.rects} 个矩形`);
+
+    const storedNotes = await evaluate(ws, `(async () => {
+      const books = await window.__TAURI__.core.invoke("get_library");
+      const mine = (books || []).find((book) => book.id === ${JSON.stringify(imported)});
+      return (mine?.highlights || []).length;
+    })()`);
+    check("划线已落盘（重读书架仍在）", storedNotes === 1, `${storedNotes} 条`);
+
+    // 清掉，免得下一轮 e2e 起手就有一条、断言又变成「删掉之后 0 条」之外的东西
+    const clearedNotes = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const hl = await import("/js/reader/highlight.js");
+      const pane = mod.activePane();
+      for (const note of [...(pane?.book?.highlights || [])]) {
+        await hl.removeHighlight(pane, note.cfi);
+      }
+      return (pane?.book?.highlights || []).length;
+    })()`);
+    check("划线可以删掉（下一轮从 0 开始）", clearedNotes === 0, `${clearedNotes} 条`);
+  }
+
   /* ---- P5：固定版面与打不开的书，这两条最容易「模拟环境通过、真机不通过」 ---- */
 
   const more = await evaluate(ws,
@@ -405,6 +480,22 @@ try {
     check("真机漫画页画出整页图片而不是左半个空页",
       Boolean(page && page.images === 1 && page.width === 600 && page.drawn > 200),
       page ? `${page.images} 张，源宽 ${page.width}，画在 ${page.drawn}px` : "没有 iframe");
+
+    // 点图放大：真机上要确认遮罩挂到主文档、图按 blob: 地址解码出来
+    await evaluate(ws, `document.querySelector("img").click()`, comicWorld);
+    await sleep(500);
+    const zoomed = await evaluate(ws, `(() => {
+      const box = document.querySelector("#imgView");
+      const img = box?.querySelector("img");
+      return { open: Boolean(box && !box.hidden),
+        src: (img?.getAttribute("src") || "").slice(0, 5), natural: img?.naturalWidth || 0 };
+    })()`);
+    check("真机点漫画页把图放大到整屏", zoomed.open && zoomed.src === "blob:" && zoomed.natural === 600,
+      `${zoomed.natural}px · ${zoomed.src}`);
+    await evaluate(ws, `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`);
+    await sleep(250);
+    const zoomClosed = await evaluate(ws, `document.querySelector("#imgView")?.hidden ?? null`);
+    check("真机 Esc 关掉放大视图", zoomClosed === true, String(zoomClosed));
 
     await evaluate(ws, `document.querySelector("#backBtn").click()`);
     await sleep(500);

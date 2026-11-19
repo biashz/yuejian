@@ -26,6 +26,9 @@ import { showFootnote, hideFootnote } from "./footnote.js";
 import { isBookmarked } from "./bookmarks.js";
 import { buildEbookStyles } from "./ebook-style.js";
 import { explainEbookError } from "./ebook-error.js";
+import { closeHighlightMenu, highlightMenuAge } from "./highlight-menu.js";
+import { openImage } from "./image-view.js";
+import { askHighlight, pickAnnotation } from "./highlight-actions.js";
 
 /** 字号/行高/字体/对齐折成 CSS，页边距单独给分页器（它不参与书内 DOM 的样式） */
 function typography() {
@@ -45,6 +48,8 @@ function ensureEbookReader(pane) {
     onContent: (doc) => bindEbookGestures(doc, handlers(pane)),
     onEdge: (edge) => toast(t(edge === "end" ? "reader.ebookAtEnd" : "reader.ebookAtStart")),
     onLink: (detail) => followLink(pane, detail),
+    // 点中已有的划线：库把它命中出来，这里决定是改色还是删掉
+    onAnnotation: (detail) => pickAnnotation(pane, detail),
   });
   // 先存进实例：此刻还没有 `<foliate-view>`，等 `open()` 起完首帧再贴
   const { css, margin } = typography();
@@ -69,6 +74,8 @@ function handlers(pane) {
     onStep: (direction) => (direction > 0 ? pane.ebook?.next() : pane.ebook?.prev()),
     onJump: (where) => (where === "start" ? pane.ebook?.goTo(0) : pane.ebook?.goToFraction(1)),
     onChapter: (direction) => pane.ebook?.chapterStep(direction),
+    onSelect: (range) => askHighlight(pane, range),
+    onImage: (img) => openImage(img.currentSrc || img.src, img.alt || ""),
   };
 }
 
@@ -141,6 +148,8 @@ async function openEbook(doc, pane) {
         ? { ...item, label: t("reader.ebookPage", { n: index + 1 }) }
         : item
     ));
+    // 划线在打开之后贴：`setHighlights` 要等首帧把 overlayer 建出来
+    reader.setHighlights(pane.book?.highlights || []);
     // 书里的元数据比文件名可靠：书名、作者都在 OPF 里，书架当初只拿到了文件名
     const meta = reader.book?.metadata;
     if (meta?.title && pane.book) pane.book.title = String(meta.title);
@@ -173,6 +182,9 @@ function handleRelocate(pane, loc) {
   updatePaneHeads();
   // 脚注窗锚在旧位置，翻页之后留着就是错的
   hideFootnote();
+  // 色板同理，但刚摆上的那一个不能收：从侧栏点过来时，库是先导航再派发「命中」，
+  // 导航引起的这次 relocate 往往比命中回调晚一帧，照收就是「刚摆上就没了」
+  if (highlightMenuAge() > 300) closeHighlightMenu();
   if (pane.index !== activePaneIndex) return;
 
   state.ebookLabel = loc.label;
