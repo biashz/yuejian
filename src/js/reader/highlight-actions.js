@@ -9,9 +9,22 @@
  */
 import { clamp } from "../core/dom.js";
 import { state } from "../core/session.js";
+import { t } from "../i18n.js";
+import { toast } from "../core/feedback.js";
 import { renderCtx } from "./ctx.js";
-import { addHighlight, find as findHighlight, recolor, removeHighlight } from "./highlight.js";
+import { addHighlight, find as findHighlight, recolor, removeHighlight, setNote } from "./highlight.js";
 import { openHighlightMenu } from "./highlight-menu.js";
+
+/** 复制原文： clipboard 不可用时退回报错，不静默 */
+function copyText(text) {
+  navigator.clipboard?.writeText(text)
+    .then(() => toast(t("reader.hlCopied")))
+    .catch((error) => toast(String(error)));
+}
+
+function refreshNotes() {
+  if (state.ctxTab === "notes") renderCtx();
+}
 
 /**
  * 选中一段文字 → 浮出色板。
@@ -25,17 +38,32 @@ function askHighlight(pane, range) {
   const text = String(range?.toString?.() || "");
   if (!cfi || !text.trim()) return;
   const at = rangePoint(pane, range);
+  const label = pane.ebook?.location?.label || "";
+  const clearSelection = () =>
+    range.startContainer?.ownerDocument?.getSelection?.()?.removeAllRanges?.();
   openHighlightMenu({
     x: at.x,
     y: at.y,
     onPick: (color) => {
       // 划完就把选区收掉：原生选区是一层灰，压在新划的线上，看着像没上色
-      range.startContainer?.ownerDocument?.getSelection?.()?.removeAllRanges?.();
-      addHighlight(pane, { cfi, text, color, label: pane.ebook?.location?.label || "" })
-        .then((item) => {
-          // 侧栏正停在划线页时要立刻看到新增的那条
-          if (item && state.ctxTab === "notes") renderCtx();
-        });
+      clearSelection();
+      addHighlight(pane, { cfi, text, color, label }).then((item) => {
+        // 侧栏正停在划线页时要立刻看到新增的那条
+        if (item) refreshNotes();
+      });
+    },
+    onCopy: () => {
+      clearSelection();
+      copyText(text);
+    },
+    // 还没划线就先写笔记：保存时落一条默认黄色的划线，笔记跟着它走
+    onNoteSave: (note) => {
+      clearSelection();
+      const existing = findHighlight(pane, cfi);
+      const done = existing
+        ? setNote(pane, cfi, note)
+        : addHighlight(pane, { cfi, text, color: "amber", label, note });
+      done.then(refreshNotes);
     },
   });
 }
@@ -45,21 +73,33 @@ function pickAnnotation(pane, detail) {
   const cfi = detail?.value || "";
   const item = findHighlight(pane, cfi);
   if (!item) return;
-  const at = rangePoint(pane, detail.range);
+  openMenuForItem(pane, item, rangePoint(pane, detail.range));
+}
+
+/** 侧栏笔记行点进来：同一套小窗，锚在那一行上 */
+function editNote(pane, cfi, at) {
+  const item = findHighlight(pane, cfi);
+  if (!item) return;
+  openMenuForItem(pane, item, at);
+}
+
+function openMenuForItem(pane, item, at) {
+  const cfi = item.cfi;
   openHighlightMenu({
     x: at.x,
     y: at.y,
     color: item.color,
     removable: true,
     onPick: (color) => {
-      recolor(pane, cfi, color).then(() => {
-        if (state.ctxTab === "notes") renderCtx();
-      });
+      recolor(pane, cfi, color).then(refreshNotes);
     },
     onRemove: () => {
-      removeHighlight(pane, cfi).then(() => {
-        if (state.ctxTab === "notes") renderCtx();
-      });
+      removeHighlight(pane, cfi).then(refreshNotes);
+    },
+    onCopy: () => copyText(item.text || ""),
+    note: item.note || "",
+    onNoteSave: (note) => {
+      setNote(pane, cfi, note).then(refreshNotes);
     },
   });
 }
@@ -84,4 +124,4 @@ function rangePoint(pane, range) {
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }
 
-export { askHighlight, pickAnnotation };
+export { askHighlight, pickAnnotation, editNote };

@@ -7,13 +7,16 @@ import { state } from "./core/session.js";
 import { KIND_CLASS, kindLabel } from "./core/constants.js";
 import { tintOf, percentOf, formatRelative, formatBytes } from "./core/format.js";
 import { matchCategory, categoryById } from "./categories.js";
+import { readingStatus, statusLabel } from "./status.js";
+import { sortBooks, sortAxis } from "./sort.js";
+import { renderSortTools } from "./sort-ui.js";
 import { renderCategorySection, renderBatchBar } from "./category-ui.js";
 import { hasHits } from "./library-hits.js";
 
 /* ---------------- 书架渲染 ---------------- */
 
 /**
- * 当前分类 / 类型筛选下的书，**不含关键词**。
+ * 当前分类 / 类型 / 状态筛选下的书，**不含关键词**。
  *
  * 单独拆出来是给跨书检索用的：书名筛选与正文检索是两条路，前者按关键词过滤，
  * 后者要拿到「当前筛选范围内的全部书」再去搜正文。用同一个函数保证两边的
@@ -23,6 +26,7 @@ function scopeBooks() {
   return state.books.filter((book) => {
     if (state.filter === "star" && !book.favorite) return false;
     if (["pdf", "markdown", "text", "ebook"].includes(state.filter) && book.kind !== state.filter) return false;
+    if (state.status && readingStatus(book) !== state.status) return false;
     if (!matchCategory(book)) return false;
     return true;
   });
@@ -30,9 +34,9 @@ function scopeBooks() {
 
 function visibleBooks() {
   const query = state.query.toLowerCase();
-  return scopeBooks()
-    .filter((book) => !query || `${book.title} ${book.author}`.toLowerCase().includes(query))
-    .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+  const scoped = scopeBooks()
+    .filter((book) => !query || `${book.title} ${book.author}`.toLowerCase().includes(query));
+  return sortBooks(scoped, state.settings.sort, state.settings.sortDesc);
 }
 
 /* 分类色点：与分类区共用 .cat-dot 的取色规则 */
@@ -77,7 +81,7 @@ function emptyStateText() {
       return `${t("category.emptyCategory")}<br>${t("category.emptyCategoryHint")}`;
     }
   }
-  if (state.categoryId !== null || state.filter !== "all") {
+  if (state.categoryId !== null || state.filter !== "all" || state.status) {
     return `${t("library.noMatch")}<br>${t("library.clearHint")}`;
   }
   return t("library.noMatch");
@@ -199,9 +203,10 @@ function renderStats() {
   $("#statPages").textContent = state.books.reduce((sum, book) => sum + (book.pages || 0), 0);
 }
 
-/** 当前筛选组合的可读描述：分类轴 + 类型轴 + 搜索词，用于区块标题 */
+/** 当前筛选组合的可读描述：状态轴 + 分类轴 + 类型轴 + 搜索词，用于区块标题 */
 function filterSummary() {
   const parts = [];
+  if (state.status) parts.push(statusLabel(state.status));
   if (state.categoryId === "") parts.push(t("category.none"));
   else if (state.categoryId !== null) {
     const category = categoryById(state.categoryId);
@@ -219,7 +224,12 @@ function filterSummary() {
 function renderSectionHead() {
   const parts = filterSummary();
   $("#gridHead h2").textContent = parts.length ? parts.join(" · ") : t("library.allDocs");
-  $("#gridHead .section-sub").textContent = parts.length ? t("category.filteredSub") : t("library.sortRecent");
+  $("#gridHead .section-sub").textContent = parts.length
+    ? t("category.filteredSub")
+    : t("library.sortSub", {
+      axis: sortAxis(state.settings.sort).label(),
+      dir: t(state.settings.sortDesc ? "sort.desc" : "sort.asc"),
+    });
   $("#headClear").hidden = parts.length === 0;
 }
 
@@ -249,6 +259,7 @@ function renderLibrary() {
   pruneSelection();
   const books = visibleBooks();
   renderCategorySection();
+  renderSortTools(books);
   renderBookList(books);
   renderGrid(books);
   renderResume();

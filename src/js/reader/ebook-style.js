@@ -16,7 +16,7 @@
  *    列数归分页器的属性管，在这里再写一遍会和它的分栏计算打架。同理不写 `vh`
  *    （分页器会把 `vh` 换算成落笔那一刻的视口高），不写 `-epub-` 前缀（会被剥掉）。
  */
-import { EBOOK_FONTS } from "../core/constants.js";
+import { fontFaceCss, fontStack } from "./fonts.js";
 import { readLayout } from "./ebook-layout.js";
 
 /**
@@ -50,7 +50,7 @@ const BLOCK_SELECTOR = "body p, body li, body dd, body dt";
  */
 function buildEbookStyles(settings) {
   const layout = readLayout(settings);
-  const family = EBOOK_FONTS[layout.family] || EBOOK_FONTS.serif;
+  const family = fontStack(layout.family);
   const size = layout.size;
   const lh = layout.lineHeight.toFixed(2);
   const align = layout.align;
@@ -67,6 +67,8 @@ function buildEbookStyles(settings) {
   if (layout.hyphenate) body.push("hyphens: auto;");
 
   const rules = [
+    // 下载字体的 @font-face 必须排在最前：face 规则只认顶层位置
+    fontFaceCss(),
     `html { font-size: ${size}px; }`,
     `body { ${body.join(" ")} }`,
     // 对齐与缩进要作用到块级子元素：只写在 body 上会被书的 `p { text-align: left }` 盖掉
@@ -124,7 +126,7 @@ function buildEbookStyles(settings) {
     rules.push("body img, body svg { background: transparent !important; }");
   }
 
-  return rules.join("\n");
+  return rules.filter(Boolean).join("\n");
 }
 
 export { buildEbookStyles };

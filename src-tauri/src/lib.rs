@@ -54,6 +54,7 @@ pub fn run() {
             commands::print_webview,
             commands::toggle_favorite,
             commands::remove_book,
+            commands::restore_book,
             commands::create_category,
             commands::update_category,
             commands::delete_category,
@@ -67,6 +68,9 @@ pub fn run() {
             commands::app_version,
             commands::download_update,
             commands::install_update,
+            commands::list_fonts,
+            commands::download_font,
+            commands::remove_font,
             commands::open_external,
         ])
         .run(tauri::generate_context!())

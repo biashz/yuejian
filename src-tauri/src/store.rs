@@ -73,6 +73,9 @@ pub struct Highlight {
     pub color: String,
     pub label: String,
     pub created_at: u64,
+    /// 附注笔记。旧数据没有该键时补空串 = 无笔记，导出与侧栏据此不渲染笔记行
+    #[serde(default)]
+    pub note: String,
 }
 
 /// 书架条目
@@ -168,6 +171,20 @@ pub struct Settings {
     /// 用 `Option` 只是容错：旧版 state.json 没有这个键，读出来是 None，前端按「开」处理；
     /// 万一哪份数据里是 null 也不会让整份设置反序列化失败。
     pub ebook_override_color: Option<bool>,
+    /// 书架排序轴：recent | added | title | progress
+    pub sort: String,
+    /// 排序方向：true = 降序。书名轴自然方向为升序，切换轴时按自然方向重置
+    pub sort_desc: bool,
+    /// 电子书阅读姿势：paged | scroll。滚动模式纵向连续，章末自动接章
+    pub ebook_flow: String,
+    /// 翻页动效：slide | fade | none。reduce-motion 时前端一律表现为 none
+    pub ebook_turn: String,
+    /// 朗读语速倍数（0.5–2）
+    pub ebook_tts_rate: f64,
+    /// 朗读嗓音 name；空串 = 按界面语言挑本地嗓音
+    pub ebook_tts_voice: String,
+    /// 自动滚动速度档 1–10；运行态不持久化，只存速度
+    pub ebook_auto_speed: u32,
 }
 
 impl Default for Settings {
@@ -200,6 +217,13 @@ impl Default for Settings {
             ebook_hyphenate: false,
             ebook_punctuate: true,
             ebook_override_color: None,
+            sort: "recent".into(),
+            sort_desc: true,
+            ebook_flow: "paged".into(),
+            ebook_turn: "slide".into(),
+            ebook_tts_rate: 1.0,
+            ebook_tts_voice: String::new(),
+            ebook_auto_speed: 5,
         }
     }
 }

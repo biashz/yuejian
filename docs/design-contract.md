@@ -51,6 +51,15 @@
             --cat-amber:#8F6524 --cat-plum:#6F4459    --cat-slate:#515A62
 ```
 
+### 2.1 划线笔色（字面量，不随主题）
+
+划线画在章节 iframe 内的 overlayer SVG 上，读不到主文档 CSS 变量，故笔色是字面量；
+取值依据「纸白底上能看清、不盖字」，与分类色板同名不同值。完整理由见 `src/js/reader/highlight.js` 头注。
+
+```
+amber #d8a13a   olive #7f9463   indigo #6a7bb8   plum #a5698b   ink #6b6155
+```
+
 - `font.display`: `'KaiTi', 'STKaiti', 'Kaiti SC', 'Songti SC', serif`（标题、书名）
 - `font.ui`: `'Segoe UI Variable Text', 'Microsoft YaHei UI', 'PingFang SC', sans-serif`
 - `font.read`: `'Songti SC', 'Source Han Serif SC', 'Noto Serif CJK SC', 'SimSun', Georgia, serif`
@@ -74,6 +83,8 @@
 | 输入框 | `--surface` 底、1px `--line`、radius 8、高 32 | 边框 `--line-strong` | 边框朱砂 + 2px 光晕 | — |
 | 卡片 | `--surface` 底、1px `--line`、radius 14、无重阴影 | 上浮 2px + `shadow.md` | 边框朱砂 30% | — |
 | 侧栏项 | 高 30、radius 6、左内边距 12 | `--surface-2` | 左侧 2px 朱砂竖条 + `--surface-2` | — |
+| 目录头（书架索引） | 高 28、`--paper` 底、字号 10 字距 .12em、`--ink-3`；三层吸顶 top 0 / 28 / 56（z 3 / 2 / 1）；计数右对齐成列 | 文字 `--ink-2` | 收起时箭头 rotate(0)，自述当前选择（「类型 · PDF」「状态 · 在读」） | — |
+| 目录行（类型 / 分类共用） | 高 28、radius 6、左内边距 10；类型行 4px 类型色点 / 收藏 12px 朱砂星，分类行 7px 用户色点 | `--surface-2` | 左侧 2px 朱砂竖条 + `--surface-2` | — |
 | 标签 | 高 20、radius 4、11px、`--surface-2` 底 | — | — | — |
 | 弹层 | `--surface` + `shadow.lg` + 1px `--line` + 顶边朱砂 2px | — | — | — |
 | 空状态 | 居中等宽提示 + 虚线上传区 | 虚线变朱砂 | — | — |
@@ -81,6 +92,24 @@
 | 分类落点 | 同分类行 | 同分类行 | `--accent-weak` 底 + `inset 0 0 0 1px --accent` | — |
 | 分类色点 | 7px 圆、`--cat-*` | — | — | 未分类用 `--ink-3` + 50% 不透明 |
 | 批量条 | 高 28、radius 8、`--surface` 底、1px `--line-strong`、`shadow.sm` | — | — | — |
+| 状态行图形 | 12×12：进度线 12×3 radius 2、轨道 `--line-strong`；在读填充 50% `--accent`；读完 `#i-check` 12 `--ok`；全部状态无图形 | 不变 | 不变（行选中态同目录行） | — |
+| 排序工具条 | 高 28、上边界 1px `--line`、无底色；左排序按钮高 22 radius 4 字号 11 `--ink-2` + `#i-sort` 12 `--ink-3` + 方向箭头等宽 10 `--accent`；右可见计数等宽 10 `--ink-3` | 按钮 `--surface-2` 底 + `--ink` 字 | 展开态同悬停 | — |
+| 排序菜单 | 锚定工具条 top 26 / left 8、z 30、宽 196、内边距 4、`--surface` + 1px `--line` + radius 8 + `shadow.md`；行高 28 radius 6 字号 12，对勾 12 `--accent` 占位隐藏，方向等宽 10；底部提示字号 10 `--ink-3` + 1px `--line` 分隔 | 行 `--surface-2` 底 + `--ink` 字 | 当前行对勾可见 + 方向 `--accent` | — |
+| 撤销提示条 | 现有墨底胶囊 toast 内追加：胶囊按钮 radius 999、内边距 3 10、字号 11.5、字色继承 + 45% `currentColor` 描边；底边 2px 生命周期条 `currentColor` opacity .4 线性收宽 | 按钮 14% `currentColor` 底 | 点击即执行并收起 | 窗口结束随 toast 退场 |
+| 阅读辅助条 | 高 38、内边距 8 12、间距 8、radius 14、`--surface` 底、1px `--line`、顶边 2px `--accent`、`--shadow-md`；阅读区 bottom 48 居中（书口带高 46，气泡底边与带顶平齐、顶边在其上约 23px，48 让辅助条始终压在气泡上方），max `min(680px,92%)`、z 30；仅运行时出现 | — | — | 无本地嗓音时主按钮 opacity .45 + 12px `--warn` 说明替代字幕 |
+| 电子书工具带（书口） | 高 46、通栏停靠在阅读区底边（不浮、无圆角、无阴影），内边距 0 12、间距 10；`color-mix(--surface-2 62%, --surface)` 底 + 顶边 1px `--line`；三段：左章节名 / 中进度轨道 / 右开关组 | 按钮 `--surface-2` 底 | 按钮 `--accent-weak` 底 + 朱砂 | 打不开的书只留「版式 / 目录 / 栏级动作」，无轨道与翻页 |
+| 书口章节名 | 12.5px `--font-read`、`--ink-2`、单行省略、`flex:0 1 168px`；前置 14×1px 朱砂引线，间隔 8、下移 3 | — | — | 无章节名时留空，不写占位 |
+| 书口分组按钮 | 高 26、min-width 26、内边距 0 6、radius 4、`--ink-2`；图标 14；分组间距 2；组间 1px `--line` 竖线高 16、左右 6；百分比 10.5px 等宽 `--ink-2`、min-width 38 | `--surface-2` 底 + `--ink` | `.is-on`：`--accent-weak` 底 + 朱砂 | 固定版面：姿势禁用、朗读 / 自动 / 单双页 `hidden`（`display:none` 真的不占位） |
+| 电子书阅读区（桌面 + 书页） | 阅读区底：`color-mix(--surface-2 58%, --paper)` + 顶部径向 5% 墨色渐晕（桌面）；正文页 `.ebook-stack` inset `14px 16px 0`、`--surface` 底、1px `--line` 边（去底边）、radius 4 4 0 0、`--shadow-md`；底部与书口带相接 | — | — | 固定版面 / 回流版同一套书页，只换内容 |
+| 辅助条控件 | 主按钮 26×26 radius 8 `--accent` 底 `--paper` 图标；次按钮 26 高 radius 8 `--ink-2`；字幕 12px `--ink-2` 单行省略；select 12px 高 24 `--surface` 底 1px `--line` radius 8 max 110；速度滑杆宽 90 accent 朱砂 + 等宽 12 数字 | 次按钮 `--accent-weak` 底 + 朱砂 | 主按钮内阴影 1px | select/滑杆随主按钮禁用态 |
+| 选区动作行 | 选区条第二行：上边界 1px `--line`、上内边距 7、间距 4；文字按钮 11px、内边距 4 8、radius 4、`--ink-2`（复制 / 笔记 / 删除） | `--accent-weak` 底 + 朱砂字 | 同悬停 | — |
+| 笔记 popover | 宽 260、内边距 8、radius 8、`--surface` + 1px `--line` + 顶边 2px `--accent` + `--shadow-md`；textarea 84 高 13px/1.6 `--surface` 底 1px `--line` radius 8；计数 11px `--ink-3`；保存为主按钮规格缩至高 24 | 边框 `--line-strong` | 保存内阴影 1px | 超 500 字：计数 `--accent` + 保存 opacity .45 |
+| 进度刻度 | 轨道中线 2×10px、radius 1、`--line-strong`；章边界处、≤40 个、`pointer-events:none` | 不变 | 不变 | 固定版面按节均布 |
+| 进度预览气泡 | 拖拽时轨道上方 32px、`translateX(-50%)`、11px、内边距 6 9、radius 8、`--ink` 底 `--paper` 字、opacity 180ms | 不变 | 松手即退场 | — |
+| 朗读句高亮 | overlayer 矩形：填充 `--accent-weak` + 2px 同色外扩、radius 2、opacity 0.3（比划线笔迹 0.42 更淡一档，字须透出来，不得实心盖字）；瞬移无过渡；不入书架不导出 | — | — | 暂停时保留 |
+| 侧栏笔记行 | 划线条目引文下：12px `--ink-2`、左缩进 14、上边距 5、单行省略（title 全文） | 条目 hover 不变 | — | 无笔记不渲染该行 |
+| 版式面板字体列表 | 组标题 10px 字距 .08em `--ink-3`（「系统字体」「开源字体 · 按需下载」两组）；行内边距 4 6、行距 2、radius 4；行内四段：24×24 样例字格 / 12.5px 名称（单行省略）/ 10px 元信息（等宽数字，`OFL 1.1 · 25 MB`）/ 10.5px 状态字（min-width 30、右对齐：下载 / 百分比 / ✓ / 使用中 / 重试）；删除按钮 18×18，默认 opacity 0 | 行 `--surface-2` 底；删除按钮浮现，图标转 `--accent` | 行 `--accent-weak` 62% 底；样例字格描边朱砂 40%、字 `--accent-ink`；状态字 `--accent-ink` | 下载中整组 opacity .45 + `pointer-events:none`；固定版面随整面板禁用；重试状态字 `--accent` |
+| 字体样例字格 | 24×24、radius 4、`--surface` 底 + 1px `--line`、15px；未安装项用系统字渲染（不给假预览），已装项用该字体自己渲染 | — | 选中项描边同「版式面板字体列表」 | — |
 
 ## 4. App Shell 与固定导航（强制）
 

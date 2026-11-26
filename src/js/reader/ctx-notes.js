@@ -24,11 +24,15 @@ function renderNotes() {
       marksToolsHtml(true)}</div>
     ${notes.map((note, index) => `
       <div class="mark-row note-row">
-        <button class="find-hit mark-main" data-note-hit="${index}">
-          <span class="hit-page"><i class="note-dot" style="--_dot:${colorValue(note.color)}"></i>${
-            escapeHtml(note.label || t("reader.ebookNoChapter"))}</span>
-          ${escapeHtml(note.text || "")}
-        </button>
+        <div class="note-body">
+          <button class="find-hit mark-main" data-note-hit="${index}">
+            <span class="hit-page"><i class="note-dot" style="--_dot:${colorValue(note.color)}"></i>${
+              escapeHtml(note.label || t("reader.ebookNoChapter"))}</span>
+            ${escapeHtml(note.text || "")}
+          </button>
+          ${note.note ? `<button class="note-line" data-note-edit="${index}"
+            title="${escapeHtml(note.note)}">${escapeHtml(note.note)}</button>` : ""}
+        </div>
         <button class="mark-del" data-unnote="${index}" title="${t("reader.highlightRemove")}"
           aria-label="${t("reader.highlightRemove")}">×</button>
       </div>`).join("")}`;

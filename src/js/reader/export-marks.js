@@ -37,13 +37,15 @@ function quoteLine(line) {
   return escaped.trim() ? `> ${escaped}` : ">";
 }
 
-/** 单条摘录：引用块 + 出处行 */
+/** 单条摘录：引用块 + 出处行；有笔记时在引文后追加一行加粗标签 */
 function quoteBlock(highlight) {
   const body = String(highlight.text || "").split(/\r?\n/).map(quoteLine).join("\n");
   const color = t(`reader.hlColor.${colorOf(highlight.color)}`);
   const label = String(highlight.label || "").replace(/[\r\n]+/g, " ").trim()
     || t("reader.ebookNoChapter");
-  return `${body}\n\n—— ${label} · ${color}`;
+  const note = String(highlight.note || "").replace(/\s+/g, " ").trim();
+  const noteLine = note ? `\n>\n> **${t("reader.exportNote")}:** ${note}` : "";
+  return `${body}${noteLine}\n\n—— ${label} · ${color}`;
 }
 
 /** 有划线或书签才值得导出；两者都没有时侧栏不该出现导出按钮 */

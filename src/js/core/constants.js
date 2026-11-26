@@ -45,6 +45,8 @@ const DEFAULT_SETTINGS = {
   theme: "paper", fontSize: 17, lineHeight: 1.9, measure: 720,
   showCtx: true, zen: false, linkSync: true, language: "zh",
   autoCheckUpdate: true, ebookSpread: true,
+  /* 排序是偏好：落盘。recent + 降序 = 升级前的固定顺序，旧数据读出来逐字一致 */
+  sort: "recent", sortDesc: true,
   /*
    * 电子书专属：与 PDF / 文本的排版档位互不影响。
    * 这一组默认值 = 版式面板的「舒适中文」预设（见 reader/ebook-layout.js）：
@@ -58,12 +60,8 @@ const DEFAULT_SETTINGS = {
   ebookHyphenate: false, ebookPunctuate: true,
   /* 配色覆盖独立于排版覆盖，默认开：书里写死的字色在夜读主题下会读不清 */
   ebookOverrideColor: true,
+  /* 阅读姿势与辅助：paged/slide 是升级前的行为，旧数据读出来逐字一致 */
+  ebookFlow: "paged", ebookTurn: "slide",
+  ebookTtsRate: 1, ebookTtsVoice: "", ebookAutoSpeed: 5,
 };
-/* 电子书字体的可选值与字体栈：值存盘，栈只在这里出现一次 */
-const EBOOK_FONTS = {
-  serif: '"Songti SC", "SimSun", "Source Han Serif SC", "Noto Serif CJK SC", Georgia, serif',
-  sans: '"PingFang SC", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", system-ui, sans-serif',
-  kai: '"Kaiti SC", "KaiTi", "STKaiti", "Source Han Serif SC", Georgia, serif',
-};
-
-export { THEME_ORDER, KIND_LABEL, KIND_CLASS, EBOOK_BADGE, ebookFormat, themeLabel, kindLabel, TINTS, SIZE_STEPS, ZOOM_STEPS, ZOOM_PRESETS, DEFAULT_SETTINGS, EBOOK_FONTS, CATEGORY_COLORS, MAX_CATEGORIES, MAX_CATEGORY_NAME };
+export { THEME_ORDER, KIND_LABEL, KIND_CLASS, EBOOK_BADGE, ebookFormat, themeLabel, kindLabel, TINTS, SIZE_STEPS, ZOOM_STEPS, ZOOM_PRESETS, DEFAULT_SETTINGS, CATEGORY_COLORS, MAX_CATEGORIES, MAX_CATEGORY_NAME };

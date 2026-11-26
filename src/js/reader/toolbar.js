@@ -6,10 +6,10 @@ import { t } from "../i18n.js";
 import { state } from "../core/session.js";
 import { ZOOM_STEPS, ZOOM_PRESETS } from "../core/constants.js";
 import { ZOOM_MIN, ZOOM_MAX } from "../reader-pdf.js";
-import { activePane, activeReader, canLinkPanes, splitMode, linkSync, setSplit, setLink } from "./panes.js";
-import { ebookToolbar } from "./toolbar-ebook.js";
-import { docCapabilities } from "./doc-export.js";
-import { docMenuHtml, setDocMenu } from "./doc-menu.js";
+import { activePane, activeReader } from "./panes.js";
+import { renderEbookBands, hideEbookBands, syncEbookBands } from "./ebook-toolbar.js";
+import { paneToolsHtml } from "./pane-tools.js";
+import { setDocMenu } from "./doc-menu.js";
 import { toast } from "../core/feedback.js";
 import { updateStatus } from "../view.js";
 
@@ -47,26 +47,26 @@ function renderToolbar() {
   zoomMenuOpen = false;
   if (!book) {
     bar.innerHTML = "";
+    bar.hidden = false;
+    hideEbookBands();
     return;
   }
 
+  // 电子书不用浮动胶囊：每栏自己的底部工具带（ebook-toolbar.js），
+  // 这里只把它渲染出来，浮动条整体收起
+  if (book.kind === "ebook") {
+    bar.innerHTML = "";
+    bar.hidden = true;
+    renderEbookBands();
+    updateToolbarPage();
+    return;
+  }
+  bar.hidden = false;
+  hideEbookBands();
+
   // 双栏开关对所有文档生效；联动开关只在两栏同文档时出现。
   // 「文档操作」四类格式都有——只是菜单里的项按格式取舍
-  const paneTools = `
-      <span class="tool-sep"></span>
-      <div class="tool-group">
-        <button class="tool-btn ${splitMode ? "is-on" : ""}" data-act="split" title="${t("reader.split")}">
-          <svg class="ic"><use href="#i-columns"/></svg>
-        </button>
-        ${canLinkPanes() ? `<button class="tool-btn ${linkSync ? "is-on" : ""}" data-act="link" title="${t("reader.link")}">
-          <svg class="ic"><use href="#i-link"/></svg>
-        </button>` : ""}
-        <span class="doc-anchor">
-          <button class="tool-btn" data-act="doc-menu" aria-haspopup="menu" aria-expanded="false"
-            title="${t("reader.docMenu")}"><svg class="ic"><use href="#i-more"/></svg></button>
-          ${docMenuHtml(docCapabilities(activePane()))}
-        </span>
-      </div>`;
+  const paneTools = paneToolsHtml(activePane());
 
   if (book.kind === "pdf") {
     const total = state.pdfTotal || book.pages || 0;
@@ -133,23 +133,6 @@ function renderToolbar() {
         <button class="tool-btn ${state.ctxOpen ? "is-on" : ""}" data-act="ctx" title="${t("reader.ctx")}"><svg class="ic"><use href="#i-list"/></svg></button>
       </div>
       <span class="page-total">${stat}</span>${paneTools}`;
-  } else if (book.kind === "ebook") {
-    // 电子书：翻页 + 可拖进度条 + 单双页 + 书签。仍然不给页码输入框——
-    // 页码是排版算出来的，窗口一变就作废，能输入只会让人以为可以「跳到第 200 页」。
-    // 这四个按钮该不该出现，条件比另外三种阅读器加起来都多，整段在 toolbar-ebook.js
-    const pane = activePane();
-    bar.innerHTML = ebookToolbar({
-      fraction: state.ebookFraction || 0,
-      spread: state.settings.ebookSpread !== false,
-      // 固定版面（漫画）没有单双页可言：左右页由书里的 page-spread 说了算
-      fixed: Boolean(pane?.ebook?.fixed),
-      // 打不开的书（DRM、损坏、改错后缀）：没有书可翻，按钮全收掉，只留侧栏开关
-      dead: !pane?.ebook?.book,
-      marked: state.ebookMarked,
-      ctxOpen: state.ctxOpen,
-      layoutOpen: state.layoutOpen,
-      paneTools,
-    });
   } else {
     const settings = state.settings;
     bar.innerHTML = `
@@ -188,34 +171,7 @@ function updateToolbarPage() {
   if (zoomOut) zoomOut.disabled = state.pdfZoom <= ZOOM_MIN + 0.005;
   if (zoomIn) zoomIn.disabled = state.pdfZoom >= ZOOM_MAX - 0.005;
   syncZoomMenu();
-  syncEbookBar();
-}
-
-/**
- * 电子书的进度显示。
- *
- * 只改值与类名，不重建工具栏：拖滑杆的过程中重建 DOM 会把拖动手势打断，
- * 表现为「拖到一半就弹回原位」。
- */
-function syncEbookBar() {
-  const percent = $(".ebook-pct");
-  if (!percent) return;
-  const fraction = clamp01(state.ebookFraction);
-  percent.textContent = `${Math.round(fraction * 100)}%`;
-  const slider = $("#ebookSlider");
-  // 正在拖的时候不回写：否则用户拖到 80%，手指还没抬起来就被 relocate 拽回去
-  if (slider) {
-    slider.style.setProperty("--_fill", `${Math.round(fraction * 100)}%`);
-    if (document.activeElement !== slider) slider.value = String(Math.round(fraction * 1000));
-  }
-  const mark = $('[data-act="ebook-mark"]');
-  if (mark) mark.classList.toggle("is-on", Boolean(state.ebookMarked));
-  const spread = $('[data-act="ebook-spread"]');
-  if (spread) spread.classList.toggle("is-on", state.settings.ebookSpread !== false);
-}
-
-function clamp01(value) {
-  return Math.min(1, Math.max(0, Number(value) || 0));
+  syncEbookBands();
 }
 
 /** 展开 / 收起缩放比例菜单 */

@@ -60,7 +60,7 @@
   同一份逻辑要挂两处——外层容器与**每个章节文档**（iframe 内的键盘与点击不会冒泡到主文档）。
 - `src/js/reader/ebook-note.js`（新）＋`footnote.js`（新）：脚注按 `book.resolveHref` 定位，
   `epub:type` / `fn1` 这类 id / 类名三重判定；判成「注」才弹小窗，其余照常跳转。
-  卡片位置锚在注号上方，注号不在当前页时退回阅读区底部并让开浮动工具栏。
+  卡片位置锚在注号上方，注号不在当前页时退回阅读区底部并让开书口带（旧版为浮动工具栏）。
 - `src/js/reader/ebook-search.js`（新）：把 `view.search()` 的异步生成器收敛成按章分组的结果，
   进度回调给侧栏；`excerpt` 是 `{pre, match, post}` 三段，`<mark>` 直接按它渲染。
 - `src/js/reader/bookmarks.js`（新）：加 / 删书签，就地合并回 `state.books` 与 `state.current`。

@@ -700,6 +700,7 @@ pub fn set_highlight(
     color: String,
     label: String,
     on: bool,
+    note: Option<String>,
 ) -> Result<Book, String> {
     let mut data = lock(&state)?;
     let Some(book) = data.books.iter_mut().find(|b| b.id == id) else {
@@ -722,12 +723,16 @@ pub fn set_highlight(
                 if !label.is_empty() {
                     existing.label = label;
                 }
+                // note 传 Some 才改（含空串 = 清空笔记）；老调用点不传，保持原笔记
+                if let Some(note) = note.clone() {
+                    existing.note = note;
+                }
             }
             None => {
                 if book.highlights.len() >= MAX_HIGHLIGHTS {
                     return Err(format!("一本书最多 {MAX_HIGHLIGHTS} 条划线，先删几条"));
                 }
-                book.highlights.push(Highlight { cfi, text, color, label, created_at: store::now_ms() });
+                book.highlights.push(Highlight { cfi, text, color, label, created_at: store::now_ms(), note: note.unwrap_or_default() });
             }
         }
     } else {
@@ -924,6 +929,20 @@ pub fn remove_book(state: State<'_, StoreState>, id: String) -> Result<Vec<Book>
     // 检索索引跟着书走：留着只会让 data/search 越积越多，而且再也对不上任何一本书
     let stale = search_dir(&state.dir).join(format!("{}.json", safe_id(&id)));
     let _ = fs::remove_file(stale);
+    Ok(data.books.clone())
+}
+
+/// 撤销移除：把前端持有的 Book 快照原样塞回书架。
+///
+/// 幂等——id 已存在（撤销双击、窗口内重新导入了同一文件）直接返回当前书架。
+/// 检索索引不随快照恢复：`read_search_index` 对缺失返回 None，下次检索按需重建。
+#[tauri::command]
+pub fn restore_book(state: State<'_, StoreState>, book: Book) -> Result<Vec<Book>, String> {
+    let mut data = lock(&state)?;
+    if !data.books.iter().any(|b| b.id == book.id) {
+        data.books.push(book);
+        store::persist(&data, &state.dir)?;
+    }
     Ok(data.books.clone())
 }
 
@@ -1467,6 +1486,233 @@ pub fn install_update(app: AppHandle, path: String) -> Result<(), String> {
     Ok(())
 }
 
+/* ---------------- 正文字体（按需下载） ---------------- */
+
+/// 字体只允许从这几个官方域名下载：GitHub Release 与其资产重定向、Google Fonts 官方仓库
+const FONT_HOSTS: [&str; 4] = [
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "raw.githubusercontent.com",
+];
+
+#[derive(Clone, Serialize)]
+struct FontProgress {
+    id: String,
+    received: u64,
+    total: u64,
+}
+
+#[derive(Serialize)]
+pub struct FontFile {
+    pub name: String,
+    pub path: String,
+    pub bytes: u64,
+}
+
+#[derive(Serialize)]
+pub struct FontStore {
+    pub dir: String,
+    pub files: Vec<FontFile>,
+}
+
+/// 下载的字体跟着数据目录走：发布构建在可执行文件同级的 `data/fonts/`
+fn fonts_dir() -> PathBuf {
+    crate::paths::runtime_root().join("fonts")
+}
+
+fn font_host_allowed(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = host.split('@').next_back().unwrap_or(host);
+    let host = host.split(':').next().unwrap_or(host);
+    FONT_HOSTS
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+}
+
+/// 本地文件名只留安全字符：它是 `data/fonts/` 下的落盘名，不接受任何路径成分
+fn safe_font_name(name: &str) -> Option<String> {
+    let name = Path::new(name)
+        .file_name()
+        .map(|part| part.to_string_lossy().to_string())?;
+    let lower = name.to_ascii_lowercase();
+    if !(lower.ends_with(".ttf") || lower.ends_with(".otf")) || lower.starts_with('.') {
+        return None;
+    }
+    if name.len() > 96 {
+        return None;
+    }
+    let clean = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    clean.then_some(name)
+}
+
+/// 文件头必须是 TrueType / OpenType 容器，挡住「下载回来其实是一张网页」的情况
+fn font_magic_ok(path: &Path) -> bool {
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 4];
+    if file.read_exact(&mut head).is_err() {
+        return false;
+    }
+    matches!(&head, [0, 1, 0, 0] | b"true" | b"OTTO")
+}
+
+/// 已下载的字体清单。只登记目录里像字体文件的条目，大小一并返回给前端做展示
+#[tauri::command]
+pub fn list_fonts() -> Result<FontStore, String> {
+    let dir = fonts_dir();
+    fs::create_dir_all(&dir).map_err(|err| format!("无法创建字体目录：{err}"))?;
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().map(|part| part.to_string_lossy().to_string()) else {
+                continue;
+            };
+            if safe_font_name(&name).is_none() {
+                continue;
+            }
+            let bytes = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+            if bytes == 0 {
+                continue;
+            }
+            files.push(FontFile {
+                name,
+                path: path.to_string_lossy().to_string(),
+                bytes,
+            });
+        }
+    }
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(FontStore {
+        dir: dir.to_string_lossy().to_string(),
+        files,
+    })
+}
+
+/// 把一款字体下载到 `data/fonts/`，返回落盘绝对路径；进度通过 `font-progress` 事件汇报。
+///
+/// 与更新包同一套做法：交给系统 curl（含代理透传），先写 `.part`，校验文件头之后
+/// 才改名成正体——半截文件不会被下一次启动当成「已安装」。
+#[tauri::command]
+pub async fn download_font(
+    app: AppHandle,
+    id: String,
+    url: String,
+    file_name: String,
+    bytes: u64,
+) -> Result<String, String> {
+    if !font_host_allowed(&url) {
+        return Err("字体地址不在允许范围内".into());
+    }
+    let name = safe_font_name(&file_name).ok_or_else(|| "字体文件名无效".to_string())?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = fonts_dir();
+        fs::create_dir_all(&dir).map_err(|err| format!("无法创建字体目录：{err}"))?;
+        let path = dir.join(&name);
+        let part = dir.join(format!("{name}.part"));
+        let _ = fs::remove_file(&part);
+        let _ = fs::remove_file(&path);
+
+        let mut command = std::process::Command::new("curl");
+        quiet(&mut command);
+        command.args([
+            "-L",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--retry",
+            "2",
+            "--connect-timeout",
+            "20",
+            "--speed-limit",
+            "1024",
+            "--speed-time",
+            "40",
+        ]);
+        if let Some(proxy) = curl_proxy() {
+            command.arg("--proxy").arg(proxy);
+        }
+        let mut child = command
+            .arg("--user-agent")
+            .arg(concat!("YueJianReader/", env!("CARGO_PKG_VERSION")))
+            .arg("-o")
+            .arg(&part)
+            .arg(&url)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("无法启动下载：{err}"))?;
+
+        let stderr_handle = child.stderr.take().map(|mut pipe| {
+            std::thread::spawn(move || {
+                let mut text = String::new();
+                let _ = pipe.read_to_string(&mut text);
+                text
+            })
+        });
+
+        loop {
+            let received = fs::metadata(&part).map(|meta| meta.len()).unwrap_or(0);
+            let _ = app.emit(
+                "font-progress",
+                FontProgress {
+                    id: id.clone(),
+                    received,
+                    total: bytes,
+                },
+            );
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let stderr = stderr_handle
+                        .and_then(|handle| handle.join().ok())
+                        .unwrap_or_default();
+                    if !status.success() {
+                        let _ = fs::remove_file(&part);
+                        return Err(download_failure_message(status.code(), &stderr));
+                    }
+                    if !font_magic_ok(&part) {
+                        let _ = fs::remove_file(&part);
+                        return Err("下载到的文件不是有效字体".into());
+                    }
+                    fs::rename(&part, &path).map_err(|err| {
+                        let _ = fs::remove_file(&part);
+                        format!("无法保存字体：{err}")
+                    })?;
+                    return Ok(path.to_string_lossy().to_string());
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(150)),
+                Err(err) => {
+                    let _ = child.kill();
+                    let _ = fs::remove_file(&part);
+                    return Err(format!("下载字体失败：{err}"));
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// 删除一款已下载字体。文件不在也算成功——界面要的是「删干净了」这个结果
+#[tauri::command]
+pub fn remove_font(file_name: String) -> Result<(), String> {
+    let name = safe_font_name(&file_name).ok_or_else(|| "字体文件名无效".to_string())?;
+    let path = fonts_dir().join(name);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("无法删除字体：{err}")),
+    }
+}
+
 /// 用系统默认浏览器打开外部链接（仅允许 https）
 #[tauri::command]
 pub fn open_external(url: String) -> Result<(), String> {
@@ -1547,5 +1793,65 @@ mod tests {
         assert_eq!(super::image_mime("C:/a/b.JPEG"), "image/jpeg");
         assert_eq!(super::image_mime("C:/a/b.unknown"), "application/octet-stream");
         assert_eq!(super::image_mime("C:/a/b"), "application/octet-stream");
+    }
+
+    #[test]
+    fn font_urls_limited_to_official_sources() {
+        assert!(super::font_host_allowed(
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/notoserifsc/NotoSerifSC%5Bwght%5D.ttf"
+        ));
+        assert!(super::font_host_allowed(
+            "https://github.com/lxgw/LxgwWenkaiGB/releases/download/v1.530/LXGWWenKaiGB-Regular.ttf"
+        ));
+        assert!(super::font_host_allowed(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1"
+        ));
+        assert!(super::font_host_allowed(
+            "https://objects.githubusercontent.com/github-production-release-asset/1"
+        ));
+        assert!(!super::font_host_allowed("http://raw.githubusercontent.com/a.ttf"));
+        assert!(!super::font_host_allowed("https://github.com.evil.example/a.ttf"));
+        assert!(!super::font_host_allowed("https://evil.example/a.ttf"));
+    }
+
+    #[test]
+    fn font_names_stay_inside_fonts_dir() {
+        assert_eq!(
+            super::safe_font_name("lxgwwenkai-gb-regular.ttf").as_deref(),
+            Some("lxgwwenkai-gb-regular.ttf")
+        );
+        // 路径成分被剥掉，只剩最后一段
+        assert_eq!(
+            super::safe_font_name("../../data/state.json").as_deref(),
+            None
+        );
+        assert_eq!(
+            super::safe_font_name("..\\fonts\\x.ttf").as_deref(),
+            Some("x.ttf")
+        );
+        assert_eq!(super::safe_font_name("setup.exe"), None);
+        assert_eq!(super::safe_font_name(".hidden.ttf"), None);
+        assert_eq!(super::safe_font_name("NotoSerifSC[wght].ttf"), None);
+        assert_eq!(super::safe_font_name(&"a".repeat(100)), None);
+    }
+
+    #[test]
+    fn font_magic_rejects_non_fonts() {
+        let dir = std::env::temp_dir().join(format!("yj-font-magic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("good.ttf");
+        std::fs::write(&good, [0u8, 1, 0, 0, 9, 9]).unwrap();
+        assert!(super::font_magic_ok(&good));
+        let otto = dir.join("cff.otf");
+        std::fs::write(&otto, b"OTTO\x01\x00").unwrap();
+        assert!(super::font_magic_ok(&otto));
+        let html = dir.join("bad.ttf");
+        std::fs::write(&html, b"<!doctype html>").unwrap();
+        assert!(!super::font_magic_ok(&html));
+        let short = dir.join("short.ttf");
+        std::fs::write(&short, b"\x00\x01").unwrap();
+        assert!(!super::font_magic_ok(&short));
+        assert!(!super::font_magic_ok(&dir.join("missing.ttf")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -284,6 +284,11 @@ class View {
     }
     render(layout) {
         if (!layout) return
+        // Local patch: during a section load the iframe's document exists but its
+        // documentElement/body can be momentarily null; styling then throws. The
+        // load handler re-renders once the document is ready, so skipping is safe.
+        const doc = this.document
+        if (!doc?.documentElement || !doc.body) return
         this.#column = layout.flow !== 'scrolled'
         this.#layout = layout
         if (this.#column) this.columnize(layout)
@@ -360,6 +365,8 @@ class View {
         }
     }
     expand() {
+        // Local patch: same mid-navigation guard as render()
+        if (!this.document?.documentElement) return
         const { documentElement } = this.document
         if (this.#column) {
             const side = this.#vertical ? 'height' : 'width'
@@ -814,8 +821,10 @@ export class Paginator extends HTMLElement {
 
         this.#scrollToPage(page, 'snap').then(() => {
             const dir = page <= 0 ? -1 : page >= pages - 1 ? 1 : null
-            if (dir) return this.#goTo({
-                index: this.#adjacentIndex(dir),
+            // Local patch: same guard as #turnPage — no adjacent section, no #goTo
+            const adjacent = dir == null ? null : this.#adjacentIndex(dir)
+            if (adjacent != null) return this.#goTo({
+                index: adjacent,
                 anchor: dir < 0 ? () => 1 : () => 0,
             })
         })
@@ -943,14 +952,21 @@ export class Paginator extends HTMLElement {
         await this.#scrollToPage(newPage + 1, reason)
     }
     #getVisibleRange() {
-        if (this.scrolled) return getVisibleRange(this.#view.document,
+        // Local patch: `render()` fires `scrollToAnchor()` unawaited, so a scroll
+        // can resolve after the view moved on to (or is mid-load into) a document
+        // that has no body yet — `createTreeWalker(null)` then throws as an
+        // unhandled rejection. No body means nothing is visible; report no range.
+        const doc = this.#view?.document
+        if (!doc?.body) return null
+        if (this.scrolled) return getVisibleRange(doc,
             this.start + this.#margin, this.end - this.#margin, this.#getRectMapper())
         const size = this.#rtl ? -this.size : this.size
-        return getVisibleRange(this.#view.document,
+        return getVisibleRange(doc,
             this.start - size, this.end - size, this.#getRectMapper())
     }
     #afterScroll(reason) {
         const range = this.#getVisibleRange()
+        if (!range) return
         this.#lastVisibleRange = range
         // don't set new anchor if relocation was to scroll to anchor
         if (reason !== 'selection' && reason !== 'navigation' && reason !== 'anchor')
@@ -1062,8 +1078,12 @@ export class Paginator extends HTMLElement {
         this.#locked = true
         const prev = dir === -1
         const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
-        if (shouldGo) await this.#goTo({
-            index: this.#adjacentIndex(dir),
+        // Local patch: scrolled mode signals "shouldGo" at the very start/end of the
+        // book too; without an adjacent section #goTo would load `sections[undefined]`
+        // and throw, leaving #locked stuck true (all later navigation silently dead).
+        const adjacent = this.#adjacentIndex(dir)
+        if (shouldGo && adjacent != null) await this.#goTo({
+            index: adjacent,
             anchor: prev ? () => 1 : () => 0,
         })
         if (shouldGo || !this.hasAttribute('animated')) await wait(100)

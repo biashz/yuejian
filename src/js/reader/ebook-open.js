@@ -27,9 +27,12 @@ import { isBookmarked } from "./bookmarks.js";
 import { buildEbookStyles } from "./ebook-style.js";
 import { readLayout } from "./ebook-layout.js";
 import { explainEbookError } from "./ebook-error.js";
-import { closeHighlightMenu, highlightMenuAge } from "./highlight-menu.js";
+import { closeHighlightMenu, highlightMenuAge, highlightMenuOpen } from "./highlight-menu.js";
 import { openImage } from "./image-view.js";
 import { askHighlight, pickAnnotation } from "./highlight-actions.js";
+import { applyReadingMode, isScroll } from "./ebook-mode.js";
+import { toggleTts, toggleAuto, stopAssist, disposeAssist, assistOf, pauseResumeAssist, stepAssist } from "./ebook-assist.js";
+import { buildSeekData } from "./ebook-seek.js";
 
 /**
  * 版式折成四个值：写进章节文档的 CSS（字号/行高/字体/对齐/缩进/段距/标点），
@@ -85,11 +88,43 @@ function refreshEbookStyles({ render = true, live = false } = {}) {
 /** 手势动作统一走这里：主文档与 iframe 内用的是同一套 */
 function handlers(pane) {
   return {
-    onStep: (direction) => (direction > 0 ? pane.ebook?.next() : pane.ebook?.prev()),
-    onJump: (where) => (where === "start" ? pane.ebook?.goTo(0) : pane.ebook?.goToFraction(1)),
-    onChapter: (direction) => pane.ebook?.chapterStep(direction),
+    // 手动导航一律先停辅助：朗读 / 自动滚动让位给人的操作
+    onStep: (direction) => {
+      stopAssist(pane);
+      return direction > 0 ? pane.ebook?.next() : pane.ebook?.prev();
+    },
+    onJump: (where) => {
+      stopAssist(pane);
+      return where === "start" ? pane.ebook?.goTo(0) : pane.ebook?.goToFraction(1);
+    },
+    onChapter: (direction) => {
+      stopAssist(pane);
+      return pane.ebook?.chapterStep(direction);
+    },
     onSelect: (range) => askHighlight(pane, range),
     onImage: (img) => openImage(img.currentSrc || img.src, img.alt || ""),
+    mode: () => (isScroll(pane.ebook) ? "scroll" : "paged"),
+    // iframe 里的键盘到不了主文档：辅助条的键在这里接住，与 keys.js 同一套语义
+    onAssistKey: (event) => {
+      const mod = event.ctrlKey || event.metaKey;
+      if (event.shiftKey && !mod && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === "j") toggleEbookFlow();
+        else if (key === "l") toggleTts(pane);
+        else if (key === "a") toggleAuto(pane);
+        else return false;
+        return true;
+      }
+      if (event.key === " " && pauseResumeAssist(pane)) return true;
+      if (mod && (event.key === "[" || event.key === "]")) {
+        return stepAssist(pane, event.key === "]" ? 1 : -1);
+      }
+      if (event.key === "Escape" && assistOf(pane)?.kind && !highlightMenuOpen()) {
+        stopAssist(pane);
+        return true;
+      }
+      return false;
+    },
   };
 }
 
@@ -125,17 +160,20 @@ function linkPosition(pane, el) {
   const visible = point
     && point.x > box.left + 8 && point.x < box.right - 8
     && point.y > box.top && point.y < box.bottom - 8;
-  // 退回到阅读区底部，但要让到浮动工具栏上方：工具栏是 absolute 定位的，
-  // 被弹层盖住会把翻页与进度条一起挡掉，比弹层位置偏一点糟糕得多
+  // 退回到阅读区底部，但要让到工具带上方：带子是版面的一部分、底色不透明，
+  // 被它盖住会把翻页与进度条一起挡掉，比弹层位置偏一点糟糕得多
   if (!visible) {
-    const toolTop = document.querySelector("#readToolbar")?.getBoundingClientRect?.().top;
-    const limit = toolTop ? toolTop - 12 : box.top + box.height - 40;
+    const band = pane.band;
+    const bandTop = band && !band.hidden ? band.getBoundingClientRect().top : 0;
+    const limit = bandTop ? bandTop - 12 : box.top + box.height - 40;
     return { x: box.left + box.width / 2, y: limit };
   }
   return point;
 }
 
 async function openEbook(doc, pane) {
+  // 换书先撤辅助条：它锚在旧 view 的 relocate 上，留着会对着新书空转
+  disposeAssist(pane);
   const reader = ensureEbookReader(pane);
   const active = pane.index === activePaneIndex;
   if (active) {
@@ -164,6 +202,9 @@ async function openEbook(doc, pane) {
     ));
     // 划线在打开之后贴：`setHighlights` 要等首帧把 overlayer 建出来
     reader.setHighlights(pane.book?.highlights || []);
+    // 阅读姿势 / 动效贴到首帧之后的渲染器上；刻度数据异步算，算完补一次工具栏
+    applyReadingMode(reader, state.settings);
+    buildSeekData(pane).then(() => updateToolbarPage());
     // 书里的元数据比文件名可靠：书名、作者都在 OPF 里，书架当初只拿到了文件名
     const meta = reader.book?.metadata;
     if (meta?.title && pane.book) pane.book.title = String(meta.title);
@@ -197,8 +238,9 @@ function handleRelocate(pane, loc) {
   // 脚注窗锚在旧位置，翻页之后留着就是错的
   hideFootnote();
   // 色板同理，但刚摆上的那一个不能收：从侧栏点过来时，库是先导航再派发「命中」，
-  // 导航引起的这次 relocate 往往比命中回调晚一帧，照收就是「刚摆上就没了」
-  if (highlightMenuAge() > 300) closeHighlightMenu();
+  // 导航引起的这次 relocate 往往比命中回调晚一帧，照收就是「刚摆上就没了」。
+  // 滚动模式的 relocate 是「滚了一下」而不是翻页：选区小窗锚在文字上，跟着走才对
+  if (highlightMenuAge() > 300 && !isScroll(pane.ebook)) closeHighlightMenu();
   if (pane.index !== activePaneIndex) return;
 
   state.ebookLabel = loc.label;
@@ -217,18 +259,62 @@ function handleRelocate(pane, loc) {
 function ebookStep(step) {
   const pane = activePane();
   if (!pane?.ebook) return;
+  stopAssist(pane);
   if (step > 0) pane.ebook.next();
   else pane.ebook.prev();
 }
 
 /** 进度条跳转：0–1 的比例 */
 function ebookSeek(fraction) {
-  activePane()?.ebook?.goToFraction(fraction);
+  const pane = activePane();
+  stopAssist(pane);
+  pane?.ebook?.goToFraction(fraction);
 }
 
 /** 上一章 / 下一章（Ctrl+←/→ 与工具栏都用它） */
 function ebookChapter(step) {
-  activePane()?.ebook?.chapterStep(step);
+  const pane = activePane();
+  stopAssist(pane);
+  pane?.ebook?.chapterStep(step);
+}
+
+/**
+ * 分页 ↔ 连续滚动。全局偏好，两栏一起切。
+ *
+ * 位置由分页器自己保住：改 `flow` 触发它的 render()，末尾会重新锚到当前
+ * anchor——CFI 不变，变的只是排版。固定版面没有字符流，切了也没意义。
+ */
+function setEbookFlow(value) {
+  const pane = activePane();
+  if (!pane?.ebook?.book || pane.ebook.fixed) return;
+  const next = value === "scroll" ? "scroll" : "paged";
+  if ((state.settings.ebookFlow || "paged") === next) return;
+  stopAssist(pane);
+  state.settings.ebookFlow = next;
+  for (const item of panes) {
+    if (item.ebook?.book && !item.ebook.fixed) applyReadingMode(item.ebook, state.settings);
+  }
+  persistSettings();
+  renderToolbar();
+  toast(t(next === "scroll" ? "reader.ebookFlowOn" : "reader.ebookFlowOff"));
+}
+
+function toggleEbookFlow() {
+  const pane = activePane();
+  if (!pane?.ebook?.book) return;
+  if (pane.ebook.fixed) {
+    toast(t("reader.ebookFlowFixed"));
+    return;
+  }
+  setEbookFlow(state.settings.ebookFlow === "scroll" ? "paged" : "scroll");
+}
+
+/** 翻页动效三档：滑动 / 淡入 / 无。reduce-motion 由模式层统一压成 none */
+function setEbookTurn(value) {
+  if (!["slide", "fade", "none"].includes(value)) return;
+  state.settings.ebookTurn = value;
+  for (const item of panes) applyReadingMode(item.ebook, state.settings);
+  persistSettings();
 }
 
 /**
@@ -247,4 +333,4 @@ function toggleEbookSpread() {
   toast(t(spread ? "reader.ebookSpreadOn" : "reader.ebookSpreadOff"));
 }
 
-export { openEbook, ebookStep, ebookSeek, ebookChapter, toggleEbookSpread, refreshEbookStyles };
+export { openEbook, ebookStep, ebookSeek, ebookChapter, toggleEbookSpread, toggleEbookFlow, setEbookFlow, setEbookTurn, refreshEbookStyles };

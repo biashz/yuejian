@@ -26,13 +26,16 @@ const WHEEL_COOLDOWN = 320;
  * @param {(direction: 1|-1) => void} [handlers.onChapter]    上一章 / 下一章
  * @param {(range: Range) => void} [handlers.onSelect]        选中一段文字（划线的入口）
  * @param {(img: HTMLImageElement) => void} [handlers.onImage] 点中图片（放大的入口）
+ * @param {() => "paged"|"scroll"} [handlers.mode] 当前阅读姿势；滚动模式让位给原生滚动
+ * @param {(event: KeyboardEvent) => boolean} [handlers.onAssistKey] 辅助条快捷键（Shift+J/L/A、Space、Ctrl+[/]、Esc），接管返回 true
  */
-export function bindEbookGestures(target, { onStep, onJump, onChapter, onSelect, onImage }) {
+export function bindEbookGestures(target, { onStep, onJump, onChapter, onSelect, onImage, mode, onAssistKey }) {
   if (!target || target.__yuejianGesture) return () => {};
   target.__yuejianGesture = true;
 
   const isDoc = target.nodeType === 9;
   const view = isDoc ? target.defaultView : null;
+  const scrolling = () => mode?.() === "scroll";
 
   const width = () => (isDoc ? view?.innerWidth || 0 : target.getBoundingClientRect().width);
   const left = () => (isDoc ? 0 : target.getBoundingClientRect().left);
@@ -48,6 +51,8 @@ export function bindEbookGestures(target, { onStep, onJump, onChapter, onSelect,
       return;
     }
     if (event.target.closest?.("a[href], button, input, textarea, select")) return;
+    // 滚动模式没有「点半屏翻页」：那会把原生滚动的手感切成一格一格
+    if (scrolling()) return;
     const selection = (isDoc ? view : window)?.getSelection?.();
     if (selection && String(selection).trim()) return;
     const span = width();
@@ -61,6 +66,8 @@ export function bindEbookGestures(target, { onStep, onJump, onChapter, onSelect,
   let accum = 0;
   let cooledAt = 0;
   const onWheel = (event) => {
+    // 滚动模式的滚轮就是阅读本身，拦下来等于把书冻住
+    if (scrolling()) return;
     // Ctrl+滚轮是缩放语义，别拿去翻页；横向滚动交给触控板自己
     if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
     // 分页排版里没有「滚动」这件事，不拦下来只会让 iframe 自己抖一下
@@ -80,6 +87,11 @@ export function bindEbookGestures(target, { onStep, onJump, onChapter, onSelect,
 
   /* ---------------- 键盘 ---------------- */
   const onKeyDown = (event) => {
+    // 辅助条的键先判：Shift+J/L/A 与下面的「Shift 扩选」规则冲突，必须在前
+    if (onAssistKey?.(event)) {
+      event.preventDefault();
+      return;
+    }
     // Shift+方向键是在扩选，不是翻页：拦下来就等于把键盘选区废了
     if (event.shiftKey && !event.ctrlKey && !event.metaKey) return;
     if (event.ctrlKey || event.metaKey || event.altKey) {
@@ -87,6 +99,17 @@ export function bindEbookGestures(target, { onStep, onJump, onChapter, onSelect,
       if (event.ctrlKey && onChapter && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
         event.preventDefault();
         onChapter(event.key === "ArrowRight" ? 1 : -1);
+      }
+      return;
+    }
+    // 滚动模式：纵向键与空格是原生滚动，只接管横向跳章与 Home/End
+    if (scrolling()) {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        onChapter?.(event.key === "ArrowRight" ? 1 : -1);
+      } else if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        onJump?.(event.key === "Home" ? "start" : "end");
       }
       return;
     }

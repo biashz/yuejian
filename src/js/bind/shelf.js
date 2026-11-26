@@ -110,13 +110,23 @@ export function bindShelfEvents() {
     renderLibrary();
     scheduleLibrarySearch();
   });
-  $("#filterRow").addEventListener("click", (event) => {
-    const chip = event.target.closest(".chip");
-    if (!chip) return;
-    state.filter = chip.dataset.filter;
-    $$("#filterRow .chip").forEach((item) => item.classList.toggle("is-on", item === chip));
+  $("#typeList").addEventListener("click", (event) => {
+    const row = event.target.closest(".idx-row");
+    if (!row) return;
+    state.filter = row.dataset.filter;
+    // 选完即收起：目录头自述结果，展开只是瞬时动作
+    state.typeCollapsed = true;
     renderLibrary();
     // 分类 / 类型换了，正文命中的范围也跟着变
+    scheduleLibrarySearch();
+  });
+  $("#statusList").addEventListener("click", (event) => {
+    const row = event.target.closest(".idx-row");
+    if (!row) return;
+    state.status = row.dataset.status === "__all" ? null : row.dataset.status;
+    // 与类型组同交互：选完即收起，目录头自述「状态 · 在读」
+    state.statusCollapsed = true;
+    renderLibrary();
     scheduleLibrarySearch();
   });
 

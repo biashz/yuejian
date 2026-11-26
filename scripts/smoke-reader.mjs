@@ -238,7 +238,8 @@ function stubSource() {
     ebookFamily: "serif", ebookAlign: "justify", ebookOverride: false,
     ebookLetterSpacing: 0.25, ebookIndent: 2, ebookParaSpacing: 0,
     ebookMeasure: 660, ebookGap: 8, ebookHyphenate: false, ebookPunctuate: true,
-    ebookOverrideColor: null };
+    ebookOverrideColor: null, ebookFlow: "paged", ebookTurn: "slide",
+    ebookTtsRate: 1, ebookTtsVoice: "", ebookAutoSpeed: 5 };
   const HTML = ${JSON.stringify(MD_HTML)};
 
   window.__TAURI__ = {
@@ -259,6 +260,17 @@ function stubSource() {
           const moved = new Set(args.ids);
           return Promise.resolve(clone(BOOKS.map((book) =>
             (moved.has(book.id) ? { ...book, categoryId: args.categoryId } : book))));
+        }
+        // 移除 / 撤销：与 Rust 同语义——remove 只删记录，restore 幂等塞回快照
+        if (command === "remove_book") {
+          const at = BOOKS.findIndex((book) => book.id === args.id);
+          if (at >= 0) BOOKS.splice(at, 1);
+          return Promise.resolve(clone(BOOKS));
+        }
+        if (command === "restore_book") {
+          window.__restored = clone(args.book);
+          if (!BOOKS.some((book) => book.id === args.book.id)) BOOKS.push(clone(args.book));
+          return Promise.resolve(clone(BOOKS));
         }
         if (command === "app_version") return Promise.resolve("0.0.0-smoke");
         // 摘录导出 / 文档导出：不弹真对话框，把默认文件名、正文与类型留下来给断言看
@@ -374,9 +386,11 @@ function stubSource() {
               existing.color = args.color;
               if (args.text) existing.text = args.text;
               if (args.label) existing.label = args.label;
+              // note 传了才改（含空串 = 清空）；不传保持原笔记，与 Rust 同语义
+              if (args.note !== undefined) existing.note = args.note;
             } else {
               book.highlights.push({ cfi: args.cfi, text: args.text, color: args.color,
-                label: args.label, createdAt: Date.now() });
+                label: args.label, note: args.note || "", createdAt: Date.now() });
             }
           } else {
             book.highlights = book.highlights.filter((mark) => mark.cfi !== args.cfi);
@@ -405,6 +419,29 @@ function stubSource() {
             { line: 190000, text: hugeLine(190000).replace("lorem", "zebra") },
           ]));
         }
+        // 字体：内存里放一份目录，下载模拟「过半进度 → 落盘」，验证状态机与样式注入
+        if (command === "list_fonts") {
+          return Promise.resolve(clone({ dir: "/fixtures/fonts", files: window.__fontFiles || [] }));
+        }
+        if (command === "download_font") {
+          window.__fontDownloads = window.__fontDownloads || [];
+          window.__fontDownloads.push({ id: args.id, url: args.url, fileName: args.fileName, bytes: args.bytes });
+          const file = { name: args.fileName, path: "/fixtures/fonts/" + args.fileName, bytes: args.bytes };
+          return new Promise((resolve) => {
+            setTimeout(() => window.__TAURI__.event?.emit?.("font-progress",
+              { id: args.id, received: Math.round(args.bytes / 2), total: args.bytes }), 15);
+            setTimeout(() => {
+              window.__fontFiles = window.__fontFiles || [];
+              if (!window.__fontFiles.some((item) => item.name === file.name)) window.__fontFiles.push(file);
+              resolve(file.path);
+            }, 60);
+          });
+        }
+        if (command === "remove_font") {
+          window.__fontRemoved = args.fileName;
+          window.__fontFiles = (window.__fontFiles || []).filter((item) => item.name !== args.fileName);
+          return Promise.resolve(null);
+        }
         // 检索索引：内存里存一份，够验证「读到了就复用、没读到就重建」
         if (command === "read_search_index") {
           window.__calls.push("read_search_index:" + args.id);
@@ -417,6 +454,23 @@ function stubSource() {
           return Promise.resolve(null);
         }
         return Promise.resolve(null);
+      },
+    },
+    // 事件订阅：字体下载进度靠它从后端走到界面，桩里同步留一份给断言看
+    event: {
+      handlers: (window.__fontHandlers = window.__fontHandlers || {}),
+      listen(name, callback) {
+        const list = (window.__fontHandlers[name] = window.__fontHandlers[name] || []);
+        list.push(callback);
+        return Promise.resolve(() => {
+          const at = list.indexOf(callback);
+          if (at >= 0) list.splice(at, 1);
+        });
+      },
+      emit(name, payload) {
+        window.__fontProgress = window.__fontProgress || [];
+        window.__fontProgress.push(payload);
+        (window.__fontHandlers[name] || []).forEach((callback) => callback({ payload }));
       },
     },
   };
@@ -688,7 +742,7 @@ async function main() {
 
     /* --- 跨书检索：正文命中单独成区，不与书名筛选混排 --- */
     // 先收到 MARKDOWN 类型：范围里只剩 b-md，检索路径确定（走 search_text，不碰索引）
-    await evaluate(ws, `document.querySelector('#filterRow [data-filter="markdown"]').click()`);
+    await evaluate(ws, `document.querySelector('#typeList [data-filter="markdown"]').click()`);
     await sleep(200);
     await evaluate(ws, `(() => {
       const input = document.querySelector("#libSearch");
@@ -808,8 +862,6 @@ async function main() {
       state.filter = "all";
       state.query = "";
       document.querySelector("#libSearch").value = "";
-      document.querySelectorAll("#filterRow .chip")
-        .forEach((chip) => chip.classList.toggle("is-on", chip.dataset.filter === "all"));
       renderLibrary();
     })()`);
     await sleep(200);
@@ -846,6 +898,215 @@ async function main() {
       `收尾残留 ghost ${afterDrag.ghostLeft} / 高亮 ${afterDrag.dropLeft} / 拖动态 ${afterDrag.dragging}`);
     // 拖完那一次 click 会被吃掉，补一个空点击把标记用掉，免得影响后面的点击
     await evaluate(ws, `document.body.click()`);
+
+    /* --- 书架工具：状态轴 / 排序 / 删除撤销（docs/feature-shelf-tools.md） --- */
+    // 阈值边界书只放前端 state，不进桩 BOOKS：后面 restore_book 返回真书架时自然冲掉
+    const statusBase = await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      const { readingStatus } = await import("/js/status.js");
+      const edge = [0.999, 0.001, 0.0011].map((ratio, i) => ({
+        id: "b-edge" + i, path: "/fixtures/edge" + i + ".md", title: "边界" + i, author: "", kind: "markdown",
+        size: 10, pages: 0, words: 1, addedAt: 1, lastOpenedAt: 1, favorite: false,
+        categoryId: "", encoding: "", progress: { ratio, page: 1, zoom: 1 } }));
+      state.books = [...state.books, ...edge];
+      renderLibrary();
+      const nums = [...document.querySelectorAll("#statusList .cat-num")].map((n) => Number(n.textContent));
+      return { nums, total: state.books.length, kinds: edge.map((b) => readingStatus(b)),
+        collapsed: document.querySelector("#statusHead").classList.contains("is-collapsed") };
+    })()`);
+    check("状态计数三态之和等于总数，阈值与继续阅读口径一致",
+      statusBase.nums[0] === statusBase.total
+        && statusBase.nums[1] + statusBase.nums[2] + statusBase.nums[3] === statusBase.total
+        && statusBase.kinds.join(",") === "finished,unread,reading" && statusBase.collapsed,
+      `计数 ${statusBase.nums.join("/")} 总 ${statusBase.total} · 边界 ${statusBase.kinds.join(",")}`);
+
+    const statusPick = await evaluate(ws, `(async () => {
+      document.querySelector('#statusList .idx-row[data-status="reading"]').click();
+      return { rows: [...document.querySelectorAll("#bookList .book-row")].map((r) => r.dataset.book),
+        collapsed: document.querySelector("#statusHead").classList.contains("is-collapsed"),
+        current: document.querySelector("#statusCurrent").textContent,
+        headCount: document.querySelector("#statusCount").textContent,
+        head: document.querySelector("#gridHead h2").textContent,
+        shown: document.querySelector("#shownCount").textContent };
+    })()`);
+    check("状态行点击即筛选并自动收起，目录头自述结果",
+      statusPick.rows.join(",") === "b-md,b-edge2" && statusPick.collapsed
+        && statusPick.current === "在读" && statusPick.headCount === "2"
+        && statusPick.head === "在读" && statusPick.shown === "2 份",
+      `行 ${statusPick.rows.join(",")} · 头「${statusPick.current}」${statusPick.headCount} · 工具条 ${statusPick.shown}`);
+
+    const statusEmpty = await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      state.status = "finished"; state.filter = "pdf"; renderLibrary();
+      const empty = document.querySelector("#bookList .ctx-empty")?.textContent || "";
+      const clearVisible = !document.querySelector("#headClear").hidden;
+      document.querySelector("#headClear").click();
+      return { empty, clearVisible, reset: state.status === null && state.filter === "all",
+        rows: document.querySelectorAll("#bookList .book-row").length };
+    })()`);
+    check("状态×类型组合筛空给清除提示，一键复位四轴",
+      statusEmpty.empty.includes("清除筛选") && statusEmpty.clearVisible
+        && statusEmpty.reset && statusEmpty.rows === statusBase.total,
+      `空态「${statusEmpty.empty.slice(0, 24)}」· 复位后 ${statusEmpty.rows} 行`);
+
+    const sortFlow = await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      state.books = state.books.filter((b) => !b.id.startsWith("b-edge"));
+      renderLibrary();
+      const first = () => document.querySelector("#bookList .book-row")?.dataset.book;
+      const out = { defaultFirst: first(), defaultSub: document.querySelector("#gridSub").textContent };
+      document.querySelector("#sortBtn").click();
+      out.items = [...document.querySelectorAll("#sortMenu .sort-item")].map((i) => i.dataset.sort);
+      out.open = !document.querySelector("#sortMenu").hidden;
+      document.querySelector('#sortMenu .sort-item[data-sort="title"]').click();
+      out.titleFirst = first(); out.titleDesc = state.settings.sortDesc;
+      out.closedAfterSwitch = document.querySelector("#sortMenu").hidden;
+      document.querySelector("#sortBtn").click();
+      document.querySelector('#sortMenu .sort-item[data-sort="title"]').click();
+      out.flipDesc = state.settings.sortDesc; out.flipFirst = first();
+      out.staysOpen = !document.querySelector("#sortMenu").hidden;
+      document.querySelector('#sortMenu .sort-item[data-sort="progress"]').click();
+      out.progressFirstTwo = [...document.querySelectorAll("#bookList .book-row")].slice(0, 2).map((r) => r.dataset.book);
+      out.progressDesc = state.settings.sortDesc;
+      return out;
+    })()`);
+    // persistSettings 有 200ms 防抖、flush 时才取 state：等落盘后再读，再复原排序
+    await sleep(300);
+    const savedSort = await evaluate(ws, `window.__saved && { sort: window.__saved.sort, desc: window.__saved.sortDesc }`);
+    await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      state.settings.sort = "recent"; state.settings.sortDesc = true; renderLibrary();
+    })()`);
+    check("排序默认最近打开降序，与升级前顺序一致",
+      sortFlow.defaultFirst === "b-huge" && sortFlow.defaultSub === "按最近打开降序",
+      `首行 ${sortFlow.defaultFirst} · 副标题「${sortFlow.defaultSub}」`);
+    check("排序菜单四轴，切书名轴重置升序并关闭菜单",
+      sortFlow.open && sortFlow.items.join(",") === "recent,added,title,progress"
+        && sortFlow.titleFirst === "b-drm" && sortFlow.titleDesc === false
+        && sortFlow.closedAfterSwitch,
+      `轴 ${sortFlow.items.join(",")} · 书名升序首行 ${sortFlow.titleFirst}（zh 排序汉字在前）`);
+    check("点当前轴翻向且菜单不关，方便连点调方向",
+      sortFlow.flipDesc === true && sortFlow.flipFirst === "b-code" && sortFlow.staysOpen,
+      `翻向后降序 ${sortFlow.flipDesc} · 首行 ${sortFlow.flipFirst} · 菜单仍开 ${sortFlow.staysOpen}`);
+    check("进度轴降序，同值兜底最近打开降序",
+      sortFlow.progressFirstTwo.join(",") === "b-md,b-huge" && sortFlow.progressDesc === true,
+      `前二 ${sortFlow.progressFirstTwo.join(",")}`);
+
+    await evaluate(ws, `document.querySelector("#sortBtn").click()`);
+    for (const type of ["keyDown", "keyUp"]) {
+      await send(ws, "Input.dispatchKeyEvent", {
+        type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
+      });
+    }
+    const escClosed = await evaluate(ws, `document.querySelector("#sortMenu").hidden`);
+    await evaluate(ws, `document.querySelector("#sortBtn").click()`);
+    await evaluate(ws, `document.querySelector("#libSearch").click()`);
+    const outsideClosed = await evaluate(ws, `document.querySelector("#sortMenu").hidden`);
+    check("Esc 与外点各关一次排序菜单", escClosed && outsideClosed, `Esc ${escClosed} · 外点 ${outsideClosed}`);
+    check("排序偏好经 save_settings 整对象落盘",
+      Boolean(savedSort) && savedSort.sort === "progress" && savedSort.desc === true,
+      JSON.stringify(savedSort));
+
+    const undoFlow = await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      const { invoke } = await import("/js/api.js");
+      state.books.find((b) => b.id === "b-pdf").categoryId = "c-1";
+      renderLibrary();
+      const before = document.querySelectorAll("#bookList .book-row").length;
+      document.querySelector('#bookList .remove-btn[data-remove="b-pdf"]').click();
+      const confirmOpen = !document.querySelector("#confirmOverlay").hidden;
+      document.querySelector("#confirmOk").click();
+      await new Promise((r) => setTimeout(r, 150));
+      const action = document.querySelector("#toastWrap .toast-action");
+      const life = document.querySelector("#toastWrap .toast-life");
+      const out = { confirmOpen, before,
+        after: document.querySelectorAll("#bookList .book-row").length,
+        gone: !state.books.some((b) => b.id === "b-pdf"),
+        actionText: action?.textContent || "", lifeMs: life?.style.animationDuration || "" };
+      action?.click();
+      await new Promise((r) => setTimeout(r, 150));
+      const back = state.books.find((b) => b.id === "b-pdf");
+      out.restored = back && { fav: back.favorite, cat: back.categoryId, page: back.progress.page };
+      out.rows = document.querySelectorAll("#bookList .book-row").length;
+      out.toast = document.querySelector("#toastWrap span")?.textContent || "";
+      out.sent = window.__restored && { fav: window.__restored.favorite, cat: window.__restored.categoryId };
+      const again = await invoke("restore_book", { book: window.__restored });
+      out.idempotent = again.length === state.books.length;
+      return out;
+    })()`);
+    check("移除先过确认框，删除后 toast 带撤销按钮与 6 秒生命周期条",
+      undoFlow.confirmOpen && undoFlow.after === undoFlow.before - 1 && undoFlow.gone
+        && undoFlow.actionText === "撤销" && undoFlow.lifeMs === "6000ms",
+      `确认 ${undoFlow.confirmOpen} · ${undoFlow.before}→${undoFlow.after} 行 · 条 ${undoFlow.lifeMs}`);
+    check("撤销原样恢复快照：收藏 / 分类 / 进度全部回来",
+      Boolean(undoFlow.restored) && undoFlow.restored.fav === true && undoFlow.restored.cat === "c-1"
+        && undoFlow.restored.page === 2 && undoFlow.rows === undoFlow.before
+        && undoFlow.toast === "已恢复《示例 PDF》"
+        && undoFlow.sent.fav === true && undoFlow.sent.cat === "c-1",
+      `恢复 ${JSON.stringify(undoFlow.restored)} · toast「${undoFlow.toast}」`);
+    check("restore_book 幂等：重发快照不产生重复记录", undoFlow.idempotent, `重发后书架份数不变`);
+
+    const sticky = await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      // 14 条压力分类把索引撑过吸顶阈值；测完整体摘掉，不留给后面的用例
+      const stress = Array.from({ length: 14 }, (_, i) => ({ id: "c-stress" + i, name: "压力" + i, color: "slate", createdAt: i }));
+      state.categories = [...state.categories, ...stress];
+      state.typeCollapsed = false; state.statusCollapsed = false; state.catCollapsed = false;
+      renderLibrary();
+      const idx = document.querySelector("#shelfIndex");
+      idx.scrollTop = 400;
+      const base = idx.getBoundingClientRect().top;
+      const tops = ["#typeHead", "#statusHead", "#catHead"]
+        .map((s) => Math.round(document.querySelector(s).getBoundingClientRect().top - base));
+      const panel = document.querySelector("#libraryPanel");
+      const overflow = panel.scrollWidth > panel.clientWidth;
+      document.querySelector("#sortBtn").click();
+      const mr = document.querySelector("#sortMenu").getBoundingClientRect();
+      const pr = panel.getBoundingClientRect();
+      const menuInside = mr.left >= pr.left && mr.right <= pr.right;
+      document.querySelector("#sortBtn").click();
+      state.categories = state.categories.filter((c) => !c.id.startsWith("c-stress"));
+      state.typeCollapsed = true; state.statusCollapsed = true; state.catCollapsed = false;
+      idx.scrollTop = 0;
+      renderLibrary();
+      return { tops, overflow, menuInside };
+    })()`);
+    check("三层吸顶头依次压在 1/29/57（含 1px 上边界）",
+      sticky.tops.join(",") === "1,29,57", `落点 ${sticky.tops.join("/")}`);
+    check("面板与排序菜单无横向溢出", !sticky.overflow && sticky.menuInside,
+      `溢出 ${sticky.overflow} · 菜单在面板内 ${sticky.menuInside}`);
+
+    const enShelf = await evaluate(ws, `(async () => {
+      const { state } = await import("/js/core/session.js");
+      const { setLanguage, applyDom, t } = await import("/js/i18n.js");
+      const { renderLibrary } = await import("/js/shelf.js");
+      const { toast } = await import("/js/core/feedback.js");
+      state.settings.language = "en"; setLanguage("en"); applyDom(); renderLibrary();
+      document.querySelector("#sortBtn").click();
+      const out = {
+        statusRows: [...document.querySelectorAll("#statusList .cat-name")].map((n) => n.textContent),
+        menu: [...document.querySelectorAll("#sortMenu .sort-item span:first-of-type")].map((n) => n.textContent),
+      };
+      document.querySelector("#sortBtn").click();
+      toast(t("confirm.removed", { title: "X" }), { actionText: t("undo.action"), duration: 6000 });
+      out.undo = document.querySelector("#toastWrap .toast-action")?.textContent || "";
+      document.querySelector("#toastWrap").innerHTML = "";
+      state.settings.language = "zh"; setLanguage("zh"); applyDom(); renderLibrary();
+      return out;
+    })()`);
+    check("English 下状态组 / 排序菜单 / 撤销无中文残留",
+      enShelf.statusRows.join(",") === "All statuses,Reading,Unread,Finished"
+        && enShelf.menu.join(",") === "Recently opened,Recently added,Title,Reading progress"
+        && enShelf.undo === "Undo",
+      `状态 ${enShelf.statusRows.join(",")} · 撤销 ${enShelf.undo}`);
+    let shelfErrs = await evaluate(ws, `(window.__errors || []).filter((e) => !/ResizeObserver loop/.test(e))`);
+    check("书架工具全程无未捕获异常", shelfErrs.length === 0, shelfErrs.join(" | "));
 
     // CSP：既确认策略按 tauri.conf.json 下发，也确认它真的生效（内联脚本被拦）
     const sentCsp = await fetch(`${origin}/`).then((res) => res.headers.get("content-security-policy"));
@@ -1420,7 +1681,7 @@ async function main() {
       setView("library");
     })()`);
     await sleep(200);
-    await evaluate(ws, `document.querySelector('#filterRow [data-filter="text"]').click()`);
+    await evaluate(ws, `document.querySelector('#typeList [data-filter="text"]').click()`);
     await sleep(200);
     await evaluate(ws, `(() => {
       const input = document.querySelector("#libSearch");
@@ -1475,8 +1736,6 @@ async function main() {
       state.filter = "all";
       state.query = "";
       document.querySelector("#libSearch").value = "";
-      document.querySelectorAll("#filterRow .chip")
-        .forEach((chip) => chip.classList.toggle("is-on", chip.dataset.filter === "all"));
       renderLibrary();
     })()`);
     await sleep(240);
@@ -1504,7 +1763,7 @@ async function main() {
         label: current?.ebook?.location?.label || "",
         status: document.querySelector("#statusRight").textContent,
         sub: document.querySelector("#docSub").textContent,
-        toolbar: document.querySelector("#readToolbar").textContent.replace(/\\s+/g, " ").trim(),
+        toolbar: document.querySelector(".ebook-band").textContent.replace(/\\s+/g, " ").trim(),
         title: document.querySelector("#docTitle").textContent,
       };
     })()`);
@@ -1757,10 +2016,10 @@ async function main() {
     await sleep(1200);
     const note = await evaluate(ws, `(() => {
       const card = document.querySelector(".ebook-note");
-      const bar = document.querySelector("#readToolbar");
+      const bar = document.querySelector(".ebook-band");
       const rect = card && !card.hidden ? card.getBoundingClientRect() : null;
-      const barRect = bar?.getBoundingClientRect();
-      // 卡片不能压住浮动工具栏：两者都是阅读区上的浮层，压上去等于把翻页按钮挡掉
+      const barRect = bar && !bar.hidden ? bar.getBoundingClientRect() : null;
+      // 卡片不能压住底部工具带：带子属于版面，压上去等于把翻页按钮挡掉
       const overlapsBar = Boolean(rect && barRect && rect.bottom > barRect.top && rect.top < barRect.bottom);
       return {
         open: Boolean(card && !card.hidden),
@@ -1807,6 +2066,48 @@ async function main() {
     check("关掉重开回到原位（CFI 续读）",
       reopened.cfi === beforeReopen.cfi || reopened.label === beforeReopen.label,
       `期望「${beforeReopen.label}」，实际「${reopened.label}」`);
+
+    /* --- 分栏：两栏各读一本电子书，工具带跟着活动栏走 --- */
+    await evaluate(ws, `(async () => {
+      (await import("/js/reader/panes.js")).setSplit(true);
+    })()`);
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return Boolean(mod.panes[1]?.ebook?.book) && (mod.panes[1]?.ebook?.location?.cfi || "").length > 0;
+    })()`, "右栏电子书就位", 20000);
+    await sleep(400);
+    const splitBands = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const bands = [...document.querySelectorAll(".ebook-band")];
+      const visible = bands.filter((band) => !band.hidden);
+      return { total: bands.length, visible: visible.length,
+        inActive: visible[0] === mod.activePane()?.band,
+        sliders: document.querySelectorAll("#ebookSlider").length,
+        active: mod.activePaneIndex };
+    })()`);
+    check("分栏时两条工具带只有活动栏那条渲染（滑杆 id 不重复）",
+      splitBands.total === 2 && splitBands.visible === 1 && splitBands.inActive && splitBands.sliders === 1,
+      `带 ${splitBands.visible}/${splitBands.total} · 活动 ${splitBands.active} · 滑杆 ${splitBands.sliders}`);
+
+    await evaluate(ws, `document.querySelectorAll("[data-pane-root]")[1].dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))`);
+    await sleep(400);
+    const splitSwap = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const visible = [...document.querySelectorAll(".ebook-band")].filter((band) => !band.hidden);
+      return { active: mod.activePaneIndex, visible: visible.length,
+        inActive: visible[0] === mod.activePane()?.band,
+        sliders: document.querySelectorAll("#ebookSlider").length };
+    })()`);
+    check("切到右栏：工具带跟着活动栏换，进度滑杆仍只有一根",
+      splitSwap.active === 1 && splitSwap.visible === 1 && splitSwap.inActive && splitSwap.sliders === 1,
+      `活动 ${splitSwap.active} · 带 ${splitSwap.visible} · 滑杆 ${splitSwap.sliders}`);
+
+    await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      mod.setSplit(false);
+      mod.activatePane(0, true);
+    })()`);
+    await sleep(900);
 
     /* --- 版式面板：电子书的版式全在这一块调，与通用设置彻底分开 --- */
     frameCtx = await blobFrameContext(ws);
@@ -2087,13 +2388,112 @@ async function main() {
         + ` 版心 ${saved.ebookMeasure} 列距 ${saved.ebookGap} 覆盖 ${saved.ebookOverride}/${saved.ebookOverrideColor}`
         : "未调用 save_settings");
 
+    /* --- 字体：系统栈 + 按需下载的开源字体（安装包不带字体文件） --- */
+    const fontRows = await evaluate(ws, `(() => {
+      const panel = document.querySelector("#layoutPanel");
+      const rows = [...panel.querySelectorAll("#lpFonts .lp-font")];
+      const meta = (id) => {
+        const row = panel.querySelector('[data-family="' + id + '"]');
+        return {
+          name: row.querySelector(".lp-font-name")?.textContent || "",
+          meta: row.querySelector(".lp-font-meta")?.textContent || "",
+          state: row.querySelector(".lp-font-state")?.textContent || "",
+        };
+      };
+      return { count: rows.length,
+        system: rows.filter((row) => !row.querySelector(".lp-font-del")).length,
+        download: rows.filter((row) => Boolean(row.querySelector(".lp-font-del"))).length,
+        wenkai: meta("wenkai-gb"), literata: meta("literata"),
+        serifOn: panel.querySelector('[data-family="serif"]').classList.contains("is-on") };
+    })()`);
+    check("字体列表：3 项系统字体 + 5 项开源字体，未下载项标着许可、大小与「下载」",
+      fontRows.count === 8 && fontRows.system === 3 && fontRows.download === 5
+        && fontRows.serifOn === true && fontRows.wenkai.state === "下载"
+        && /OFL 1\.1/.test(fontRows.wenkai.meta) && fontRows.literata.state === "下载",
+      `${fontRows.count} 行 · 霞鹜「${fontRows.wenkai.meta}」${fontRows.wenkai.state} · Literata ${fontRows.literata.state}`);
+
+    // 点未下载项：先下载（有进度事件）→ 成功后才选中并落盘
+    await evaluate(ws, `document.querySelector('#lpFonts [data-family="literata"]').click()`);
+    await sleep(900);
+    frameCtx = await blobFrameContext(ws);
+    const fontApplied = await evaluate(ws, `(async () => {
+      const panel = document.querySelector("#layoutPanel");
+      const row = panel.querySelector('[data-family="literata"]');
+      const { state } = await import("/js/core/session.js");
+      return { state: row.querySelector(".lp-font-state").textContent,
+        on: row.classList.contains("is-on"),
+        family: state.settings.ebookFamily,
+        saved: window.__saved?.ebookFamily,
+        download: (window.__fontDownloads || [])[0] || null,
+        progress: (window.__fontProgress || []).map((item) => item.received > 0 && item.total > 0),
+        toast: document.querySelector("#toastWrap")?.textContent || "" };
+    })()`);
+    const fontCss = await evaluate(ws, typoOf, frameCtx);
+    check("未下载字体：先下载（带进度）再自动选中，偏好同步落盘",
+      fontApplied.on && fontApplied.family === "literata" && fontApplied.saved === "literata"
+        && fontApplied.download?.id === "literata"
+        && fontApplied.download.url.startsWith("https://raw.githubusercontent.com/google/fonts/")
+        && fontApplied.progress.length > 0 && fontApplied.progress.every(Boolean)
+        && fontApplied.state === "使用中",
+      `状态 ${fontApplied.state} · family ${fontApplied.family} · 进度 ${fontApplied.progress.length} 次 · ${fontApplied.toast}`);
+    check("下载字体的 @font-face 注进章节样式，family 带 YJ 前缀、sources 指向 data/fonts",
+      fontCss.css.includes("@font-face") && fontCss.css.includes('"YJ literata"')
+        && fontCss.css.includes("/fixtures/fonts/literata.ttf"),
+      fontCss.css.includes("YJ literata") ? "含 @font-face + YJ literata" : fontCss.css.slice(0, 120));
+
+    // 移除：文件删掉，正用着就退回系统宋体，不留下一个空指向
+    await evaluate(ws, `document.querySelector('#lpFonts [data-family="literata"] .lp-font-del').click()`);
+    await sleep(500);
+    const fontRemoved = await evaluate(ws, `(async () => {
+      const panel = document.querySelector("#layoutPanel");
+      const row = panel.querySelector('#lpFonts [data-family="literata"]');
+      const { state } = await import("/js/core/session.js");
+      return { removed: window.__fontRemoved, files: (window.__fontFiles || []).length,
+        family: state.settings.ebookFamily, saved: window.__saved?.ebookFamily,
+        state: row.querySelector(".lp-font-state").textContent };
+    })()`);
+    check("移除字体文件：选中项退回系统宋体，设置里不留空指向",
+      fontRemoved.removed === "literata.ttf" && fontRemoved.files === 0
+        && fontRemoved.family === "serif" && fontRemoved.saved === "serif"
+        && fontRemoved.state === "下载",
+      `删 ${fontRemoved.removed} · family ${fontRemoved.family} · 状态 ${fontRemoved.state}`);
+
+    // 换章空档里的文档可以只有 <html> 没有 <body>。分页器的 render() 会在
+    // 文档就绪前调 scrollToAnchor()，滚动落点回调里 `createTreeWalker(doc.body)`
+    // 就变成一条未捕获拒绝。把章节 iframe 换成一张 SVG（浏览器不给 SVG 文档建 body），
+    // 再走一遍分页器的滚动路径——守卫若被删掉，这条会立刻 FAIL。
+    const bodyless = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const renderer = mod.activePane()?.ebook?.view?.renderer;
+      const iframe = renderer?.getContents?.()?.[0]?.doc?.defaultView?.frameElement;
+      if (!iframe) return { skip: "拿不到章节 iframe" };
+      const svg = new Blob(["<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'/>"],
+        { type: "image/svg+xml" });
+      const url = URL.createObjectURL(svg);
+      await new Promise((done) => {
+        iframe.addEventListener("load", done, { once: true });
+        iframe.src = url;
+      });
+      const noBody = !renderer.getContents()?.[0]?.doc?.body;
+      // 不 await：真实场景里这条链就是没人等的，拒绝才会冒到 unhandledrejection
+      renderer.scrollToAnchor(0);
+      await new Promise((done) => setTimeout(done, 700));
+      URL.revokeObjectURL(url);
+      const errors = (window.__errors || []).filter((e) => !/ResizeObserver loop/.test(e));
+      return { skip: noBody ? null : "文档仍有 body", errors };
+    })()`);
+    check("章节载入空档（文档尚无 body）里滚动落点不抛异常",
+      !bodyless.skip && bodyless.errors.length === 0,
+      bodyless.skip || bodyless.errors.join(" | "));
+
     // 旧 state.json 里没有这些字段，容器级 serde(default) 靠前端这份默认值兜底：
     // 少一个键，升级后第一次打开电子书就会把 undefined 写进样式
     const defaults = await evaluate(ws, `(async () => {
       const mod = await import("/js/core/constants.js");
       const keys = ["ebookFontSize", "ebookLineHeight", "ebookMargin", "ebookFamily", "ebookAlign",
         "ebookOverride", "ebookLetterSpacing", "ebookIndent", "ebookParaSpacing", "ebookMeasure",
-        "ebookGap", "ebookHyphenate", "ebookPunctuate", "ebookSpread", "ebookOverrideColor"];
+        "ebookGap", "ebookHyphenate", "ebookPunctuate", "ebookSpread", "ebookOverrideColor",
+        "ebookFlow", "ebookTurn", "ebookTtsRate", "ebookTtsVoice", "ebookAutoSpeed"];
       const missing = keys.filter((key) => mod.DEFAULT_SETTINGS[key] === undefined);
       return { missing, count: keys.length - missing.length, total: keys.length };
     })()`);
@@ -2192,14 +2592,28 @@ async function main() {
       const mod = await import("/js/reader/panes.js");
       const pane = mod.activePane();
       const spread = document.querySelector('[data-act="ebook-spread"]');
+      const flow = document.querySelector('[data-act="ebook-flow"]');
+      const tts = document.querySelector('[data-act="ebook-tts"]');
+      const auto = document.querySelector('[data-act="ebook-auto"]');
       return { format: pane?.ebook?.format || "", fixed: Boolean(pane?.ebook?.fixed),
         pages: pane?.ebook?.chapters || 0, sub: document.querySelector("#docSub")?.textContent || "",
-        spreadHidden: spread ? spread.hidden : null };
+        spreadHidden: spread ? spread.hidden : null,
+        flowDisabled: flow ? flow.disabled : null,
+        ttsHidden: tts ? tts.hidden : null, autoHidden: auto ? auto.hidden : null,
+        // hidden 属性不等于看不见：内联样式的 display 会盖过它，得量计算值
+        ttsDisplay: tts ? getComputedStyle(tts).display : "", autoDisplay: auto ? getComputedStyle(auto).display : "",
+        spreadDisplay: spread ? getComputedStyle(spread).display : "" };
     })()`);
     check("CBZ 按固定版面打开，副标题数页而不是章",
       cbz.fixed && cbz.pages === 3 && /^CBZ · 3 页/.test(cbz.sub),
       `${cbz.format} · 固定 ${cbz.fixed} · ${cbz.pages} 页 · ${cbz.sub}`);
     check("固定版面下不显示单双页按钮", cbz.spreadHidden === true, String(cbz.spreadHidden));
+    check("固定版面不给姿势切换与朗读/自动（漫画没有字符流）",
+      cbz.flowDisabled === true && cbz.ttsHidden === true && cbz.autoHidden === true,
+      `姿势禁用 ${cbz.flowDisabled} · 朗读藏 ${cbz.ttsHidden} · 自动藏 ${cbz.autoHidden}`);
+    check("藏起来的按钮真的不占位（display:none，不是只设了 hidden）",
+      [cbz.ttsDisplay, cbz.autoDisplay, cbz.spreadDisplay].every((value) => value === "none"),
+      `朗读 ${cbz.ttsDisplay} · 自动 ${cbz.autoDisplay} · 单双页 ${cbz.spreadDisplay}`);
 
     // 版式面板对固定版面无能为力：整块禁用 + 顶部说明，而不是让人白调半天
     await evaluate(ws, `document.querySelector('[data-act="ebook-layout"]').click()`);
@@ -2215,16 +2629,23 @@ async function main() {
         disabled: panel.classList.contains("is-fixed"),
         noticeShown: !notice.hidden,
         rangeDisabled: range.disabled,
+        flowDisabled: [...panel.querySelectorAll("#lpFlow button")].every((b) => b.disabled),
+        turnDisabled: [...panel.querySelectorAll("#lpTurn button")].every((b) => b.disabled),
         sub: panel.querySelector("#lpSub").textContent,
         rowOpacity: Number(getComputedStyle(row).opacity),
         rowPe: getComputedStyle(row).pointerEvents };
     })()`);
     check("固定版面上版式面板整体禁用并给出说明",
       fixedPanel.open && fixedPanel.disabled && fixedPanel.noticeShown && fixedPanel.rangeDisabled
+        && fixedPanel.flowDisabled && fixedPanel.turnDisabled
         && fixedPanel.rowPe === "none" && fixedPanel.rowOpacity < 0.5
         && /固定版面/.test(fixedPanel.sub),
       `禁用 ${fixedPanel.disabled} · 说明 ${fixedPanel.noticeShown} · 滑杆禁用 ${fixedPanel.rangeDisabled} `
+        + `· 姿势/动效禁用 ${fixedPanel.flowDisabled}/${fixedPanel.turnDisabled} `
         + `· 行不可点 ${fixedPanel.rowPe}/${fixedPanel.rowOpacity}`);
+    // 收掉面板再回 EPUB：面板开合是全局状态，留着会让后面的 Esc 先收面板而不是退出阅读
+    await evaluate(ws, `(async () => { (await import("/js/reader/ebook-layout-panel.js")).setLayoutPanel(false); })()`);
+    await sleep(300);
 
     // 漫画的目录条目原本是图片文件名，界面上应当是人读的页码
     const cbzToc = await evaluate(ws, `(async () => {
@@ -2432,6 +2853,670 @@ async function main() {
     check("没有摘录时两个页签都不显示导出入口",
       notesTools === 0 && marksTools === 0, `划线页 ${notesTools} · 书签页 ${marksTools}`);
 
+    /* ---- 选区动作行与笔记：复制 / 笔记 / 删除，笔记跟着划线走 ---- */
+    // 此刻仍在 b-epub 第一章，划线列表已清空，侧栏停在「划线」页
+    const NOTE_TEXT = "石阶上的青苔，是时间的注脚。";
+    const NOTE2 = "改一句：青苔是时间写的注脚。";
+    const NOTE3 = "改色不改笔记。";
+    const selectText = async () => {
+      frameCtx = await blobFrameContext(ws);
+      return evaluate(ws, `(() => {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let node = null;
+        while ((node = walker.nextNode())) {
+          if (node.textContent.replace(/\\s/g, "").length >= 12) break;
+        }
+        if (!node) return "";
+        const range = document.createRange();
+        range.setStart(node, 0);
+        range.setEnd(node, Math.min(12, node.textContent.length));
+        const selection = document.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+        return range.toString();
+      })()`, frameCtx);
+    };
+    const menuOf = () => evaluate(ws, `(() => {
+      const box = document.querySelector("#hlMenu");
+      const pop = document.querySelector(".hl-note-pop");
+      return { open: Boolean(box && !box.hidden),
+        acts: [...(box?.querySelectorAll(".hl-act") || [])].map((el) => el.textContent.trim()),
+        noteLabel: box?.querySelector("[data-hl-note]")?.textContent.trim() || "",
+        note: box?.dataset.note || "",
+        popOpen: Boolean(pop && !pop.hidden),
+        popValue: pop?.querySelector(".hl-note-input")?.value || "",
+        count: pop?.querySelector(".hl-note-count")?.textContent || "" };
+    })()`);
+
+    const selText = await selectText();
+    await sleep(320);
+    const actsMenu = await menuOf();
+    check("选区小窗带第二行动作：复制 / 笔记（未划线不给删除）",
+      Boolean(selText) && actsMenu.open && actsMenu.acts.join("/") === "复制/笔记",
+      `选中「${selText}」· 动作 ${actsMenu.acts.join("/") || "无"}`);
+
+    // 复制走前面装好的剪贴板桩：交出原文，小窗收起
+    await evaluate(ws, `(() => { window.__copied = null; document.querySelector("#hlMenu [data-hl-copy]").click(); })()`);
+    await sleep(300);
+    const selCopied = await evaluate(ws, `window.__copied`);
+    const copyClosed = !(await menuOf()).open;
+    check("选区复制交出原文并收起小窗", selCopied === selText && copyClosed,
+      selCopied ? `「${selCopied}」· 小窗收起 ${copyClosed}` : "没写进剪贴板");
+
+    // 先写笔记再划线：保存时落一条琥珀划线，笔记跟着它走
+    await selectText();
+    await sleep(320);
+    await evaluate(ws, `document.querySelector("#hlMenu [data-hl-note]").click()`);
+    await sleep(200);
+    const popEmpty = await menuOf();
+    await evaluate(ws, `(() => {
+      const input = document.querySelector(".hl-note-pop .hl-note-input");
+      input.value = ${JSON.stringify(NOTE_TEXT)};
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    const popTyped = await menuOf();
+    await evaluate(ws, `document.querySelector(".hl-note-pop [data-note-save]").click()`);
+    await sleep(600);
+    const noted = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const item = (mod.activePane()?.book?.highlights || [])[0] || {};
+      return { count: (mod.activePane()?.book?.highlights || []).length,
+        color: item.color || "", note: item.note || "",
+        line: document.querySelector("#ctxBody .note-line")?.textContent || "",
+        popOpen: !document.querySelector(".hl-note-pop")?.hidden,
+        menuOpen: !document.querySelector("#hlMenu")?.hidden };
+    })()`);
+    check("先写笔记也能落划线：默认琥珀、笔记入库、侧栏多一行笔记",
+      popEmpty.popOpen && popEmpty.popValue === "" && popEmpty.count === "0 / 500"
+        && popTyped.count === NOTE_TEXT.length + " / 500"
+        && noted.count === 1 && noted.color === "amber" && noted.note === NOTE_TEXT
+        && noted.line === NOTE_TEXT && !noted.popOpen && !noted.menuOpen,
+      `${noted.count} 条 · ${noted.color} · 笔记「${noted.note}」· 侧栏行「${noted.line}」`);
+
+    // 侧栏笔记行点开即编辑：弹层带旧文，保存后条目与侧栏同更新
+    await evaluate(ws, `document.querySelector("#ctxBody [data-note-edit]").click()`);
+    await sleep(300);
+    const editMenu = await menuOf();
+    await evaluate(ws, `document.querySelector("#hlMenu [data-hl-note]").click()`);
+    await sleep(200);
+    const editPop = await menuOf();
+    await evaluate(ws, `(() => {
+      const input = document.querySelector(".hl-note-pop .hl-note-input");
+      input.value = ${JSON.stringify(NOTE2)};
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      document.querySelector(".hl-note-pop [data-note-save]").click();
+    })()`);
+    await sleep(600);
+    const edited = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const item = (mod.activePane()?.book?.highlights || [])[0] || {};
+      return { note: item.note || "", line: document.querySelector("#ctxBody .note-line")?.textContent || "" };
+    })()`);
+    check("侧栏笔记行点开即编辑：弹层带旧文、保存后两处同更新",
+      editMenu.open && editMenu.noteLabel === "编辑笔记" && editMenu.note === NOTE_TEXT
+        && editPop.popOpen && editPop.popValue === NOTE_TEXT
+        && edited.note === NOTE2 && edited.line === NOTE2,
+      `按钮「${editMenu.noteLabel}」· 新笔记「${edited.note}」`);
+
+    // 500 字上限：计数照实显示、保存被拦、原笔记不动
+    await evaluate(ws, `document.querySelector("#ctxBody [data-note-edit]").click()`);
+    await sleep(300);
+    await evaluate(ws, `document.querySelector("#hlMenu [data-hl-note]").click()`);
+    await sleep(200);
+    const tooLong = await evaluate(ws, `(() => {
+      const input = document.querySelector(".hl-note-pop .hl-note-input");
+      input.value = "字".repeat(501);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const count = document.querySelector(".hl-note-count").textContent;
+      document.querySelector(".hl-note-pop [data-note-save]").click();
+      return { count, popOpen: !document.querySelector(".hl-note-pop").hidden,
+        toast: (document.querySelector("#toastWrap .toast:last-child")?.textContent || "") };
+    })()`);
+    const guarded = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return { note: ((mod.activePane()?.book?.highlights || [])[0] || {}).note || "",
+        popOpen: !document.querySelector(".hl-note-pop").hidden };
+    })()`);
+    check("超 500 字拦下：计数照实、提示说上限、原笔记不动",
+      tooLong.count === "501 / 500" && tooLong.popOpen && /500/.test(tooLong.toast)
+        && guarded.note === NOTE2 && guarded.popOpen,
+      `计数 ${tooLong.count} · 提示「${tooLong.toast}」`);
+    // Esc 的层序：先收笔记弹层，再收色板，两层各按一次
+    await evaluate(ws, `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
+    await sleep(150);
+    const escPop = await menuOf();
+    await evaluate(ws, `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
+    await sleep(150);
+    const escMenu = await menuOf();
+    check("Esc 先收笔记弹层、再收色板（两层各按一次）",
+      !escPop.popOpen && escPop.open && !escMenu.open && !escMenu.popOpen,
+      `第一次后 弹层${escPop.popOpen ? "开" : "收"}/色板${escPop.open ? "开" : "收"}，第二次后色板${escMenu.open ? "开" : "收"}`);
+
+    // 清空笔记：笔记行消失，划线本体还在
+    await evaluate(ws, `document.querySelector("#ctxBody [data-note-edit]").click()`);
+    await sleep(300);
+    await evaluate(ws, `document.querySelector("#hlMenu [data-hl-note]").click()`);
+    await sleep(200);
+    await evaluate(ws, `(() => {
+      const input = document.querySelector(".hl-note-pop .hl-note-input");
+      input.value = "";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      document.querySelector(".hl-note-pop [data-note-save]").click();
+    })()`);
+    await sleep(600);
+    const cleared = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return { note: ((mod.activePane()?.book?.highlights || [])[0] || {}).note || "",
+        lines: document.querySelectorAll("#ctxBody .note-line").length,
+        rows: document.querySelectorAll("#ctxBody [data-note-hit]").length };
+    })()`);
+    check("清空笔记保存后：笔记行消失，划线还在",
+      cleared.note === "" && cleared.lines === 0 && cleared.rows === 1,
+      `笔记「${cleared.note}」· 笔记行 ${cleared.lines} · 划线行 ${cleared.rows}`);
+
+    // 换色不动笔记：recolor 不传 note 字段，后端保持原值；导出带上笔记行
+    await evaluate(ws, `document.querySelector("#ctxBody [data-note-hit]").click()`);
+    await sleep(800);
+    await evaluate(ws, `document.querySelector("#hlMenu [data-hl-note]").click()`);
+    await sleep(200);
+    await evaluate(ws, `(() => {
+      const input = document.querySelector(".hl-note-pop .hl-note-input");
+      input.value = ${JSON.stringify(NOTE3)};
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      document.querySelector(".hl-note-pop [data-note-save]").click();
+    })()`);
+    await sleep(600);
+    await evaluate(ws, `document.querySelector("#ctxBody [data-note-hit]").click()`);
+    await sleep(800);
+    await evaluate(ws, `document.querySelector('#hlMenu [data-hl-color="plum"]').click()`);
+    await sleep(600);
+    const recolored = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const item = (mod.activePane()?.book?.highlights || [])[0] || {};
+      return { color: item.color || "", note: item.note || "" };
+    })()`);
+    check("换色不动笔记（更新走同一条，note 不传就保持）",
+      recolored.color === "plum" && recolored.note === NOTE3,
+      `${recolored.color} · 笔记「${recolored.note}」`);
+
+    await evaluate(ws, `document.querySelector("#ctxBody [data-export-marks]").click()`);
+    await sleep(500);
+    const noteExport = await evaluate(ws, `window.__exported?.content || ""`);
+    check("导出摘录带上笔记行（引用块内加粗标签）",
+      noteExport.includes("> **笔记:** " + NOTE3) && /梅红/.test(noteExport),
+      noteExport.split("\\n").filter((line) => line.includes("笔记")).join(" | ") || "没有笔记行");
+    // 清场：删掉这条划线，后面的姿势 / 朗读测试从干净状态开始
+    await evaluate(ws, `document.querySelector("#ctxBody [data-note-hit]").click()`);
+    await sleep(800);
+    await evaluate(ws, `document.querySelector("#hlMenu [data-hl-remove]").click()`);
+    await sleep(600);
+
+    /* ---- 进度刻度与预览气泡 ---- */
+    const seekData = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const seek = await import("/js/reader/ebook-seek.js");
+      const pane = mod.activePane();
+      const ticks = [...document.querySelectorAll(".ebook-tick")];
+      return { ready: Boolean(pane?.seekData),
+        count: ticks.length,
+        lefts: ticks.map((el) => parseFloat(el.style.left)),
+        first: seek.seekLabel(pane, 0), last: seek.seekLabel(pane, 0.999) };
+    })()`);
+    check("进度条刻上章节边界（≤40 根、都在轨道内、气泡认得首末章）",
+      seekData.ready && seekData.count > 0 && seekData.count <= 40
+        && seekData.lefts.every((value) => value > 0 && value < 100)
+        && seekData.first === "第一章 起点" && seekData.last === "第三章 收束",
+      `${seekData.count} 根 · 首章「${seekData.first}」· 末章「${seekData.last}」`);
+
+    const bubbleHover = await evaluate(ws, `(() => {
+      const slider = document.querySelector("#ebookSlider");
+      const box = slider.getBoundingClientRect();
+      slider.dispatchEvent(new PointerEvent("pointermove", {
+        bubbles: true, clientX: box.left + box.width * 0.9, clientY: box.top + 4 }));
+      const bubble = document.querySelector(".ebook-seek-bubble");
+      const shown = { hidden: bubble.hidden, text: bubble.textContent, left: bubble.style.left };
+      document.querySelector(".ebook-band").dispatchEvent(new PointerEvent("pointerleave"));
+      return { shown, after: bubble.hidden };
+    })()`);
+    check("悬停进度条浮出预览：章节名 + 百分比，移开即收",
+      !bubbleHover.shown.hidden && bubbleHover.shown.text === "第三章 收束 · 90%"
+        && bubbleHover.shown.left === "90%" && bubbleHover.after === true,
+      `「${bubbleHover.shown.text}」@ ${bubbleHover.shown.left}`);
+
+    const bubbleDrag = await evaluate(ws, `(async () => {
+      const slider = document.querySelector("#ebookSlider");
+      slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      slider.value = "500";
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      const bubble = document.querySelector(".ebook-seek-bubble");
+      const during = { hidden: bubble.hidden, text: bubble.textContent };
+      slider.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 900));
+      const mod = await import("/js/reader/panes.js");
+      const reader = mod.activePane()?.ebook;
+      const sizes = reader?.book?.sections?.map((s) => s.size || 0) || [];
+      const total = sizes.reduce((a, b) => a + b, 0);
+      // 目标比例落在哪一节（按字节权重，与引擎同一口径）
+      let acc = 0, expect = 0;
+      for (let i = 0; i < sizes.length; i++) { acc += sizes[i]; if (acc / total > 0.5) { expect = i; break; } }
+      const before = sizes.slice(0, expect).reduce((a, b) => a + b, 0) / total;
+      const end = before + sizes[expect] / total;
+      return { during, after: bubble.hidden,
+        fraction: reader?.location?.fraction ?? -1,
+        section: reader?.view?.lastLocation?.section?.current ?? -1,
+        expect, lo: before, hi: end };
+    })()`);
+    // 落地比例是引擎的「页尾」口径（relocate 报当前页末端，见 progress.js nextSize）：
+    // 只要跳到含目标点的那一页、比例落在 [目标, 该节末尾] 即正确，而非恰好等于目标
+    check("拖动中气泡跟随，松手落地即收（位置真的跳过去）",
+      !bubbleDrag.during.hidden && /· 50%/.test(bubbleDrag.during.text)
+        && bubbleDrag.after === true
+        && bubbleDrag.section === bubbleDrag.expect
+        && bubbleDrag.fraction >= 0.5 - 0.002 && bubbleDrag.fraction <= bubbleDrag.hi + 0.002,
+      `拖到「${bubbleDrag.during.text}」→ 第 ${bubbleDrag.section + 1} 节 · ${(bubbleDrag.fraction * 100).toFixed(0)}%`
+        + `（页尾口径，节区间 ${(bubbleDrag.lo * 100).toFixed(0)}–${(bubbleDrag.hi * 100).toFixed(0)}%）`);
+    await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      await mod.activePane()?.ebook?.goTo("OEBPS/ch1.xhtml");
+    })()`);
+    await sleep(1000);
+
+    /* ---- 朗读：句表 / 临时高亮 / 暂停与步进 / 语速嗓音 / 无嗓音降级 ---- */
+    // 无头环境没有真嗓音：桩掉 speechSynthesis，onend 不自动触发，由断言逐句驱动
+    await evaluate(ws, `(() => {
+      window.__tts = { spoken: [], current: null, paused: false, cancels: 0,
+        voices: [{ name: "本地中文", lang: "zh-CN", localService: true, default: true },
+                 { name: "云端英文", lang: "en-US", localService: false }] };
+      // speechSynthesis 在 Chrome 里是只读 accessor，直接赋值会被静默忽略，
+      // 必须 defineProperty 才能换成桩（否则原生无嗓音，全部走降级分支）
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, writable: true, value: {
+        getVoices: () => window.__tts.voices,
+        speak: (u) => { window.__tts.spoken.push(u.text); window.__tts.current = u; },
+        cancel: () => { window.__tts.cancels += 1; window.__tts.current = null; },
+        pause: () => { window.__tts.paused = true; },
+        resume: () => { window.__tts.paused = false; },
+        addEventListener: () => {}, removeEventListener: () => {},
+      } });
+      window.SpeechSynthesisUtterance = class {
+        constructor(text) { this.text = text; this.rate = 1; this.voice = null; this.onend = null; this.onerror = null; }
+      };
+    })()`);
+    await evaluate(ws, `document.querySelector('[data-act="ebook-tts"]').click()`);
+    await sleep(600);
+    const ttsOn = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      const parts = pane?.ebook?.view?.renderer?.getContents?.() || [];
+      const svg = parts.find((item) => item.overlayer)?.overlayer?.element;
+      const group = svg?.querySelector("g");
+      const weak = getComputedStyle(document.documentElement).getPropertyValue("--accent-weak").trim();
+      const bar = document.querySelector(".ebook-assist");
+      return { spoken: window.__tts.spoken.slice(),
+        barShown: Boolean(bar && !bar.hidden),
+        row: bar?.querySelector('.assist-row:not([hidden])')?.dataset.kind || "",
+        caption: bar?.querySelector(".assist-caption")?.textContent || "",
+        voices: [...(bar?.querySelectorAll('[data-a="tts-voice"] option') || [])].map((o) => o.textContent),
+        rate: bar?.querySelector('[data-a="tts-rate"]')?.value || "",
+        rects: group ? group.querySelectorAll("rect").length : 0,
+        fill: group?.getAttribute("fill") || "", weak,
+        opacity: group?.style.opacity || "",
+        rx: group?.querySelector("rect")?.getAttribute("rx") || "",
+        stored: (pane?.book?.highlights || []).length,
+        ttsOn: Boolean(document.querySelector('[data-act="ebook-tts"]')?.classList.contains("is-on")) };
+    })()`);
+    check("朗读开条：从眼前第一句读起，字幕同步，嗓音只列本地",
+      ttsOn.barShown && ttsOn.row === "tts" && ttsOn.spoken.length === 1
+        && ttsOn.caption === ttsOn.spoken[0] && ttsOn.ttsOn
+        && ttsOn.voices.join("/") === "系统默认/本地中文" && ttsOn.rate === "1",
+      `首句「${ttsOn.spoken[0] || ""}」· 嗓音 ${ttsOn.voices.join("/")}`);
+    check("「正在读」画在 overlayer 上：主题弱色、半透明淡于划线、圆角，不进划线存储",
+      ttsOn.rects > 0 && ttsOn.fill === ttsOn.weak && ttsOn.rx === "2" && ttsOn.stored === 0
+        && Number(ttsOn.opacity) > 0 && Number(ttsOn.opacity) < 0.42,
+      `${ttsOn.rects} 个矩形 · ${ttsOn.fill}（期望 ${ttsOn.weak}）· opacity ${ttsOn.opacity}（须 <0.42）· rx ${ttsOn.rx} · 存储 ${ttsOn.stored} 条`);
+    await shot(ws, "ebook-tts");
+
+    // 辅助条与预览气泡都贴在底部：气泡 z6 在工具栏的堆叠上下文里，辅助条 z30
+    // 会盖住它——两者矩形一旦相交，气泡就被拦腰截断。这里锁住「不相交」。
+    const bubbleAssist = await evaluate(ws, `(async () => {
+      const s = document.querySelector("#ebookSlider");
+      const b = s.getBoundingClientRect();
+      s.dispatchEvent(new PointerEvent("pointermove", { bubbles: true,
+        clientX: b.left + b.width * 0.62, clientY: b.top + b.height / 2 }));
+      await new Promise((r) => setTimeout(r, 250));
+      const bubbleEl = document.querySelector(".ebook-seek-bubble");
+      const bubble = bubbleEl.getBoundingClientRect();
+      const assist = document.querySelector(".ebook-assist").getBoundingClientRect();
+      const shown = !bubbleEl.hidden;
+      document.querySelector(".ebook-band").dispatchEvent(new PointerEvent("pointerleave"));
+      return { shown, assistBottom: assist.bottom, bubbleTop: bubble.top,
+        overlap: bubble.bottom > assist.top && bubble.top < assist.bottom };
+    })()`);
+    check("朗读运行时悬停进度：预览气泡完整露出，不被辅助条遮住",
+      bubbleAssist.shown && !bubbleAssist.overlap && bubbleAssist.assistBottom <= bubbleAssist.bubbleTop,
+      `辅助条底 ${Math.round(bubbleAssist.assistBottom)} · 气泡顶 ${Math.round(bubbleAssist.bubbleTop)} · 相交 ${bubbleAssist.overlap}`);
+
+    const ttsLoop = await evaluate(ws, `(async () => {
+      const bar = document.querySelector(".ebook-assist");
+      window.__tts.current.onend();
+      await new Promise((r) => setTimeout(r, 500));
+      const second = window.__tts.spoken[1] || "";
+      const caption = bar.querySelector(".assist-caption").textContent;
+      bar.querySelector('[data-a="tts-toggle"]').click();
+      const paused = { synth: window.__tts.paused,
+        icon: bar.querySelector('[data-a="tts-toggle"] use')?.getAttribute("href") || "" };
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+      const resumed = window.__tts.paused;
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "]", ctrlKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 500));
+      const stepped = window.__tts.spoken.length;
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "[", ctrlKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 500));
+      return { second, caption, paused, resumed, stepped,
+        back: window.__tts.spoken.length, last: window.__tts.spoken[window.__tts.spoken.length - 1] };
+    })()`);
+    check("逐句推进：onend 接下一句，Space 暂停/继续，Ctrl+[ ] 步进",
+      ttsLoop.second.length > 0 && ttsLoop.caption === ttsLoop.second
+        && ttsLoop.paused.synth === true && ttsLoop.paused.icon === "#i-play"
+        && ttsLoop.resumed === false && ttsLoop.stepped === 3 && ttsLoop.back === 4
+        && ttsLoop.last === ttsLoop.second,
+      `第二句「${ttsLoop.second.slice(0, 14)}…」· 暂停 ${ttsLoop.paused.synth} · 步进 ${ttsLoop.stepped}/${ttsLoop.back}`);
+
+    const ttsPrefs = await evaluate(ws, `(async () => {
+      const bar = document.querySelector(".ebook-assist");
+      const rate = bar.querySelector('[data-a="tts-rate"]');
+      rate.value = "1.5";
+      rate.dispatchEvent(new Event("change", { bubbles: true }));
+      const voice = bar.querySelector('[data-a="tts-voice"]');
+      voice.value = "本地中文";
+      voice.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 350));
+      window.__tts.current.onend();
+      await new Promise((r) => setTimeout(r, 500));
+      const utter = window.__tts.current;
+      return { rate: utter?.rate, voice: utter?.voice?.name || "",
+        savedRate: window.__saved?.ebookTtsRate, savedVoice: window.__saved?.ebookTtsVoice };
+    })()`);
+    check("语速与嗓音写进偏好，下一句立刻用上新值",
+      ttsPrefs.rate === 1.5 && ttsPrefs.voice === "本地中文"
+        && ttsPrefs.savedRate === 1.5 && ttsPrefs.savedVoice === "本地中文",
+      `rate ${ttsPrefs.rate} · voice ${ttsPrefs.voice} · 落盘 ${ttsPrefs.savedRate}/${ttsPrefs.savedVoice}`);
+
+    const ttsStop = await evaluate(ws, `(async () => {
+      document.activeElement?.blur?.();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await new Promise((r) => setTimeout(r, 300));
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      const parts = pane?.ebook?.view?.renderer?.getContents?.() || [];
+      const svg = parts.find((item) => item.overlayer)?.overlayer?.element;
+      const bar = document.querySelector(".ebook-assist");
+      const spoken = window.__tts.spoken.length;
+      // 再按一次 Esc：辅助已停，这一下应当退出阅读，而不是被停掉的条吞掉
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await new Promise((r) => setTimeout(r, 400));
+      const { state } = await import("/js/core/session.js");
+      return { barHidden: bar?.hidden ?? null, rects: svg ? svg.querySelectorAll("g rect").length : 0,
+        spoken, current: window.__tts.current, view: state.view };
+    })()`);
+    check("Esc 停朗读：条收、临时高亮撤、不再出声",
+      ttsStop.barHidden === true && ttsStop.rects === 0 && ttsStop.current === null,
+      `条 ${ttsStop.barHidden} · 矩形 ${ttsStop.rects} · 句数停在 ${ttsStop.spoken}`);
+    check("辅助停了之后 Esc 还能退出阅读（不被停掉的条吞掉）",
+      ttsStop.view === "library", `view=${ttsStop.view}`);
+
+    await evaluate(ws, `document.querySelector('#bookList .book-row[data-book="b-epub"]').click()`);
+    await waitFor(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      return Boolean(mod.activePane()?.ebook?.location?.cfi);
+    })()`, "重开 EPUB（朗读后）", 20000);
+    await sleep(600);
+
+    // 无嗓音降级：条仍出现（契约），整体置灰 + 警告文案，只留「停止」可点
+    const noVoice = await evaluate(ws, `(async () => {
+      window.__tts.voices = [];
+      document.querySelector('[data-act="ebook-tts"]').click();
+      await new Promise((r) => setTimeout(r, 300));
+      const bar = document.querySelector(".ebook-assist");
+      const caption = bar?.querySelector(".assist-caption");
+      const disabled = [...(bar?.querySelectorAll('[data-kind="tts"] [data-a]') || [])]
+        .filter((el) => el.disabled).map((el) => el.dataset.a);
+      const stopEnabled = !bar?.querySelector('[data-a="tts-stop"]')?.disabled;
+      const result = { shown: Boolean(bar && !bar.hidden),
+        dead: bar?.classList.contains("is-dead"), warn: caption?.classList.contains("is-warn"),
+        text: caption?.textContent || "", disabled, stopEnabled };
+      bar?.querySelector('[data-a="tts-stop"]').click();
+      await new Promise((r) => setTimeout(r, 200));
+      result.after = bar?.hidden;
+      window.__tts.voices = [{ name: "本地中文", lang: "zh-CN", localService: true, default: true }];
+      return result;
+    })()`);
+    check("无本地嗓音：条仍出现但整体置灰，警告替代字幕，只留「停止」",
+      noVoice.shown && noVoice.dead && noVoice.warn && noVoice.text === "系统没有可用的本地嗓音"
+        && noVoice.disabled.length === 5 && noVoice.stopEnabled && noVoice.after === true,
+      `字幕「${noVoice.text}」· 禁用 ${noVoice.disabled.join("/")}`);
+
+    /* ---- 阅读姿势：分页 ↔ 滚动位置不丢；翻页动效三档 ---- */
+    const flowSwitch = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      const before = { label: pane.ebook.location.label };
+      document.querySelector('[data-act="ebook-flow"]').click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const renderer = pane.ebook.view.renderer;
+      const flowBtn = document.querySelector('[data-act="ebook-flow"]');
+      return { before, after: { label: pane.ebook.location.label },
+        flow: renderer.getAttribute("flow"), scrolled: renderer.scrolled,
+        on: flowBtn.classList.contains("is-on"), pressed: flowBtn.getAttribute("aria-pressed"),
+        spreadHidden: document.querySelector('[data-act="ebook-spread"]').hidden,
+        toast: (document.querySelector("#toastWrap .toast:last-child")?.textContent || "") };
+    })()`);
+    check("切到连续滚动：分页器换姿势、当前位置保住、单双页让位",
+      flowSwitch.flow === "scrolled" && flowSwitch.scrolled === true
+        && flowSwitch.after.label === flowSwitch.before.label
+        && flowSwitch.on && flowSwitch.pressed === "true" && flowSwitch.spreadHidden === true
+        && flowSwitch.toast === "连续滚动",
+      `${flowSwitch.before.label} → ${flowSwitch.after.label} · flow=${flowSwitch.flow} · 提示「${flowSwitch.toast}」`);
+
+    const scrollKeys = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      await new Promise((r) => setTimeout(r, 1000));
+      const right = pane.ebook.location.label;
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+      await new Promise((r) => setTimeout(r, 1000));
+      return { right, left: pane.ebook.location.label };
+    })()`);
+    check("滚动模式里 ←/→ 保留为跳章（纵向交给原生滚动）",
+      scrollKeys.right === "第二章 展开" && scrollKeys.left === "第一章 起点",
+      `→ ${scrollKeys.right} · ← ${scrollKeys.left}`);
+
+    await evaluate(ws, `document.querySelector('[data-act="ebook-layout"]').click()`);
+    await sleep(500);
+    const panelFlow = await evaluate(ws, `(() => {
+      const panel = document.querySelector("#layoutPanel");
+      return { flowOn: panel.querySelector("#lpFlow .is-on")?.dataset.flow || "",
+        turnDisabled: [...panel.querySelectorAll("#lpTurn button")].every((b) => b.disabled),
+        turnOn: panel.querySelector("#lpTurn .is-on")?.dataset.turn || "" };
+    })()`);
+    check("版式面板里姿势同步、滚动下动效整组禁用",
+      panelFlow.flowOn === "scroll" && panelFlow.turnDisabled && panelFlow.turnOn === "slide",
+      `姿势 ${panelFlow.flowOn} · 动效禁用 ${panelFlow.turnDisabled}`);
+    const backPaged = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const pane = mod.activePane();
+      const before = pane.ebook.location.label;
+      document.querySelector('#lpFlow [data-flow="paged"]').click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const panel = document.querySelector("#layoutPanel");
+      return { before, after: pane.ebook.location.label,
+        flow: pane.ebook.view.renderer.getAttribute("flow"),
+        turnDisabled: [...panel.querySelectorAll("#lpTurn button")].every((b) => b.disabled),
+        spreadHidden: document.querySelector('[data-act="ebook-spread"]').hidden };
+    })()`);
+    check("面板里切回分页：位置保住、动效解禁、单双页回来",
+      backPaged.flow === "paginated" && backPaged.after === backPaged.before
+        && !backPaged.turnDisabled && backPaged.spreadHidden === false,
+      `${backPaged.before} → ${backPaged.after} · flow=${backPaged.flow}`);
+    const turns = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const renderer = mod.activePane().ebook.view.renderer;
+      const pick = async (value) => {
+        document.querySelector('#lpTurn [data-turn="' + value + '"]').click();
+        await new Promise((r) => setTimeout(r, 350));
+        return { saved: window.__saved?.ebookTurn, animated: renderer.hasAttribute("animated"),
+          on: document.querySelector("#lpTurn .is-on")?.dataset.turn || "" };
+      };
+      return { fade: await pick("fade"), none: await pick("none"), slide: await pick("slide") };
+    })()`);
+    check("翻页动效三档落盘：滑动带 animated，淡入与无不带",
+      turns.fade.saved === "fade" && !turns.fade.animated && turns.fade.on === "fade"
+        && turns.none.saved === "none" && !turns.none.animated
+        && turns.slide.saved === "slide" && turns.slide.animated && turns.slide.on === "slide",
+      `fade ${turns.fade.saved}/${turns.fade.animated} · none ${turns.none.saved} · slide ${turns.slide.saved}/${turns.slide.animated}`);
+    await evaluate(ws, `(async () => { (await import("/js/reader/ebook-layout-panel.js")).setLayoutPanel(false); })()`);
+    await sleep(300);
+
+    /* ---- 自动滚动：推像素 / 速度落盘 / 伸手即暂停 / 与朗读互斥 / 到底自停 ---- */
+    const autoScroll = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const assistMod = await import("/js/reader/ebook-assist.js");
+      const pane = mod.activePane();
+      document.querySelector('[data-act="ebook-flow"]').click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const renderer = pane.ebook.view.renderer;
+      const before = renderer.start;
+      document.querySelector('[data-act="ebook-auto"]').click();
+      await new Promise((r) => setTimeout(r, 900));
+      const moved = renderer.start;
+      const bar = document.querySelector(".ebook-assist");
+      const row = bar.querySelector('.assist-row:not([hidden])')?.dataset.kind || "";
+      const speed = bar.querySelector('[data-a="auto-speed"]');
+      speed.value = "10";
+      speed.dispatchEvent(new Event("input", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 350));
+      const savedSpeed = window.__saved?.ebookAutoSpeed;
+      const valText = bar.querySelector(".assist-speed-val").textContent;
+      pane.ebookStack.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 40 }));
+      const paused = assistMod.assistOf(pane).auto.paused;
+      const pauseIcon = bar.querySelector('[data-a="auto-toggle"] use')?.getAttribute("href") || "";
+      bar.querySelector('[data-a="auto-toggle"]').click();
+      const resumed = assistMod.assistOf(pane).auto.paused;
+      return { before, moved, row, savedSpeed, valText, paused, pauseIcon, resumed,
+        autoOn: assistMod.assistOf(pane).auto.on };
+    })()`);
+    check("自动滚动真的在推页面：速度落盘、滚轮即暂停、按钮可继续",
+      autoScroll.row === "auto" && autoScroll.moved > autoScroll.before
+        && autoScroll.savedSpeed === 10 && autoScroll.valText === "10"
+        && autoScroll.paused === true && autoScroll.pauseIcon === "#i-play"
+        && autoScroll.resumed === false && autoScroll.autoOn === true,
+      `start ${autoScroll.before} → ${autoScroll.moved} · 速度 ${autoScroll.savedSpeed} · 暂停 ${autoScroll.paused}`);
+    await shot(ws, "ebook-auto");
+
+    const exclusive = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const assistMod = await import("/js/reader/ebook-assist.js");
+      const pane = mod.activePane();
+      const before = window.__tts.spoken.length;
+      document.querySelector('[data-act="ebook-tts"]').click();
+      await new Promise((r) => setTimeout(r, 600));
+      const assist = assistMod.assistOf(pane);
+      const bar = document.querySelector(".ebook-assist");
+      const state1 = { kind: assist.kind, autoOn: assist.auto.on,
+        row: bar.querySelector('.assist-row:not([hidden])')?.dataset.kind || "",
+        spoken: window.__tts.spoken.length, before };
+      document.activeElement?.blur?.();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await new Promise((r) => setTimeout(r, 300));
+      return { state1, afterKind: assistMod.assistOf(pane).kind, barHidden: bar.hidden };
+    })()`);
+    check("朗读与自动互斥：开朗读先停自动，Esc 一并收掉",
+      exclusive.state1.kind === "tts" && !exclusive.state1.autoOn
+        && exclusive.state1.row === "tts" && exclusive.state1.spoken > exclusive.state1.before
+        && exclusive.afterKind === null && exclusive.barHidden === true,
+      `kind ${exclusive.state1.kind} · auto ${exclusive.state1.autoOn} · Esc 后 ${exclusive.afterKind}`);
+
+    const autoEnd = await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const assistMod = await import("/js/reader/ebook-assist.js");
+      const pane = mod.activePane();
+      document.querySelector('[data-act="ebook-flow"]').click();
+      await new Promise((r) => setTimeout(r, 1200));
+      await pane.ebook.goToFraction(1);
+      await new Promise((r) => setTimeout(r, 1200));
+      const atEnd = pane.ebook.view.renderer.atEnd;
+      document.querySelector('[data-act="ebook-auto"]').click();
+      const timer = assistMod.assistOf(pane).auto.timer;
+      // 速度 10 → (16 − 12) = 4 秒/页：等一记定时，应当「到底自停」并提示
+      await new Promise((r) => setTimeout(r, 4600));
+      const assist = assistMod.assistOf(pane);
+      return { atEnd, timer: timer > 0, on: assist.auto.on,
+        barHidden: document.querySelector(".ebook-assist").hidden,
+        toast: (document.querySelector("#toastWrap .toast:last-child")?.textContent || "") };
+    })()`);
+    check("分页自动到底自停：定时翻页走到书末就收条并提示",
+      autoEnd.atEnd && autoEnd.timer && !autoEnd.on && autoEnd.barHidden
+        && autoEnd.toast === "已经是最后一页",
+      `atEnd ${autoEnd.atEnd} · 定时器 ${autoEnd.timer} · 提示「${autoEnd.toast}」`);
+    await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      await mod.activePane()?.ebook?.goTo("OEBPS/ch1.xhtml");
+    })()`);
+    await sleep(1000);
+
+    /* ---- 三主题视觉留档：仅在 SMOKE_SHOT 下截图，平时零开销 ----
+       纸白 / 夜读 / 护眼各拍三张：朗读条 + tts-now 高亮、进度悬停气泡、版式面板。
+       用来人眼核对三套主题下辅助条可读、正在读的高亮跟着 --accent-weak 变色。 */
+    if (SHOT_DIR) {
+      for (const theme of ["paper", "night", "sepia"]) {
+        await evaluate(ws, `(async () => {
+          const { setTheme } = await import("/js/preferences.js");
+          const { toggleTts, stopAssist } = await import("/js/reader/ebook-assist.js");
+          const { activePane } = await import("/js/reader/panes.js");
+          const { setLayoutPanel } = await import("/js/reader/ebook-layout-panel.js");
+          setLayoutPanel(false);
+          stopAssist(activePane());
+          setTheme(${JSON.stringify(theme)}, true);
+          await new Promise((r) => setTimeout(r, 350));
+          toggleTts(activePane());
+          await new Promise((r) => setTimeout(r, 600));
+        })()`);
+        await sleep(450);
+        await shot(ws, `ebook-theme-${theme}-tts`);
+        await evaluate(ws, `(() => {
+          const s = document.querySelector("#ebookSlider");
+          const b = s.getBoundingClientRect();
+          s.dispatchEvent(new PointerEvent("pointermove", { bubbles: true,
+            clientX: b.left + b.width * 0.62, clientY: b.top + b.height / 2 }));
+        })()`);
+        await sleep(200);
+        await shot(ws, `ebook-theme-${theme}-seek`);
+        await evaluate(ws, `document.querySelector(".ebook-band").dispatchEvent(new PointerEvent("pointerleave"))`);
+        await evaluate(ws, `(async () => {
+          (await import("/js/reader/ebook-layout-panel.js")).setLayoutPanel(true);
+        })()`);
+        await sleep(450);
+        await shot(ws, `ebook-theme-${theme}-layout`);
+        // 字体列表在面板下半段：滚到它再拍一张，三主题下核对行状态与样例字
+        await evaluate(ws, `document.querySelector("#lpFonts")?.scrollIntoView({ block: "start" })`);
+        await sleep(250);
+        await shot(ws, `ebook-theme-${theme}-fonts`);
+        await evaluate(ws, `(async () => {
+          const { setLayoutPanel } = await import("/js/reader/ebook-layout-panel.js");
+          const { stopAssist } = await import("/js/reader/ebook-assist.js");
+          const { activePane } = await import("/js/reader/panes.js");
+          setLayoutPanel(false);
+          stopAssist(activePane());
+        })()`);
+        await sleep(300);
+      }
+      await evaluate(ws, `(async () => {
+        (await import("/js/preferences.js")).setTheme("paper", true);
+      })()`);
+      await sleep(300);
+    }
+
     /* ---- 图片放大 ---- */
     await switchBook("b-cbz");
     await waitFor(ws, `(async () => {
@@ -2477,7 +3562,7 @@ async function main() {
       // 错误卡片就画在阅读区里（ebookOpen 的 catch 分支），没有挂上 foliate-view
       const card = document.querySelector(".ebook-stack .pdf-error");
       // 打不开的书没有页可翻：翻页/进度条/书签都不该占着位置
-      const acts = [...document.querySelectorAll("#readToolbar [data-act]")].map((el) => el.dataset.act);
+      const acts = [...document.querySelectorAll(".ebook-band [data-act]")].map((el) => el.dataset.act);
       return { message: card?.textContent || "", mounted: Boolean(pane?.ebook?.book),
         views: document.querySelectorAll(".ebook-stack foliate-view").length,
         acts, slider: Boolean(document.querySelector("#ebookSlider")),

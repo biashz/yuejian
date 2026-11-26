@@ -13,6 +13,11 @@ const state = {
   /* 分类轴筛选：null = 全部分类，"" = 未分类，其它为分类 id */
   categoryId: null,
   catCollapsed: false,
+  /* 类型组默认收起：目录头自述当前选择，展开是瞬时的 */
+  typeCollapsed: true,
+  /* 状态轴筛选：null = 全部状态，其它为 reading / unread / finished；派生值，不落盘 */
+  status: null,
+  statusCollapsed: true,
   /* 批量归类的选中集合；不落盘，切视图时清空 */
   selected: new Set(),
   query: "",

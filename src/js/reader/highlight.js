@@ -54,7 +54,7 @@ function find(pane, cfi) {
  * 原文截断到 400 字：侧栏只显示两三行，而一次误选整章（Ctrl+A）会把
  * state.json 撑大，也把列表挤满。
  */
-async function addHighlight(pane, { cfi, text, color, label }) {
+async function addHighlight(pane, { cfi, text, color, label, note = "" }) {
   const book = pane?.book;
   if (!book || !cfi) return null;
   try {
@@ -65,6 +65,7 @@ async function addHighlight(pane, { cfi, text, color, label }) {
       color: colorOf(color),
       label: label || "",
       on: true,
+      note: String(note || "").slice(0, 500),
     });
     applyBook(updated);
     repaint(pane);
@@ -99,6 +100,30 @@ async function recolor(pane, cfi, color) {
   }
 }
 
+/** 附注笔记：空串 = 清掉。后端对 note 是「给了就写」，不传保持原值 */
+async function setNote(pane, cfi, note) {
+  const book = pane?.book;
+  const item = find(pane, cfi);
+  if (!book || !item) return false;
+  try {
+    const updated = await invoke("set_highlight", {
+      id: book.id,
+      cfi,
+      text: item.text || "",
+      color: item.color || "amber",
+      label: item.label || "",
+      on: true,
+      note: String(note || "").slice(0, 500),
+    });
+    applyBook(updated);
+    toast(t("reader.hlNoteSaved"));
+    return true;
+  } catch (error) {
+    toast(String(error));
+    return false;
+  }
+}
+
 async function removeHighlight(pane, cfi) {
   const book = pane?.book;
   if (!book || !cfi) return false;
@@ -123,4 +148,4 @@ function repaint(pane) {
   pane?.ebook?.setHighlights(listOf(pane));
 }
 
-export { HIGHLIGHT_COLORS, COLOR_ORDER, colorOf, colorValue, listOf, find, addHighlight, removeHighlight, recolor };
+export { HIGHLIGHT_COLORS, COLOR_ORDER, colorOf, colorValue, listOf, find, addHighlight, removeHighlight, recolor, setNote };

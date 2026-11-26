@@ -5,23 +5,35 @@ import { $ } from "./dom.js";
 
 /* ---------------- Toast ---------------- */
 let toastTimer = null;
-// 复用同一个提示元素：连续触发时只重置计时，避免旧提示丢失计时器而永久停留
-function toast(message) {
+// 复用同一个提示元素：连续触发时重建内容并重置计时，旧动作按钮随内容一起失效
+function toast(message, opts = {}) {
   const wrap = $("#toastWrap");
   let el = wrap.firstElementChild;
   if (!el) {
     el = document.createElement("div");
     el.className = "toast";
-    el.innerHTML = '<svg class="ic"><use href="#i-check"/></svg><span></span>';
     wrap.appendChild(el);
   }
+  const duration = opts.duration || 2200;
+  el.innerHTML = '<svg class="ic"><use href="#i-check"/></svg><span></span>'
+    + (opts.actionText ? '<button class="toast-action" type="button"></button><i class="toast-life"></i>' : "");
   el.querySelector("span").textContent = message;
+  if (opts.actionText) {
+    const action = el.querySelector(".toast-action");
+    action.textContent = opts.actionText;
+    el.querySelector(".toast-life").style.animationDuration = `${duration}ms`;
+    action.addEventListener("click", () => {
+      clearTimeout(toastTimer);
+      el.remove();
+      opts.onAction?.();
+    });
+  }
   el.classList.remove("is-out");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     el.classList.add("is-out");
     toastTimer = setTimeout(() => el.remove(), 220);
-  }, 2200);
+  }, duration);
 }
 
 /* ---------------- 确认弹框 ---------------- */

@@ -17,6 +17,7 @@
   --accent-ink: #8e2c20;
   --accent-weak: #ebd9d3;
   --ok: #4f7355;
+  --warn: #a8792c;
 
   /* 分类色板：用户数据，与主题主色分开命名（切主题不该改用户选的颜色） */
   --cat-clay: #b23a2b;
@@ -64,6 +65,7 @@ html[data-theme="night"] {
   --accent-ink: #c95c49;
   --accent-weak: #3a2620;
   --ok: #7fa585;
+  --warn: #d6aa5a;
   /* 夜读下色点要能在深底上自发光，明度整体推到 65–75% */
   --cat-clay: #e0705c;
   --cat-indigo: #8fa3c4;
@@ -89,6 +91,7 @@ html[data-theme="sepia"] {
   --accent: #a0622d;
   --accent-ink: #85501f;
   --accent-weak: #e4d3bb;
+  --warn: #8f6524;
   --cat-clay: #9c4a33;
   --cat-indigo: #4c5a72;
   --cat-olive: #5c6b46;
@@ -342,29 +345,24 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 }
 .search-box input::placeholder { color: var(--ink-3); }
 
-.filter-row { display: flex; gap: 4px; padding: 0 12px 10px; }
-.chip {
-  height: 22px; padding: 0 9px;
-  font-size: 10px; letter-spacing: 0.08em;
-  border-radius: var(--r-pill);
-  border: 1px solid transparent;
-  color: var(--ink-3);
-  transition: all 150ms var(--ease);
+/* ---------- 4.1 书架目录：类型 + 分类共用一个可滚动索引 ---------- */
+/* 横排 pill 在 304/262px 面板里必然挤字或裁切，筛选改走纵轴，与分类同一种目录语言 */
+.shelf-index {
+  max-height: min(344px, 42vh);
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  padding-bottom: 4px;
 }
-.chip:hover { color: var(--ink); background: var(--surface-2); }
-.chip.is-on {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-  background: var(--accent-weak);
-}
-
-/* ---------- 4.1 分类区 ---------- */
-.cat-block { border-top: 1px solid var(--line); padding-bottom: 4px; }
-.cat-head {
+/* 三层吸顶目录头：类型 0 / 状态 28 / 分类 56，z 序递减保证滚动时上层压住下层 */
+.idx-head {
+  position: sticky; top: 0; z-index: 3;
   display: flex; align-items: center; gap: 4px;
   height: 28px; padding: 0 10px 0 6px;
+  background: var(--paper);
 }
-.cat-toggle {
+.idx-head-status { top: 28px; z-index: 2; }
+.idx-head-cat { top: 56px; z-index: 1; }
+.idx-toggle {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 6px;
   height: 24px; padding: 0 4px;
@@ -372,13 +370,22 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   font-size: 10px; letter-spacing: 0.12em; color: var(--ink-3);
   transition: color 150ms var(--ease);
 }
-.cat-toggle:hover { color: var(--ink-2); }
-.cat-caret {
+.idx-toggle:hover { color: var(--ink-2); }
+/* 头部计数与行计数右对齐成同一列 */
+.idx-toggle .count { margin-left: auto; }
+.idx-current {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink-2); letter-spacing: 0.02em;
+}
+.idx-current::before { content: "·"; margin: 0 4px 0 2px; color: var(--ink-3); }
+.idx-caret {
   width: 12px; height: 12px;
   transform: rotate(90deg);
   transition: transform 180ms var(--ease);
 }
-.cat-block.is-collapsed .cat-caret { transform: rotate(0deg); }
+.idx-head.is-collapsed .idx-caret { transform: rotate(0deg); }
+.idx-head.is-collapsed + .idx-rows { display: none; }
+.idx-rows { padding: 0 8px; }
 .cat-add {
   width: 22px; height: 22px;
   display: grid; place-items: center;
@@ -390,9 +397,8 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .cat-add:disabled { opacity: 0.35; cursor: not-allowed; }
 .cat-add .ic { width: 13px; height: 13px; }
 
-.cat-list { max-height: 168px; overflow-y: auto; padding: 0 8px; }
-.cat-block.is-collapsed .cat-list { display: none; }
-.cat-row {
+/* 目录行：类型行与分类行共用同一套行语言（选中竖条 / 悬停 / 落点另见 .cat-row.is-drop） */
+.cat-row, .idx-row {
   position: relative;
   display: flex; align-items: center; gap: 8px;
   height: 28px; padding: 0 6px 0 10px;
@@ -400,19 +406,27 @@ body.zen .app { grid-template-rows: 36px 1fr; }
   cursor: pointer;
   transition: background 150ms var(--ease);
 }
-.cat-row:hover { background: var(--surface-2); }
-.cat-row.is-active { background: var(--surface-2); }
-.cat-row.is-active::before {
+.cat-row:hover, .idx-row:hover { background: var(--surface-2); }
+.cat-row.is-active, .idx-row.is-active { background: var(--surface-2); }
+.cat-row.is-active::before, .idx-row.is-active::before {
   content: ""; position: absolute; left: 0; top: 6px; bottom: 6px;
   width: 2px; border-radius: 2px; background: var(--accent);
 }
+/* 类型行沿用书脊元信息的 4px 类型色点；收藏用朱砂星，与书架星标同色 */
+.idx-row .ic { width: 12px; height: 12px; flex: none; color: var(--accent); }
+/* 状态图形：12px 迷你进度线 / 对勾。状态会随阅读自己变，不配彩色徽章 */
+.status-glyph { width: 12px; height: 12px; flex: none; display: inline-flex; align-items: center; }
+.status-glyph .line { width: 12px; height: 3px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.status-glyph .line i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+.status-glyph .ic { width: 12px; height: 12px; color: var(--ok); }
 .cat-name {
   flex: 1; min-width: 0;
   font-size: 12px; color: var(--ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .cat-row.is-all .cat-name,
-.cat-row.is-none .cat-name { color: var(--ink-2); }
+.cat-row.is-none .cat-name,
+.idx-row.is-all .cat-name { color: var(--ink-2); }
 .cat-num {
   font-family: var(--font-mono); font-size: 10px;
   color: var(--ink-3); flex: none;
@@ -448,6 +462,52 @@ body.zen .app { grid-template-rows: 36px 1fr; }
 .c-amber { --c: var(--cat-amber); }
 .c-plum { --c: var(--cat-plum); }
 .c-slate { --c: var(--cat-slate); }
+
+/* ---------- 4.15 排序工具条：一条功能线，不是卡片 ---------- */
+.list-tools {
+  position: relative; flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 28px; padding: 0 12px 0 8px;
+  border-top: 1px solid var(--line);
+}
+.sort-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 22px; padding: 0 7px;
+  border-radius: var(--r-sm);
+  font-size: 11px; color: var(--ink-2);
+  transition: background 150ms var(--ease), color 150ms var(--ease);
+}
+.sort-btn:hover, .sort-btn[aria-expanded="true"] { background: var(--surface-2); color: var(--ink); }
+.sort-btn .ic { width: 12px; height: 12px; color: var(--ink-3); }
+.sort-dir { font-family: var(--font-mono); font-size: 10px; color: var(--accent); }
+.shown-count { font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); }
+/* 锚定弹层：left 8 与按钮左缘对齐，视线从按钮垂直落到菜单 */
+.sort-menu {
+  position: absolute; top: 26px; left: 8px; z-index: 30;
+  width: 196px; padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  animation: sortIn 180ms var(--ease) both;
+}
+.sort-menu[hidden] { display: none; }
+.sort-item {
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; height: 28px; padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px; color: var(--ink-2); text-align: left;
+  transition: background 150ms var(--ease), color 150ms var(--ease);
+}
+.sort-item:hover { background: var(--surface-2); color: var(--ink); }
+/* 对勾占位隐藏：非当前行也留位，切换时文字不横跳 */
+.sort-item .ic { width: 12px; height: 12px; flex: none; color: var(--accent); visibility: hidden; }
+.sort-item.is-active { color: var(--ink); }
+.sort-item.is-active .ic { visibility: visible; }
+.sort-item .dir { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); }
+.sort-item.is-active .dir { color: var(--accent); }
+.sort-hint { padding: 5px 8px 3px; margin-top: 4px; border-top: 1px solid var(--line); font-size: 10px; color: var(--ink-3); }
+@keyframes sortIn { from { opacity: 0; transform: translateY(-2px); } }
 
 /* ---------- 4.2 批量归类条 ---------- */
 .batch-bar {
@@ -894,10 +954,10 @@ body.is-book-dragging .book-card { cursor: grabbing; }
     var(--paper);
 }
 .scroll-area::-webkit-scrollbar, .book-list::-webkit-scrollbar, .ctx-body::-webkit-scrollbar,
-.sheet-body::-webkit-scrollbar, .palette-list::-webkit-scrollbar { width: 10px; }
+.sheet-body::-webkit-scrollbar, .palette-list::-webkit-scrollbar, .shelf-index::-webkit-scrollbar { width: 10px; }
 .scroll-area::-webkit-scrollbar-thumb, .book-list::-webkit-scrollbar-thumb,
 .ctx-body::-webkit-scrollbar-thumb, .sheet-body::-webkit-scrollbar-thumb,
-.palette-list::-webkit-scrollbar-thumb {
+.palette-list::-webkit-scrollbar-thumb, .shelf-index::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--ink-3) 30%, transparent);
   border: 3px solid transparent;
   background-clip: content-box;
@@ -906,7 +966,18 @@ body.is-book-dragging .book-card { cursor: grabbing; }
 /* 条本身很淡：鼠标压上去加重一点，至少让人看得出「这段还能往下走」 */
 .scroll-area:hover::-webkit-scrollbar-thumb, .book-list:hover::-webkit-scrollbar-thumb,
 .ctx-body:hover::-webkit-scrollbar-thumb, .sheet-body:hover::-webkit-scrollbar-thumb,
-.palette-list:hover::-webkit-scrollbar-thumb {
+.palette-list:hover::-webkit-scrollbar-thumb, .shelf-index:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink-3) 58%, transparent);
+}
+/* 笔记输入框窄， scrollbar 收细一档，同一套颜色语言 */
+.hl-note-input::-webkit-scrollbar { width: 8px; }
+.hl-note-input::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink-3) 30%, transparent);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 99px;
+}
+.hl-note-input:hover::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--ink-3) 58%, transparent);
 }
 
@@ -973,17 +1044,70 @@ body.is-book-dragging .book-card { cursor: grabbing; }
 
 /* 电子书（foliate 分页器） */
 /* 分页器自己算页：外层一旦还能滚动，翻页时会把整块内容连带推出视口。
-   所以电子书模式下 scroll-area 只当画布用 */
-.reader-pane.is-ebook .scroll-area { overflow: hidden; }
+   所以电子书模式下 scroll-area 只当画布用，并且底色换成「桌面」——
+   PDF 是整幅画布上的纸，电子书是书桌上摊开的一本：桌面收深一档，
+   正文页是一张带发丝边与轻阴影的独立书页 */
+.reader-pane.is-ebook .scroll-area {
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 50% 0%, transparent 55%, color-mix(in srgb, var(--ink) 5%, transparent)),
+    color-mix(in srgb, var(--surface-2) 58%, var(--paper));
+}
 .ebook-stack {
-  position: absolute; inset: 0;
-  background: var(--paper);
+  position: absolute; inset: 14px 16px 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  box-shadow: var(--shadow-md);
 }
 .ebook-stack[hidden] { display: none; }
 .ebook-view {
   display: block;
   width: 100%; height: 100%;
 }
+/* 底部工具带（「书口」）：不浮、不圆角，直接停在版面底边，占自己的高度不压正文。
+   三段式——左：当前章节（书眉）；中：通栏进度轨道；右：阅读姿势与界面开关。
+   底色比书页深半档：读起来是书的「切口」，不是一块贴在纸上的悬浮层 */
+.ebook-band {
+  flex: none;
+  display: flex; align-items: center; gap: 10px;
+  height: 46px; padding: 0 12px;
+  background: color-mix(in srgb, var(--surface-2) 62%, var(--surface));
+  border-top: 1px solid var(--line);
+}
+.ebook-band[hidden] { display: none; }
+.band-ch {
+  flex: 0 1 168px; min-width: 0;
+  font-family: var(--font-read);
+  font-size: 12.5px; letter-spacing: 0.02em;
+  color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 章节名前的朱砂引线：印刷书书眉的分隔感，也把「章节」和左端分开 */
+.band-ch::before {
+  content: "";
+  display: inline-block; width: 14px; height: 1px;
+  margin-right: 8px; vertical-align: 3px;
+  background: var(--accent);
+}
+.band-seek {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 4px; justify-content: center;
+}
+.band-seek .ebook-seek-wrap { flex: 1; max-width: 560px; }
+.band-seek .ebook-slider { width: 100%; }
+.band-end { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.band-group { display: flex; align-items: center; gap: 2px; }
+/* 带子里的按钮比浮动条小一号、方一点：它是版面的一部分，不像悬浮控件 */
+.ebook-band .tool-btn {
+  height: 26px; min-width: 26px; padding: 0 6px;
+  border-radius: var(--r-sm);
+}
+.ebook-band .tool-btn .ic { width: 14px; height: 14px; }
+.ebook-band .tool-sep { height: 16px; margin: 0 6px; }
+.ebook-band .ebook-pct { min-width: 38px; font-size: 10.5px; color: var(--ink-2); }
+
 .ebook-pct {
   min-width: 42px; text-align: center;
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
@@ -1015,6 +1139,88 @@ body.is-book-dragging .book-card { cursor: grabbing; }
 }
 .ebook-slider:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .ebook-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-pill); }
+
+/* 进度刻度与预览气泡：刻度是章边界的「刻度感」，气泡回答「拖到这里是哪一章」 */
+.ebook-seek-wrap { position: relative; display: inline-flex; align-items: center; }
+.ebook-ticks {
+  position: absolute; left: 6px; right: 6px; top: 50%;
+  pointer-events: none;
+}
+.ebook-tick {
+  position: absolute; top: -5px; width: 2px; height: 10px;
+  border-radius: 1px; background: var(--line-strong);
+  transform: translateX(-1px);
+}
+.ebook-seek-bubble {
+  position: absolute; bottom: 32px; left: 0;
+  transform: translateX(-50%);
+  max-width: 240px; padding: 6px 9px;
+  font-size: 11px; line-height: 1; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  color: var(--paper); background: var(--ink);
+  border-radius: 8px;
+  pointer-events: none; z-index: 6;
+  transition: opacity 180ms var(--ease);
+}
+.ebook-seek-bubble[hidden] { display: none; }
+
+/* 阅读辅助条：朗读 / 自动共用一条，叠在底部工具带上方；
+   bottom 48 是量出来的：带高 46，进度预览气泡（z6）底边距带顶 12px、顶边约 35px，
+   48 让辅助条（z30）压在气泡上方 13px，两者不相交 */
+.ebook-assist {
+  position: absolute; left: 50%; bottom: 48px;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex; align-items: center; gap: 8px;
+  height: 38px; padding: 8px 12px; box-sizing: border-box;
+  max-width: min(680px, 92%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--accent);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+}
+.ebook-assist[hidden] { display: none; }
+.assist-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.assist-row[hidden] { display: none; }
+.assist-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; flex: none;
+  border-radius: 8px;
+  color: var(--ink-2);
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+.assist-btn .ic { width: 14px; height: 14px; }
+.assist-btn:hover { background: var(--accent-weak); color: var(--accent); }
+.assist-btn[data-a="tts-toggle"], .assist-btn[data-a="auto-toggle"] {
+  background: var(--accent); color: var(--paper);
+}
+.assist-btn[data-a="tts-toggle"]:hover, .assist-btn[data-a="auto-toggle"]:hover {
+  background: var(--accent-ink); color: var(--paper);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25);
+}
+.assist-btn:disabled { opacity: 0.45; pointer-events: none; }
+.ebook-assist.is-dead .assist-btn[data-a="tts-toggle"] { opacity: 0.45; }
+.assist-caption {
+  flex: 1; min-width: 60px;
+  font-size: 12px; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.assist-caption.is-warn { color: var(--warn); }
+.assist-select {
+  height: 24px; max-width: 110px; padding: 0 4px;
+  font-size: 12px; font-family: var(--font-ui); color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.assist-select:hover { border-color: var(--line-strong); }
+.assist-select:disabled { opacity: 0.45; }
+.assist-label { flex: none; font-size: 12px; color: var(--ink-2); }
+.assist-speed { width: 90px; height: 18px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.assist-speed-val {
+  min-width: 14px; text-align: right;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink-2);
+}
 
 /* 脚注弹层：贴着注号浮起来，不挡正文 */
 .ebook-note {
@@ -1065,6 +1271,8 @@ body.is-book-dragging .book-card { cursor: grabbing; }
   animation: pop 140ms var(--ease) both;
 }
 .hl-menu[hidden] { display: none; }
+/* 带动作行时换行成两排，圆角从胶囊退到中等——胶囊裹两排会显得肿 */
+.hl-menu:has(.hl-acts) { flex-wrap: wrap; border-radius: var(--r-md); }
 .hl-menu-colors { display: flex; align-items: center; gap: 7px; }
 .hl-dot {
   width: 15px; height: 15px; border-radius: 50%;
@@ -1078,6 +1286,53 @@ body.is-book-dragging .book-card { cursor: grabbing; }
 .hl-menu-sep { width: 1px; height: 15px; background: var(--line); }
 .hl-del { padding: 0 4px; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
 .hl-del:hover { color: var(--ink); }
+/* 选区动作行：色板下面第二行，复制 / 笔记 / 删除 */
+.hl-acts {
+  flex-basis: 100%;
+  display: flex; align-items: center; gap: 4px;
+  margin-top: 7px; padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+.hl-act {
+  padding: 4px 8px; border-radius: 4px;
+  font-size: 11px; color: var(--ink-2); white-space: nowrap;
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+.hl-act:hover { background: var(--accent-weak); color: var(--accent); }
+.hl-act-danger:hover { color: var(--accent); }
+
+/* 笔记弹层：叠在选区小窗之上，Esc 先收它 */
+.hl-note-pop {
+  position: fixed; z-index: 73;
+  width: 260px; padding: 8px; box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  animation: pop 140ms var(--ease) both;
+}
+.hl-note-pop[hidden] { display: none; }
+.hl-note-input {
+  display: block; width: 100%; height: 84px; box-sizing: border-box;
+  padding: 6px 8px; resize: none;
+  font-size: 13px; line-height: 1.6; font-family: var(--font-ui); color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.hl-note-input:hover { border-color: var(--line-strong); }
+.hl-note-input:focus { outline: none; border-color: var(--accent); }
+.hl-note-foot { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
+.hl-note-count { flex: 1; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.hl-note-btn {
+  height: 24px; padding: 0 10px; border-radius: 6px;
+  font-size: 11.5px; color: var(--ink-2);
+  border: 1px solid var(--line);
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+.hl-note-btn:hover { background: var(--surface-2); color: var(--ink); }
+.hl-note-save { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+.hl-note-save:hover { background: var(--accent-ink); color: var(--paper); box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25); }
 
 /* 侧栏划线列表：行首一个颜色点，后面才是章节名与原文 */
 .note-dot {
@@ -1085,6 +1340,16 @@ body.is-book-dragging .book-card { cursor: grabbing; }
   border-radius: 50%; background: var(--_dot); vertical-align: middle;
 }
 .note-row .mark-main { line-height: 1.62; }
+/* 笔记行：引文下面一行小字，点它直接编辑 */
+.note-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mark-row .note-body .mark-main { flex: 0 0 auto; }
+.note-line {
+  margin: 5px 0 0 14px; padding: 0;
+  font-size: 12px; color: var(--ink-2); text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: color 140ms var(--ease);
+}
+.note-line:hover { color: var(--accent); }
 
 /* ---------- 图片放大 ---------- */
 /* 整屏一层，深底把图衬出来；图片本身按窗口缩放，放大之后靠容器滚动 */
@@ -1480,6 +1745,7 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 }
 
 /* 阅读工具栏 */
+.read-toolbar[hidden] { display: none; }
 .read-toolbar {
   position: absolute;
   left: 50%; bottom: 22px;
@@ -1506,6 +1772,9 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
   transition: background 150ms var(--ease), color 150ms var(--ease);
 }
 .tool-btn:hover { background: var(--surface-2); color: var(--ink); }
+/* 属性 hidden 的浏览器默认样式（display:none）会被上面的 inline-flex 盖掉，
+   不补这一条，「藏起来」的按钮照样占位、照样能点 */
+.tool-btn[hidden] { display: none; }
 .tool-btn:disabled { opacity: 0.35; cursor: default; }
 .tool-btn:disabled:hover { background: none; }
 .tool-btn .ic { width: 15px; height: 15px; }
@@ -1799,6 +2068,47 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
 .lp-seg button.is-on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .lp-seg.is-block { display: flex; width: 100%; margin: 0 0 10px; }
 .lp-seg.is-block button { flex: 1; text-align: center; padding: 5px 4px; }
+
+/* 字体列表：每行是一张活字样（样例字用自己的字体），右侧是下载 / 使用中状态 */
+.lp-fonts { display: flex; flex-direction: column; gap: 2px; margin: 0 0 10px; }
+.lp-fonts-label {
+  margin: 8px 0 2px; font-size: 10px; letter-spacing: 0.08em; color: var(--ink-3);
+}
+.lp-fonts-label:first-child { margin-top: 0; }
+.lp-font {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border-radius: var(--r-sm);
+  cursor: pointer; transition: background 140ms var(--ease);
+}
+.lp-font:hover { background: var(--surface-2); }
+.lp-font:focus-visible { outline: 1.5px solid var(--accent); outline-offset: -1px; }
+.lp-font.is-on { background: color-mix(in srgb, var(--accent-weak) 62%, transparent); }
+.lp-font.is-busy { opacity: 0.45; pointer-events: none; }
+.lp-font-sample {
+  flex: none; width: 24px; height: 24px; display: grid; place-items: center;
+  font-size: 15px; line-height: 1; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+}
+.lp-font.is-on .lp-font-sample {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  color: var(--accent-ink);
+}
+.lp-font-name {
+  flex: 1; min-width: 0; font-size: 12.5px; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lp-font-meta { flex: none; font-size: 10px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.lp-font-state { flex: none; min-width: 30px; text-align: right; font-size: 10.5px; color: var(--ink-3); }
+.lp-font-state.is-failed { color: var(--accent); }
+.lp-font.is-on .lp-font-state { color: var(--accent-ink); }
+.lp-font-del {
+  flex: none; width: 18px; height: 18px; display: grid; place-items: center;
+  border-radius: 4px; color: var(--ink-3); opacity: 0;
+  transition: opacity 140ms var(--ease), background 140ms var(--ease), color 140ms var(--ease);
+}
+.lp-font:hover .lp-font-del, .lp-font.is-on .lp-font-del, .lp-font-del:focus-visible { opacity: 1; }
+.lp-font-del:hover { color: var(--accent); background: var(--surface); }
+.lp-font-del .ic { width: 12px; height: 12px; }
 
 /* 字号步进 */
 .lp-step { display: flex; flex: none; align-items: center; border: 1px solid var(--line-strong); border-radius: var(--r-sm); overflow: hidden; }
@@ -2405,6 +2715,7 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
   pointer-events: none;
 }
 .toast {
+  position: relative;
   display: flex; align-items: center; gap: 8px;
   padding: 9px 16px;
   border-radius: var(--r-pill);
@@ -2413,10 +2724,29 @@ html[data-theme="night"] .hljs-title.function_ { color: #b9a6d8; }
   font-size: 11.5px; letter-spacing: 0.04em;
   box-shadow: var(--shadow-lg);
   animation: toastIn 240ms var(--ease) both;
+  overflow: hidden;
 }
 .toast .ic { width: 14px; height: 14px; color: var(--accent); }
 .toast.is-out { animation: toastOut 200ms var(--ease) both; }
 html[data-theme="night"] .toast { background: var(--surface-2); color: var(--ink); }
+/* 撤销动作：墨底胶囊上的描边胶囊，取 currentColor 随三主题反色自动成立。
+   wrap 是 pointer-events:none（普通 toast 不挡点击），按钮单独恢复可点 */
+.toast-action {
+  flex: none; pointer-events: auto;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  font-size: 11.5px; color: inherit;
+  transition: background 150ms var(--ease);
+}
+.toast-action:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+/* 生命周期条：把 6 秒窗口画出来，收完即「再删就是真删」 */
+.toast-life {
+  position: absolute; left: 0; bottom: 0;
+  height: 2px; background: currentColor; opacity: 0.4;
+  animation: toastLife linear both;
+}
+@keyframes toastLife { from { width: 100%; } to { width: 0%; } }
 
 /* ---------- 11.5 更新安装提示（非模态） ---------- */
 /* 右下角常驻卡片：不盖遮罩、不抢焦点、不拦键盘，用户读完当前这段再点即可 */

@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>书架工具原型 · 阅笺</title>
+<style>
+/* =========================================================
+   书架工具原型 — 状态轴 / 排序 / 删除撤销，只为验证交互
+   设计契约：docs/design-contract.md（token 与正式应用一致）
+   ========================================================= */
+:root {
+  --paper:#f3ede1; --surface:#fbf7ee; --surface-2:#ede4d3;
+  --ink:#241f1a; --ink-2:#5e5548; --ink-3:#8c8272;
+  --line:#dfd4c0; --line-strong:#c9bba2;
+  --accent:#b23a2b; --accent-ink:#8e2c20; --accent-weak:#ebd9d3; --ok:#4f7355;
+  --font-display:"KaiTi","STKaiti","Kaiti SC","Songti SC",serif;
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+  --font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  --r-sm:4px; --r-md:8px; --r-lg:14px; --r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(40,32,20,.06);
+  --shadow-md:0 8px 24px -12px rgba(40,32,20,.24);
+  --shadow-lg:0 24px 60px -20px rgba(40,32,20,.38);
+  --ease:cubic-bezier(.22,.8,.24,1);
+  --rail-w:56px; --lib-w:304px;
+  --cat-clay:#b23a2b; --cat-indigo:#4a5c7a; --cat-olive:#5f7350;
+  --cat-amber:#a8792c; --cat-plum:#7a4a63; --cat-slate:#55606b;
+}
+html[data-theme="night"] {
+  --paper:#12100e; --surface:#1a1715; --surface-2:#221e1a;
+  --ink:#ede5d8; --ink-2:#b7ab98; --ink-3:#7e7466;
+  --line:#2e2924; --line-strong:#3d362f;
+  --accent:#e0705c; --accent-ink:#c95c49; --accent-weak:#3a2620; --ok:#7fa585;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:0 10px 28px -14px rgba(0,0,0,.7);
+  --shadow-lg:0 28px 64px -24px rgba(0,0,0,.8);
+  --cat-clay:#e0705c; --cat-indigo:#8fa3c4; --cat-olive:#96ac84;
+  --cat-amber:#d6aa5a; --cat-plum:#c087a6; --cat-slate:#9aa6b2;
+}
+html[data-theme="sepia"] {
+  --paper:#e9e1ce; --surface:#f2ead8; --surface-2:#e0d5be;
+  --ink:#2a2419; --ink-2:#5c5342; --ink-3:#8a7f69;
+  --line:#d3c6ac; --line-strong:#bfb094;
+  --accent:#a0622d; --accent-ink:#85501f; --accent-weak:#e4d3bb;
+  --cat-clay:#9c4a33; --cat-indigo:#4c5a72; --cat-olive:#5c6b46;
+  --cat-amber:#96702a; --cat-plum:#74475e; --cat-slate:#515b66;
+}
+* { box-sizing:border-box; }
+html,body { height:100%; }
+body { margin:0; font-family:var(--font-ui); font-size:13px; color:var(--ink);
+  background:var(--paper); overflow:hidden; -webkit-font-smoothing:antialiased; }
+button { font:inherit; color:inherit; background:none; border:0; cursor:pointer; }
+input { font:inherit; color:inherit; }
+h1,h2,h3,p { margin:0; }
+.ic { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.6;
+  stroke-linecap:round; stroke-linejoin:round; flex:none; }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:var(--r-sm); }
+
+/* ---------- shell ---------- */
+.app { height:100vh; display:flex; flex-direction:column; }
+.titlebar { height:36px; flex:none; display:flex; align-items:center; gap:12px;
+  padding:0 14px; border-bottom:1px solid var(--line); background:var(--paper); }
+.brand-mark { font-family:var(--font-display); font-size:15px; letter-spacing:.06em; }
+.brand-sub { font-family:var(--font-mono); font-size:9px; letter-spacing:.22em; color:var(--ink-3); }
+.tb-spacer { flex:1; }
+.tb-note { font-size:11px; color:var(--ink-3); }
+.tb-btn { height:24px; padding:0 10px; border:1px solid var(--line); border-radius:var(--r-pill);
+  font-size:11px; color:var(--ink-2); background:var(--surface); }
+.tb-btn:hover { border-color:var(--line-strong); color:var(--ink); }
+.workspace { flex:1; display:flex; min-height:0; }
+.rail { width:var(--rail-w); flex:none; border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:6px; padding:10px 0; }
+.rail-btn { width:40px; padding:8px 0 6px; display:flex; flex-direction:column; align-items:center; gap:3px;
+  border-radius:var(--r-md); color:var(--ink-3); font-size:10px; }
+.rail-btn.is-active { color:var(--accent); background:var(--accent-weak); }
+.rail-btn .ic { width:17px; height:17px; }
+
+/* ---------- library panel ---------- */
+.library-panel { width:var(--lib-w); flex:none; border-right:1px solid var(--line);
+  display:flex; flex-direction:column; min-height:0; background:var(--paper); }
+.panel-head { height:42px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 12px; }
+.panel-title { font-family:var(--font-display); font-size:14px; letter-spacing:.04em; }
+.count { font-family:var(--font-mono); font-size:10px; color:var(--ink-3); }
+.icon-btn { width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center;
+  border-radius:var(--r-md); color:var(--ink-2); }
+.icon-btn:hover { background:var(--surface-2); color:var(--ink); }
+.search-box { margin:0 12px 10px; height:30px; flex:none; display:flex; align-items:center; gap:7px;
+  padding:0 9px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface); }
+.search-box .ic { width:14px; height:14px; color:var(--ink-3); }
+.search-box input { flex:1; min-width:0; border:0; outline:0; background:none; font-size:12px; }
+.search-box input::placeholder { color:var(--ink-3); }
+
+/* ---------- 书架目录：三层吸顶 ---------- */
+.shelf-index { max-height:min(344px,42vh); overflow-y:auto; flex:none;
+  border-top:1px solid var(--line); padding-bottom:4px; }
+.shelf-index::-webkit-scrollbar { width:10px; }
+.shelf-index::-webkit-scrollbar-thumb { background:color-mix(in srgb,var(--ink-3) 30%,transparent);
+  border-radius:99px; border:3px solid transparent; background-clip:content-box; }
+.shelf-index::-webkit-scrollbar-thumb:hover { background:color-mix(in srgb,var(--ink-3) 58%,transparent);
+  background-clip:content-box; border:3px solid transparent; }
+.idx-head { position:sticky; top:0; z-index:3; display:flex; align-items:center; gap:4px;
+  height:28px; padding:0 10px 0 6px; background:var(--paper); }
+.idx-head-status { top:28px; z-index:2; }
+.idx-head-cat { top:56px; z-index:1; }
+.idx-toggle { flex:1; min-width:0; display:flex; align-items:center; gap:6px; height:24px; padding:0 4px;
+  border-radius:var(--r-sm); font-size:10px; letter-spacing:.12em; color:var(--ink-3); }
+.idx-toggle:hover { color:var(--ink-2); }
+.idx-toggle .count { margin-left:auto; }
+.idx-current { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  color:var(--ink-2); letter-spacing:.02em; }
+.idx-current::before { content:"·"; margin:0 4px 0 2px; color:var(--ink-3); }
+.idx-current:empty { display:none; }
+.idx-caret { width:12px; height:12px; transform:rotate(90deg); transition:transform .18s var(--ease); }
+.idx-head.is-collapsed .idx-caret { transform:rotate(0deg); }
+.idx-head.is-collapsed + .idx-rows { display:none; }
+.idx-rows { padding:0 8px; }
+.cat-row,.idx-row { position:relative; display:flex; align-items:center; gap:8px; height:28px;
+  padding:0 6px 0 10px; border-radius:6px; cursor:pointer; transition:background .15s var(--ease); }
+.cat-row:hover,.idx-row:hover { background:var(--surface-2); }
+.cat-row.is-active,.idx-row.is-active { background:var(--surface-2); }
+.cat-row.is-active::before,.idx-row.is-active::before { content:""; position:absolute; left:0; top:6px; bottom:6px;
+  width:2px; border-radius:2px; background:var(--accent); }
+.cat-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.idx-row.is-all .cat-name { color:var(--ink-2); }
+.cat-num { font-family:var(--font-mono); font-size:10px; color:var(--ink-3); }
+.type-dot { width:4px; height:4px; border-radius:99px; flex:none; }
+.type-dot.pdf { background:var(--accent); } .type-dot.md { background:var(--ok); }
+.type-dot.txt { background:var(--cat-indigo); } .type-dot.epub { background:var(--cat-plum); }
+.idx-row .ic { width:12px; height:12px; flex:none; color:var(--accent); }
+.cat-dot { width:7px; height:7px; border-radius:99px; flex:none; }
+.cat-dot.is-tiny { width:5px; height:5px; }
+.c-clay { background:var(--cat-clay); } .c-indigo { background:var(--cat-indigo); }
+.c-olive { background:var(--cat-olive); } .c-amber { background:var(--cat-amber); }
+.c-plum { background:var(--cat-plum); } .c-slate { background:var(--cat-slate); }
+.cat-row.is-drop { background:var(--accent-weak); box-shadow:inset 0 0 0 2px var(--accent); }
+.cat-add { width:22px; height:22px; border-radius:var(--r-sm); display:inline-flex;
+  align-items:center; justify-content:center; color:var(--ink-3); }
+.cat-add:hover { background:var(--surface-2); color:var(--accent); }
+.cat-add .ic { width:13px; height:13px; }
+
+/* 状态图形：12px 迷你进度线 / 对勾 */
+.status-glyph { width:12px; height:12px; flex:none; display:inline-flex; align-items:center; }
+.status-glyph .line { width:12px; height:3px; border-radius:2px; background:var(--line-strong); overflow:hidden; }
+.status-glyph .line i { display:block; height:100%; background:var(--accent); border-radius:2px; }
+.status-glyph .ic { width:12px; height:12px; color:var(--ok); }
+
+/* ---------- 排序工具条（本次原型核心 ①） ---------- */
+.list-tools { position:relative; flex:none; height:28px; display:flex; align-items:center;
+  justify-content:space-between; padding:0 12px 0 8px; border-top:1px solid var(--line); }
+.sort-btn { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 7px;
+  border-radius:var(--r-sm); font-size:11px; color:var(--ink-2); }
+.sort-btn:hover { background:var(--surface-2); color:var(--ink); }
+.sort-btn .ic { width:12px; height:12px; color:var(--ink-3); }
+.sort-dir { font-family:var(--font-mono); font-size:10px; color:var(--accent); }
+.shown-count { font-family:var(--font-mono); font-size:10px; color:var(--ink-3); }
+.sort-menu { position:absolute; top:26px; left:8px; z-index:30; width:196px; padding:4px;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); box-shadow:var(--shadow-md); }
+.sort-menu[hidden] { display:none; }
+.sort-item { display:flex; align-items:center; gap:7px; width:100%; height:28px; padding:0 8px;
+  border-radius:6px; font-size:12px; color:var(--ink-2); text-align:left; }
+.sort-item:hover { background:var(--surface-2); color:var(--ink); }
+.sort-item .ic { width:12px; height:12px; color:var(--accent); visibility:hidden; }
+.sort-item.is-active { color:var(--ink); }
+.sort-item.is-active .ic { visibility:visible; }
+.sort-item .dir { margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--ink-3); }
+.sort-item.is-active .dir { color:var(--accent); }
+.sort-hint { padding:5px 8px 3px; font-size:10px; color:var(--ink-3); border-top:1px solid var(--line); margin-top:4px; }
+
+/* ---------- book list ---------- */
+.book-list { flex:1; min-height:0; overflow-y:auto; padding:6px 8px; }
+.book-list::-webkit-scrollbar { width:10px; }
+.book-list::-webkit-scrollbar-thumb { background:color-mix(in srgb,var(--ink-3) 30%,transparent);
+  border-radius:99px; border:3px solid transparent; background-clip:content-box; }
+.book-row { position:relative; display:flex; gap:9px; align-items:center; padding:7px 8px;
+  border-radius:var(--r-md); cursor:pointer; }
+.book-row:hover { background:var(--surface); }
+.book-row.is-dragging { opacity:.4; }
+.mini-cover { width:30px; height:40px; flex:none; border-radius:3px; display:flex; align-items:center;
+  justify-content:center; font-family:var(--font-display); font-size:14px; color:var(--surface);
+  box-shadow:var(--shadow-sm); }
+.tint-clay { background:var(--cat-clay); } .tint-indigo { background:var(--cat-indigo); }
+.tint-olive { background:var(--cat-olive); } .tint-sand { background:var(--cat-amber); }
+.tint-plum { background:var(--cat-plum); }
+.book-row-main { flex:1; min-width:0; }
+.book-row-title { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.book-row-meta { display:flex; align-items:center; gap:5px; font-size:10px; color:var(--ink-3); margin-top:2px; }
+.progress-line { display:block; height:2px; border-radius:2px; background:var(--line); margin-top:5px; overflow:hidden; }
+.progress-line i { display:block; height:100%; background:var(--accent); border-radius:2px; }
+.remove-btn { width:24px; height:24px; flex:none; border-radius:var(--r-sm); display:inline-flex;
+  align-items:center; justify-content:center; color:var(--ink-3); opacity:0; transition:opacity .15s var(--ease); }
+.book-row:hover .remove-btn { opacity:1; }
+.remove-btn:hover { background:var(--accent-weak); color:var(--accent); }
+.remove-btn .ic { width:13px; height:13px; }
+.ctx-empty { padding:26px 14px; text-align:center; font-size:12px; color:var(--ink-3); line-height:1.9; }
+.panel-foot { flex:none; padding:10px 12px 12px; border-top:1px solid var(--line); }
+.hint { font-size:10.5px; color:var(--ink-3); line-height:1.7; }
+
+/* ---------- stage ---------- */
+.stage { flex:1; min-width:0; overflow-y:auto; padding:26px 30px; }
+.stage::-webkit-scrollbar { width:10px; }
+.stage::-webkit-scrollbar-thumb { background:color-mix(in srgb,var(--ink-3) 30%,transparent);
+  border-radius:99px; border:3px solid transparent; background-clip:content-box; }
+.grid-head { display:flex; align-items:baseline; gap:12px; margin-bottom:16px; }
+.grid-head h2 { font-family:var(--font-display); font-size:22px; letter-spacing:.04em; font-weight:400; }
+.section-sub { font-size:11px; color:var(--ink-3); }
+.head-clear { margin-left:auto; font-size:11px; color:var(--accent); border-bottom:1px solid transparent; }
+.head-clear:hover { border-bottom-color:var(--accent); }
+.head-clear[hidden] { display:none; }
+.book-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:16px; }
+.book-card { border-radius:var(--r-md); cursor:pointer; }
+.cover { position:relative; aspect-ratio:3/4; border-radius:var(--r-md); padding:14px 12px;
+  display:flex; flex-direction:column; color:var(--surface); box-shadow:var(--shadow-sm);
+  transition:transform .26s var(--ease),box-shadow .26s var(--ease); }
+.book-card:hover .cover { transform:translateY(-3px); box-shadow:var(--shadow-md); }
+.cover-kind { font-family:var(--font-mono); font-size:9px; letter-spacing:.18em; opacity:.85; }
+.cover-title { font-family:var(--font-display); font-size:17px; line-height:1.4; margin-top:8px; }
+.cover-rule { width:26px; height:1px; background:currentColor; opacity:.5; margin:10px 0 8px; }
+.cover-author { font-size:10px; opacity:.8; margin-top:auto; }
+.cover-badge { position:absolute; top:8px; right:8px; width:22px; height:22px; border-radius:99px;
+  display:inline-flex; align-items:center; justify-content:center; color:var(--surface); opacity:.4; }
+.cover-badge.is-on { opacity:1; color:#f6e7c8; }
+.cover-badge .ic { width:13px; height:13px; }
+.card-meta { padding:8px 2px 0; }
+.card-title { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.card-sub { display:flex; align-items:center; gap:5px; font-size:10px; color:var(--ink-3); margin-top:3px; }
+.card-foot { display:flex; align-items:center; gap:8px; margin-top:6px; }
+.card-foot .progress-line { flex:1; margin-top:0; }
+.card-pct { font-family:var(--font-mono); font-size:9.5px; color:var(--ink-3); }
+.stats-strip { display:flex; gap:22px; margin-top:26px; padding-top:14px; border-top:1px solid var(--line); }
+.stat b { font-family:var(--font-mono); font-size:16px; font-weight:500; display:block; }
+.stat span { font-size:10px; color:var(--ink-3); letter-spacing:.08em; }
+
+/* ---------- toast + 撤销（本次原型核心 ②） ---------- */
+.toast-wrap { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:60; }
+.toast { position:relative; display:flex; align-items:center; gap:9px; min-width:240px; max-width:420px;
+  padding:10px 14px; background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
+  box-shadow:var(--shadow-md); font-size:12px; overflow:hidden;
+  animation:toast-in .26s var(--ease); }
+.toast.is-out { animation:toast-out .22s var(--ease) forwards; }
+.toast .ic { width:14px; height:14px; color:var(--ok); }
+.toast span { flex:1; min-width:0; }
+.toast-action { flex:none; padding:3px 10px; border-radius:var(--r-pill); font-size:11.5px;
+  color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 40%,transparent); }
+.toast-action:hover { background:var(--accent-weak); }
+.toast-life { position:absolute; left:0; bottom:0; height:2px; background:var(--accent); opacity:.55;
+  animation:life linear forwards; }
+@keyframes toast-in { from { opacity:0; transform:translateY(10px); } }
+@keyframes toast-out { to { opacity:0; transform:translateY(8px); } }
+@keyframes life { from { width:100%; } to { width:0%; } }
+
+/* ---------- 确认框 ---------- */
+.overlay { position:fixed; inset:0; z-index:50; background:color-mix(in srgb,var(--ink) 32%,transparent);
+  display:flex; align-items:center; justify-content:center; }
+.overlay[hidden] { display:none; }
+.confirm-card { width:320px; background:var(--surface); border:1px solid var(--line);
+  border-radius:var(--r-lg); box-shadow:var(--shadow-lg); padding:20px 22px; }
+.confirm-eyebrow { font-family:var(--font-mono); font-size:9px; letter-spacing:.24em; color:var(--accent); }
+.confirm-card h3 { font-family:var(--font-display); font-size:17px; font-weight:400; margin:8px 0 6px; }
+.confirm-book { font-size:13px; color:var(--ink); margin-bottom:8px; }
+.confirm-note { font-size:11.5px; color:var(--ink-3); line-height:1.8; margin-bottom:16px; }
+.confirm-actions { display:flex; justify-content:flex-end; gap:8px; }
+.btn-ghost { height:30px; padding:0 14px; border-radius:var(--r-md); font-size:12px; color:var(--ink-2); }
+.btn-ghost:hover { background:var(--surface-2); }
+.btn-danger { height:30px; padding:0 14px; border-radius:var(--r-md); font-size:12px;
+  color:var(--surface); background:var(--accent); }
+.btn-danger:hover { background:var(--accent-ink); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8L3.5 9.7l5.9-.8z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4h9a3 3 0 013 3v13H8a3 3 0 01-3-3z"/><path d="M17 20a3 3 0 00-3-3H5"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 24 24"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="titlebar">
+    <span class="brand-mark">阅笺</span>
+    <span class="brand-sub">SHELF TOOLS · PROTOTYPE</span>
+    <span class="tb-spacer"></span>
+    <span class="tb-note">状态筛选 · 排序菜单 · 删除撤销 · 拖拽归类不回归</span>
+    <button class="tb-btn" id="themeBtn">主题 · 纸白</button>
+    <button class="tb-btn" id="resetBtn">重置数据</button>
+  </header>
+
+  <div class="workspace">
+    <nav class="rail">
+      <button class="rail-btn is-active"><svg class="ic"><use href="#i-book"/></svg>书架</button>
+    </nav>
+
+    <aside class="library-panel">
+      <div class="panel-head">
+        <div class="panel-title">文档库 <span class="count" id="libCount">0</span></div>
+        <button class="icon-btn" title="导入文档（原型略）"><svg class="ic"><use href="#i-plus"/></svg></button>
+      </div>
+      <div class="search-box">
+        <svg class="ic"><use href="#i-search"/></svg>
+        <input id="libSearch" type="text" placeholder="搜索书名、作者" />
+      </div>
+
+      <div class="shelf-index" id="shelfIndex">
+        <div class="idx-head" id="typeHead">
+          <button class="idx-toggle" id="typeToggle" aria-expanded="false">
+            <svg class="ic idx-caret"><use href="#i-chevron-right"/></svg>
+            <span>类型</span><span class="idx-current" id="typeCurrent"></span>
+            <span class="count" id="typeCount">0</span>
+          </button>
+        </div>
+        <div class="idx-rows" id="typeList"></div>
+
+        <div class="idx-head idx-head-status" id="statusHead">
+          <button class="idx-toggle" id="statusToggle" aria-expanded="false">
+            <svg class="ic idx-caret"><use href="#i-chevron-right"/></svg>
+            <span>状态</span><span class="idx-current" id="statusCurrent"></span>
+            <span class="count" id="statusCount">0</span>
+          </button>
+        </div>
+        <div class="idx-rows" id="statusList"></div>
+
+        <div class="idx-head idx-head-cat" id="catHead">
+          <button class="idx-toggle" id="catToggle" aria-expanded="true">
+            <svg class="ic idx-caret"><use href="#i-chevron-right"/></svg>
+            <span>分类</span><span class="count" id="catCount">0</span>
+          </button>
+          <button class="cat-add" title="新建分类（原型略）"><svg class="ic"><use href="#i-plus"/></svg></button>
+        </div>
+        <div class="idx-rows" id="catList"></div>
+      </div>
+
+      <div class="list-tools">
+        <button class="sort-btn" id="sortBtn" aria-haspopup="menu" aria-expanded="false">
+          <svg class="ic"><use href="#i-sort"/></svg>
+          <span id="sortLabel">最近打开</span><span class="sort-dir" id="sortDir">↓</span>
+        </button>
+        <span class="shown-count" id="shownCount"></span>
+        <div class="sort-menu" id="sortMenu" role="menu" hidden></div>
+      </div>
+
+      <div class="book-list" id="bookList"></div>
+      <div class="panel-foot"><p class="hint">把书拖到分类行上归类 · 状态行不接受落点<br>悬停书行右侧出现移除按钮，删除后 6 秒内可撤销</p></div>
+    </aside>
+
+    <main class="stage">
+      <div class="grid-head">
+        <h2 id="gridTitle">全部文档</h2>
+        <span class="section-sub" id="gridSub"></span>
+        <button class="head-clear" id="headClear" hidden>清除筛选</button>
+      </div>
+      <div class="book-grid" id="bookGrid"></div>
+      <div class="stats-strip">
+        <div class="stat"><b id="statBooks">0</b><span>藏书（全局）</span></div>
+        <div class="stat"><b id="statReading">0</b><span>在读（全局）</span></div>
+        <div class="stat"><b id="statFinished">0</b><span>读完（全局）</span></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+<div class="overlay" id="confirmOverlay" hidden>
+  <div class="confirm-card" role="dialog" aria-modal="true">
+    <p class="confirm-eyebrow">REMOVE FROM SHELF</p>
+    <h3>移出书架</h3>
+    <p class="confirm-book" id="confirmBook"></p>
+    <p class="confirm-note">只移除书架记录，原文件不会被删除。移除后 6 秒内可在提示条上撤销。</p>
+    <div class="confirm-actions">
+      <button class="btn-ghost" id="confirmCancel">取消</button>
+      <button class="btn-danger" id="confirmOk">移出</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================= 种子数据 ================= */
+const now = Date.now();
+const H = 3600e3, D = 86400e3;
+const seedBooks = () => [
+  { id:"b1", title:"深度学习论文合集", author:"Various", kind:"pdf", ratio:.42, pages:128, size:8.4e6, favorite:true, categoryId:"c1", addedAt:now-9*D, lastOpenedAt:now-2*H },
+  { id:"b2", title:"价格行为学", author:"Al Brooks", kind:"ebook", ratio:.67, pages:0, size:3.1e6, favorite:false, categoryId:"c1", addedAt:now-20*D, lastOpenedAt:now-26*H },
+  { id:"b3", title:"Rust 异步编程手册", author:"社区译组", kind:"markdown", ratio:0, pages:0, size:96e3, favorite:false, categoryId:"c2", addedAt:now-1*D, lastOpenedAt:0 },
+  { id:"b4", title:"红楼梦", author:"曹雪芹", kind:"ebook", ratio:1, pages:0, size:2.2e6, favorite:true, categoryId:"", addedAt:now-60*D, lastOpenedAt:now-5*D },
+  { id:"b5", title:"系统设计面试", author:"Alex Xu", kind:"pdf", ratio:.999, pages:310, size:15e6, favorite:false, categoryId:"c2", addedAt:now-30*D, lastOpenedAt:now-3*D },
+  { id:"b6", title:"晨间日记", author:"我", kind:"markdown", ratio:.0005, pages:0, size:12e3, favorite:false, categoryId:"", addedAt:now-12*D, lastOpenedAt:now-4*D },
+  { id:"b7", title:"日志分析脚本", author:"ops", kind:"text", ratio:.15, pages:0, size:44e3, favorite:false, categoryId:"", addedAt:now-3*D, lastOpenedAt:now-30*60e3 },
+  { id:"b8", title:"财报分析笔记", author:"我", kind:"markdown", ratio:.88, pages:0, size:210e3, favorite:true, categoryId:"c1", addedAt:now-15*D, lastOpenedAt:now-8*H },
+  { id:"b9", title:"三体全集", author:"刘慈欣", kind:"ebook", ratio:0, pages:0, size:5.6e6, favorite:false, categoryId:"", addedAt:now-2*D, lastOpenedAt:0 },
+  { id:"b10", title:"编译原理", author:"Aho 等", kind:"pdf", ratio:.3, pages:620, size:22e6, favorite:false, categoryId:"c2", addedAt:now-45*D, lastOpenedAt:now-6*D },
+];
+const seedCategories = () => [
+  { id:"c1", name:"论文", color:"clay" },
+  { id:"c2", name:"技术手册", color:"olive" },
+];
+
+/* ================= 状态 ================= */
+const state = {
+  books: seedBooks(), categories: seedCategories(),
+  filter:"all", categoryId:null, status:null, query:"",
+  sort:"recent", sortDesc:true,
+  typeCollapsed:true, statusCollapsed:true, catCollapsed:false,
+};
+
+/* ================= 纯函数 ================= */
+const readingStatus = (b) => b.ratio >= .999 ? "finished" : b.ratio > .001 ? "reading" : "unread";
+const STATUS_LABEL = { reading:"在读", unread:"未读", finished:"读完" };
+const SORT_AXES = [
+  { key:"recent", label:"最近打开", desc:true },
+  { key:"added", label:"最近添加", desc:true },
+  { key:"title", label:"书名", desc:false },
+  { key:"progress", label:"阅读进度", desc:true },
+];
+const sortBooks = (books, sort, desc) => {
+  const dir = desc ? -1 : 1;
+  const val = (b) => sort === "recent" ? b.lastOpenedAt : sort === "added" ? b.addedAt
+    : sort === "progress" ? b.ratio : null;
+  return books.slice().sort((a, b) => {
+    let r;
+    if (sort === "title") r = a.title.localeCompare(b.title, "zh", { numeric:true });
+    else r = val(a) - val(b);
+    if (r === 0) r = a.lastOpenedAt - b.lastOpenedAt;
+    return r * dir;
+  });
+};
+const scopeBooks = () => state.books.filter((b) => {
+  if (state.filter === "star" && !b.favorite) return false;
+  if (["pdf","markdown","text","ebook"].includes(state.filter) && b.kind !== state.filter) return false;
+  if (state.categoryId !== null && b.categoryId !== state.categoryId) return false;
+  if (state.status !== null && readingStatus(b) !== state.status) return false;
+  return true;
+});
+const visibleBooks = () => {
+  const q = state.query.toLowerCase();
+  return sortBooks(scopeBooks().filter((b) => !q || `${b.title} ${b.author}`.toLowerCase().includes(q)), state.sort, state.sortDesc);
+};
+const pct = (b) => Math.round(Math.min(1, Math.max(0, b.ratio)) * 100);
+const rel = (ms) => {
+  if (!ms) return "未打开";
+  const d = now - ms;
+  if (d < H) return `${Math.max(1, Math.floor(d / 60e3))} 分钟前`;
+  if (d < D) return `${Math.floor(d / H)} 小时前`;
+  return `${Math.floor(d / D)} 天前`;
+};
+const KIND = { pdf:"PDF", markdown:"MARKDOWN", text:"TXT", ebook:"EPUB" };
+const KIND_DOT = { pdf:"pdf", markdown:"md", text:"txt", ebook:"epub" };
+const TINTS = ["clay","indigo","olive","sand","plum"];
+const tint = (id) => TINTS[[...id].reduce((s, c) => s + c.charCodeAt(0), 0) % TINTS.length];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const $ = (s) => document.querySelector(s);
+
+/* ================= 渲染 ================= */
+function renderIndex() {
+  const books = state.books;
+  const typeCount = state.filter === "all" ? books.length
+    : state.filter === "star" ? books.filter((b) => b.favorite).length
+    : books.filter((b) => b.kind === state.filter).length;
+  const TYPES = [
+    { key:"all", label:"全部", mark:"" },
+    { key:"pdf", label:"PDF", mark:'<i class="type-dot pdf"></i>' },
+    { key:"markdown", label:"MARKDOWN", mark:'<i class="type-dot md"></i>' },
+    { key:"text", label:"文本", mark:'<i class="type-dot txt"></i>' },
+    { key:"ebook", label:"电子书", mark:'<i class="type-dot epub"></i>' },
+    { key:"star", label:"收藏", mark:'<svg class="ic"><use href="#i-star"/></svg>' },
+  ];
+  $("#typeList").innerHTML = TYPES.map((f) => `
+    <div class="idx-row ${f.key === "all" ? "is-all" : ""} ${state.filter === f.key ? "is-active" : ""}"
+      data-filter="${f.key}" role="button" tabindex="0">
+      ${f.mark}<span class="cat-name">${f.label}</span>
+      <span class="cat-num">${f.key === "all" ? books.length : f.key === "star" ? books.filter((b) => b.favorite).length : books.filter((b) => b.kind === f.key).length}</span>
+    </div>`).join("");
+  $("#typeCurrent").textContent = state.filter === "all" ? "" : (TYPES.find((f) => f.key === state.filter)?.label || "");
+  $("#typeCount").textContent = typeCount;
+  $("#typeHead").classList.toggle("is-collapsed", state.typeCollapsed);
+  $("#typeToggle").setAttribute("aria-expanded", String(!state.typeCollapsed));
+
+  const counts = { reading:0, unread:0, finished:0 };
+  books.forEach((b) => counts[readingStatus(b)]++);
+  const STATUSES = [
+    { key:null, label:"全部状态", mark:"" },
+    { key:"reading", label:"在读", mark:'<span class="status-glyph"><span class="line"><i style="width:50%"></i></span></span>' },
+    { key:"unread", label:"未读", mark:'<span class="status-glyph"><span class="line"></span></span>' },
+    { key:"finished", label:"读完", mark:'<span class="status-glyph"><svg class="ic"><use href="#i-check"/></svg></span>' },
+  ];
+  $("#statusList").innerHTML = STATUSES.map((s) => `
+    <div class="idx-row ${s.key === null ? "is-all" : ""} ${state.status === s.key ? "is-active" : ""}"
+      data-status="${s.key === null ? "" : s.key}" role="button" tabindex="0">
+      ${s.mark}<span class="cat-name">${s.label}</span>
+      <span class="cat-num">${s.key === null ? books.length : counts[s.key]}</span>
+    </div>`).join("");
+  $("#statusCurrent").textContent = state.status ? STATUS_LABEL[state.status] : "";
+  $("#statusCount").textContent = state.status ? counts[state.status] : books.length;
+  $("#statusHead").classList.toggle("is-collapsed", state.statusCollapsed);
+  $("#statusToggle").setAttribute("aria-expanded", String(!state.statusCollapsed));
+
+  const catCount = (id) => books.filter((b) => b.categoryId === id).length;
+  $("#catList").innerHTML = `
+    <div class="cat-row ${state.categoryId === null ? "is-active" : ""}" data-cat="" role="button" tabindex="0">
+      <span class="cat-name" style="color:var(--ink-2)">全部分类</span><span class="cat-num">${books.length}</span>
+    </div>
+    <div class="cat-row ${state.categoryId === "" ? "is-active" : ""}" data-cat="none" role="button" tabindex="0">
+      <span class="cat-name" style="color:var(--ink-2)">未分类</span><span class="cat-num">${catCount("")}</span>
+    </div>` + state.categories.map((c) => `
+    <div class="cat-row ${state.categoryId === c.id ? "is-active" : ""}" data-cat="${c.id}" role="button" tabindex="0">
+      <span class="cat-dot c-${c.color}"></span><span class="cat-name">${esc(c.name)}</span><span class="cat-num">${catCount(c.id)}</span>
+    </div>`).join("");
+  $("#catCount").textContent = state.categories.length;
+  $("#catHead").classList.toggle("is-collapsed", state.catCollapsed);
+  $("#catToggle").setAttribute("aria-expanded", String(!state.catCollapsed));
+}
+
+function renderSort() {
+  const axis = SORT_AXES.find((a) => a.key === state.sort);
+  $("#sortLabel").textContent = axis.label;
+  $("#sortDir").textContent = state.sortDesc ? "↓" : "↑";
+  $("#sortMenu").innerHTML = SORT_AXES.map((a) => `
+    <button class="sort-item ${a.key === state.sort ? "is-active" : ""}" data-sort="${a.key}"
+      role="menuitemradio" aria-checked="${a.key === state.sort}" tabindex="0">
+      <svg class="ic"><use href="#i-check"/></svg>${a.label}
+      <span class="dir">${a.key === state.sort ? (state.sortDesc ? "↓" : "↑") : (a.desc ? "↓" : "↑")}</span>
+    </button>`).join("") + `<p class="sort-hint">再点当前项翻转方向 · 排序会记住</p>`;
+}
+
+function renderList() {
+  const books = visibleBooks();
+  $("#libCount").textContent = state.books.length;
+  $("#shownCount").textContent = `${books.length} 份`;
+  $("#bookList").innerHTML = books.length ? books.map((b) => `
+    <div class="book-row" data-book="${b.id}" draggable="true" role="button" tabindex="0">
+      <div class="mini-cover tint-${tint(b.id)}"><span>${esc(b.title.slice(0, 1))}</span></div>
+      <div class="book-row-main">
+        <div class="book-row-title">${esc(b.title)}</div>
+        <div class="book-row-meta"><i class="type-dot ${KIND_DOT[b.kind]}"></i>${KIND[b.kind]} · ${rel(b.lastOpenedAt)}
+          ${b.categoryId ? `<span class="cat-dot is-tiny c-${state.categories.find((c) => c.id === b.categoryId)?.color || "slate"}"></span>` : ""}
+        </div>
+        <span class="progress-line"><i style="width:${pct(b)}%"></i></span>
+      </div>
+      <button class="remove-btn" data-remove="${b.id}" title="移出书架"><svg class="ic"><use href="#i-trash"/></svg></button>
+    </div>`).join("")
+    : `<div class="ctx-empty">${state.books.length ? "没有匹配的文档<br>试试清除筛选条件" : "书架空空如也"}</div>`;
+
+  $("#bookGrid").innerHTML = books.map((b) => `
+    <div class="book-card" data-book="${b.id}" draggable="true" tabindex="0">
+      <div class="cover tint-${tint(b.id)}">
+        <span class="cover-kind">${KIND[b.kind]}</span>
+        <span class="cover-title">${esc(b.title)}</span>
+        <span class="cover-rule"></span>
+        <span class="cover-author">${esc(b.author)}</span>
+        <span class="cover-badge ${b.favorite ? "is-on" : ""}"><svg class="ic"><use href="#i-star"/></svg></span>
+      </div>
+      <div class="card-meta">
+        <div class="card-title">${esc(b.title)}</div>
+        <div class="card-sub">${b.categoryId ? `<span class="cat-dot is-tiny c-${state.categories.find((c) => c.id === b.categoryId)?.color || "slate"}"></span>` : ""}${KIND[b.kind]} · ${rel(b.lastOpenedAt)}</div>
+        <div class="card-foot"><span class="progress-line"><i style="width:${pct(b)}%"></i></span><span class="card-pct">${pct(b)}%</span></div>
+      </div>
+    </div>`).join("");
+
+  const parts = [];
+  if (state.status) parts.push(STATUS_LABEL[state.status]);
+  if (state.categoryId === "") parts.push("未分类");
+  else if (state.categoryId) parts.push(state.categories.find((c) => c.id === state.categoryId)?.name || "");
+  if (state.filter !== "all") parts.push(state.filter === "star" ? "收藏" : state.filter === "text" ? "文本" : state.filter === "ebook" ? "电子书" : KIND[state.filter] || state.filter);
+  if (state.query) parts.push(`“${state.query}”`);
+  $("#gridTitle").textContent = parts.length ? parts.join(" · ") : "全部文档";
+  const axis = SORT_AXES.find((a) => a.key === state.sort);
+  $("#gridSub").textContent = parts.length ? `已筛选 · 按${axis.label}${state.sortDesc ? "降序" : "升序"}` : `按${axis.label}${state.sortDesc ? "降序" : "升序"}`;
+  $("#headClear").hidden = parts.length === 0;
+
+  /* 统计保持全局口径 */
+  $("#statBooks").textContent = state.books.length;
+  $("#statReading").textContent = state.books.filter((b) => readingStatus(b) === "reading").length;
+  $("#statFinished").textContent = state.books.filter((b) => readingStatus(b) === "finished").length;
+}
+
+function render() { renderIndex(); renderSort(); renderList(); }
+
+/* ================= toast（带撤销动作 + 寿命条） ================= */
+let toastTimer = null;
+function toast(message, opts = {}) {
+  const wrap = $("#toastWrap");
+  wrap.innerHTML = "";
+  clearTimeout(toastTimer);
+  const el = document.createElement("div");
+  el.className = "toast";
+  const duration = opts.duration || 2200;
+  el.innerHTML = `<svg class="ic"><use href="#i-check"/></svg><span></span>` +
+    (opts.actionText ? `<button class="toast-action">${esc(opts.actionText)}</button><i class="toast-life" style="animation-duration:${duration}ms"></i>` : "");
+  el.querySelector("span").textContent = message;
+  if (opts.actionText) {
+    el.querySelector(".toast-action").addEventListener("click", () => {
+      clearTimeout(toastTimer);
+      el.remove();
+      opts.onAction?.();
+    });
+  }
+  wrap.appendChild(el);
+  toastTimer = setTimeout(() => {
+    el.classList.add("is-out");
+    toastTimer = setTimeout(() => el.remove(), 220);
+  }, duration);
+}
+
+/* ================= 删除 + 撤销 ================= */
+let pendingRemove = null;
+function askRemove(book) {
+  pendingRemove = book;
+  $("#confirmBook").textContent = `《${book.title}》`;
+  $("#confirmOverlay").hidden = false;
+}
+function settleConfirm(ok) {
+  $("#confirmOverlay").hidden = true;
+  const book = pendingRemove;
+  pendingRemove = null;
+  if (!ok || !book) return;
+  const snapshot = { ...book };
+  state.books = state.books.filter((b) => b.id !== book.id);
+  render();
+  toast(`已移除《${book.title}》`, {
+    actionText:"撤销", duration:6000,
+    onAction() {
+      /* 幂等：id 已存在（期间重新导入 / 双击）不产生重复 */
+      if (!state.books.some((b) => b.id === snapshot.id)) state.books.push(snapshot);
+      render();
+      toast(`已恢复《${snapshot.title}》`);
+    },
+  });
+}
+$("#confirmOk").addEventListener("click", () => settleConfirm(true));
+$("#confirmCancel").addEventListener("click", () => settleConfirm(false));
+$("#confirmOverlay").addEventListener("click", (e) => { if (e.target === e.currentTarget) settleConfirm(false); });
+
+/* ================= 事件 ================= */
+document.addEventListener("click", (e) => {
+  const rm = e.target.closest("[data-remove]");
+  if (rm) { e.stopPropagation(); askRemove(state.books.find((b) => b.id === rm.dataset.remove)); return; }
+  const bookEl = e.target.closest("[data-book]");
+  if (bookEl) { toast(`打开《${state.books.find((b) => b.id === bookEl.dataset.book)?.title || ""}》（原型略）`); return; }
+  /* 排序菜单外点关闭 */
+  if (!e.target.closest(".list-tools")) closeSortMenu();
+});
+
+$("#typeList").addEventListener("click", (e) => {
+  const row = e.target.closest(".idx-row");
+  if (!row) return;
+  state.filter = row.dataset.filter;
+  state.typeCollapsed = true;
+  render();
+});
+$("#statusList").addEventListener("click", (e) => {
+  const row = e.target.closest(".idx-row");
+  if (!row) return;
+  state.status = row.dataset.status || null;
+  state.statusCollapsed = true;
+  render();
+});
+$("#catList").addEventListener("click", (e) => {
+  const row = e.target.closest(".cat-row");
+  if (!row) return;
+  state.categoryId = row.dataset.cat === "" ? null : row.dataset.cat === "none" ? "" : row.dataset.cat;
+  render();
+});
+$("#typeToggle").addEventListener("click", () => { state.typeCollapsed = !state.typeCollapsed; render(); });
+$("#statusToggle").addEventListener("click", () => { state.statusCollapsed = !state.statusCollapsed; render(); });
+$("#catToggle").addEventListener("click", () => { state.catCollapsed = !state.catCollapsed; render(); });
+
+$("#shelfIndex").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const row = e.target.closest(".cat-row, .idx-row");
+  if (row) { e.preventDefault(); row.click(); }
+});
+
+/* 排序菜单 */
+function closeSortMenu() {
+  $("#sortMenu").hidden = true;
+  $("#sortBtn").setAttribute("aria-expanded", "false");
+}
+$("#sortBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const menu = $("#sortMenu");
+  menu.hidden = !menu.hidden;
+  $("#sortBtn").setAttribute("aria-expanded", String(!menu.hidden));
+  if (!menu.hidden) menu.querySelector(".sort-item")?.focus();
+});
+$("#sortMenu").addEventListener("click", (e) => {
+  /* 翻向时菜单会重建，点击目标随即脱离 DOM；不截断冒泡的话，
+     document 的外点检测拿着已摘除的 target 找不到 .list-tools，会误关菜单 */
+  e.stopPropagation();
+  const item = e.target.closest(".sort-item");
+  if (!item) return;
+  const key = item.dataset.sort;
+  if (key === state.sort) state.sortDesc = !state.sortDesc;           /* 点当前项：翻向，菜单不关 */
+  else { state.sort = key; state.sortDesc = SORT_AXES.find((a) => a.key === key).desc; closeSortMenu(); }
+  render();
+  if (!$("#sortMenu").hidden) $("#sortMenu").querySelector(`[data-sort="${key}"]`)?.focus();
+});
+$("#sortMenu").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.target.closest(".sort-item")?.click(); }
+});
+
+$("#libSearch").addEventListener("input", (e) => { state.query = e.target.value.trim(); render(); });
+$("#headClear").addEventListener("click", () => {
+  state.filter = "all"; state.categoryId = null; state.status = null; state.query = "";
+  $("#libSearch").value = "";
+  render();
+});
+
+/* 拖拽归类（回归验证）：落点只认分类行 */
+let dragId = null;
+document.addEventListener("dragstart", (e) => {
+  const el = e.target.closest("[data-book]");
+  if (!el) return;
+  e.stopPropagation();
+  dragId = el.dataset.book;
+  e.dataTransfer.setData("text/plain", dragId);
+  e.dataTransfer.effectAllowed = "move";
+  el.classList.add("is-dragging");
+});
+document.addEventListener("dragend", (e) => {
+  e.target.closest("[data-book]")?.classList.remove("is-dragging");
+  document.querySelectorAll(".cat-row.is-drop").forEach((r) => r.classList.remove("is-drop"));
+  dragId = null;
+});
+$("#catList").addEventListener("dragover", (e) => {
+  const row = e.target.closest(".cat-row");
+  if (!row || !dragId) return;
+  e.preventDefault();
+  document.querySelectorAll(".cat-row.is-drop").forEach((r) => r !== row && r.classList.remove("is-drop"));
+  row.classList.add("is-drop");
+});
+$("#catList").addEventListener("dragleave", (e) => {
+  const row = e.target.closest(".cat-row");
+  if (row && !row.contains(e.relatedTarget)) row.classList.remove("is-drop");
+});
+$("#catList").addEventListener("drop", (e) => {
+  const row = e.target.closest(".cat-row");
+  if (!row || !dragId) return;
+  e.preventDefault();
+  const id = dragId;
+  const target = row.dataset.cat === "" ? null : row.dataset.cat === "none" ? "" : row.dataset.cat;
+  const book = state.books.find((b) => b.id === id);
+  if (book && target !== null) {
+    book.categoryId = target;
+    const name = target === "" ? "未分类" : state.categories.find((c) => c.id === target)?.name;
+    toast(`已把《${book.title}》归入「${name}」`);
+  }
+  row.classList.remove("is-drop");
+  render();
+});
+
+/* Esc 分层：确认框 > 排序菜单 */
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("#confirmOverlay").hidden) { settleConfirm(false); return; }
+  if (!$("#sortMenu").hidden) { closeSortMenu(); $("#sortBtn").focus(); }
+});
+
+/* 主题 / 重置 */
+const THEMES = [["paper","纸白"],["night","夜读"],["sepia","护眼"]];
+let themeIdx = 0;
+$("#themeBtn").addEventListener("click", () => {
+  themeIdx = (themeIdx + 1) % THEMES.length;
+  document.documentElement.dataset.theme = THEMES[themeIdx][0];
+  $("#themeBtn").textContent = `主题 · ${THEMES[themeIdx][1]}`;
+});
+$("#resetBtn").addEventListener("click", () => {
+  Object.assign(state, { books:seedBooks(), categories:seedCategories(), filter:"all", categoryId:null,
+    status:null, query:"", sort:"recent", sortDesc:true, typeCollapsed:true, statusCollapsed:true, catCollapsed:false });
+  $("#libSearch").value = "";
+  closeSortMenu();
+  render();
+  toast("已重置为种子数据");
+});
+
+render();
+</script>
+</body>
+</html>

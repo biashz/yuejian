@@ -10,6 +10,7 @@
  * 这一层只做「读出来归一化」和「写回去」，不持有状态。
  */
 import { clamp } from "../core/dom.js";
+import { FONT_IDS } from "./fonts.js";
 
 /** 各项的取值范围：面板的滑杆上下限、样式的 clamp 都用这一份 */
 const RANGE = {
@@ -71,7 +72,7 @@ function readLayout(settings) {
   const paraSpacing = clamp(num(settings?.ebookParaSpacing, 0), ...RANGE.paraSpacing);
   const indent = clamp(num(settings?.ebookIndent, 0), 0, 2);
   return {
-    family: pick(settings?.ebookFamily, ["serif", "sans", "kai"], "serif"),
+    family: pick(settings?.ebookFamily, FONT_IDS, "serif"),
     size,
     letter: clamp(num(settings?.ebookLetterSpacing, 0), ...RANGE.letter),
     lineHeight: clamp(num(settings?.ebookLineHeight, 1.85), ...RANGE.lineHeight),

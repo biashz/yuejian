@@ -5,10 +5,60 @@
 import { $, escapeHtml } from "./core/dom.js";
 import { t } from "./i18n.js";
 import { state } from "./core/session.js";
-import { CATEGORY_COLORS, MAX_CATEGORIES, MAX_CATEGORY_NAME } from "./core/constants.js";
+import { CATEGORY_COLORS, MAX_CATEGORIES, MAX_CATEGORY_NAME, KIND_LABEL } from "./core/constants.js";
 import { sortedCategories, countInCategory, uncategorizedCount, categoryById, nextCategoryColor } from "./categories.js";
+import { STATUS_FILTERS, statusCount, statusLabel } from "./status.js";
 
-/* ---------------- 分类区 ---------------- */
+/* ---------------- 书架目录：类型组 ---------------- */
+/* 类型是系统视角，用 4px 类型色点（与书脊元信息同语言）；收藏例外，用朱砂星 */
+const TYPE_FILTERS = [
+  { key: "all", label: () => t("library.filterAll"), mark: "" },
+  { key: "pdf", label: () => KIND_LABEL.pdf, mark: '<i class="type-dot pdf"></i>' },
+  { key: "markdown", label: () => KIND_LABEL.markdown, mark: '<i class="type-dot md"></i>' },
+  { key: "text", label: () => t("library.filterText"), mark: '<i class="type-dot txt"></i>' },
+  { key: "ebook", label: () => t("library.filterEbook"), mark: '<i class="type-dot epub"></i>' },
+  { key: "star", label: () => t("library.filterStar"), mark: '<svg class="ic"><use href="#i-star"/></svg>' },
+];
+
+const typeCount = (key) => {
+  if (key === "all") return state.books.length;
+  if (key === "star") return state.books.filter((book) => book.favorite).length;
+  return state.books.filter((book) => book.kind === key).length;
+};
+
+const typeLabel = (key) => (TYPE_FILTERS.find((f) => f.key === key) || TYPE_FILTERS[0]).label();
+
+function renderTypeList() {
+  $("#typeList").innerHTML = TYPE_FILTERS.map((f) => `
+    <div class="idx-row ${f.key === "all" ? "is-all" : ""} ${state.filter === f.key ? "is-active" : ""}"
+      data-filter="${f.key}" role="button" tabindex="0">
+      ${f.mark}
+      <span class="cat-name">${escapeHtml(f.label())}</span>
+      <span class="cat-num">${typeCount(f.key)}</span>
+    </div>`).join("");
+  $("#typeCurrent").textContent = typeLabel(state.filter);
+  $("#typeCount").textContent = typeCount(state.filter);
+  $("#typeHead").classList.toggle("is-collapsed", state.typeCollapsed);
+  $("#typeToggle").setAttribute("aria-expanded", String(!state.typeCollapsed));
+}
+
+/* ---------------- 书架目录：状态组 ---------------- */
+/* 状态派生自进度，图形用 12px 迷你进度线 / 对勾；行语言与类型组完全一致 */
+function renderStatusList() {
+  $("#statusList").innerHTML = STATUS_FILTERS.map((f) => `
+    <div class="idx-row ${f.key === null ? "is-all" : ""} ${state.status === f.key ? "is-active" : ""}"
+      data-status="${f.key === null ? "__all" : f.key}" role="button" tabindex="0">
+      ${f.mark}
+      <span class="cat-name">${escapeHtml(f.label())}</span>
+      <span class="cat-num">${statusCount(state.books, f.key)}</span>
+    </div>`).join("");
+  $("#statusCurrent").textContent = state.status ? statusLabel(state.status) : "";
+  $("#statusCount").textContent = statusCount(state.books, state.status);
+  $("#statusHead").classList.toggle("is-collapsed", state.statusCollapsed);
+  $("#statusToggle").setAttribute("aria-expanded", String(!state.statusCollapsed));
+}
+
+/* ---------------- 分类组 ---------------- */
 const dotClass = (color) => `cat-dot c-${CATEGORY_COLORS.includes(color) ? color : "clay"}`;
 
 function categoryRowHtml(category) {
@@ -48,7 +98,8 @@ function renderCategoryList() {
   $("#catCount").textContent = all.length;
   $("#catAdd").disabled = all.length >= MAX_CATEGORIES;
   $("#catAdd").title = all.length >= MAX_CATEGORIES ? t("category.errLimit") : t("category.new");
-  $("#catBlock").classList.toggle("is-collapsed", state.catCollapsed);
+  $("#catHead").classList.toggle("is-collapsed", state.catCollapsed);
+  $("#catToggle").setAttribute("aria-expanded", String(!state.catCollapsed));
 }
 
 /* ---------------- 批量归类条 ---------------- */
@@ -66,8 +117,10 @@ function renderBatchBar() {
   select.value = "";
 }
 
-/** 分类区 + 批量条一起刷新（计数与可选项都依赖同一份 state） */
+/** 目录三组 + 批量条一起刷新（计数与可选项都依赖同一份 state） */
 function renderCategorySection() {
+  renderTypeList();
+  renderStatusList();
   renderCategoryList();
   renderBatchBar();
 }

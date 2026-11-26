@@ -15,6 +15,7 @@ import { unmountWindowed } from "../reader-bigtext.js";
 import { renderCtx, setCtxOpen, setCtxTabActive, markTocActive } from "./ctx.js";
 import { isBookmarked } from "./bookmarks.js";
 import { hideFootnote } from "./footnote.js";
+import { disposeAssist } from "./ebook-assist.js";
 import { updateStatus } from "../view.js";
 import { persistSettings } from "../preferences.js";
 
@@ -69,6 +70,8 @@ function initPanes() {
       pdfStack: $(".pdf-stack", root),
       mdDoc: $(".md-doc", root),
       ebookStack: $(".ebook-stack", root),
+      /* 电子书专属的底部工具带；只有活动栏且书是电子书时才渲染 */
+      band: $(".ebook-band", root),
       reader: null,
       /* 电子书阅读器实例；PDF 用上面那个 reader 槽位，两者不会同时存在 */
       ebook: null,
@@ -158,9 +161,12 @@ function maybeSync(source, { page, ratio, pageOffset }) {
     target.reader.goPosition(page, pageOffset || 0);
     return;
   }
-  // 电子书没有滚动条可对，「比例」即全书进度：另一栏按同一比例跳过去
+  // 电子书没有滚动条可对，「比例」即全书进度：另一栏按同一比例跳过去。
+  // 目标栏可能还在 open 的中途（view 已经挂上、书还没解析完，分节进度表是空的），
+  // 这时 goToFraction 会抛——等它自己的 open 结束后的 syncToActivePane 再对齐
   if (source.book.kind === "ebook") {
-    target.ebook?.goToFraction(ratio);
+    if (!target.ebook?.book || !target.ebook?.location) return;
+    target.ebook.goToFraction(ratio);
     return;
   }
   if (Math.abs((target.ratio || 0) - ratio) < 0.002) return;
@@ -232,6 +238,7 @@ function closePaneDoc(pane) {
   // 窗口渲染的滚动监听挂在 scrollArea 上，换文档前必须摘掉，
   // 否则 Markdown / PDF 也会触发它去取窗口
   unmountWindowed(pane);
+  disposeAssist(pane);
   pane.reader?.destroy();
   pane.ebook?.destroy();
   // 脚注窗是全局单例，换文档/合并分栏时不能留在屏幕上
@@ -240,6 +247,7 @@ function closePaneDoc(pane) {
   pane.book = null;
   pane.outline = null;
   pane.ebookToc = [];
+  pane.seekData = null;
   pane.ebookLabel = "";
   pane.query = "";
   pane.hits = [];
@@ -253,6 +261,11 @@ function closePaneDoc(pane) {
   pane.mdDoc.innerHTML = "";
   pane.pdfStack.style.display = "none";
   pane.mdDoc.style.display = "none";
+  pane.ebookStack.hidden = true;
+  if (pane.band) {
+    pane.band.hidden = true;
+    pane.band.innerHTML = "";
+  }
   pane.scrollArea.scrollTop = 0;
   if (pane.index === activePaneIndex) mirrorPane(pane);
   updatePaneHeads();

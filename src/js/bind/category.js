@@ -58,7 +58,29 @@ export function bindCategoryEvents() {
 
   $("#catToggle").addEventListener("click", () => {
     state.catCollapsed = !state.catCollapsed;
-    $("#catBlock").classList.toggle("is-collapsed", state.catCollapsed);
+    $("#catHead").classList.toggle("is-collapsed", state.catCollapsed);
+    $("#catToggle").setAttribute("aria-expanded", String(!state.catCollapsed));
+  });
+
+  $("#typeToggle").addEventListener("click", () => {
+    state.typeCollapsed = !state.typeCollapsed;
+    $("#typeHead").classList.toggle("is-collapsed", state.typeCollapsed);
+    $("#typeToggle").setAttribute("aria-expanded", String(!state.typeCollapsed));
+  });
+
+  $("#statusToggle").addEventListener("click", () => {
+    state.statusCollapsed = !state.statusCollapsed;
+    $("#statusHead").classList.toggle("is-collapsed", state.statusCollapsed);
+    $("#statusToggle").setAttribute("aria-expanded", String(!state.statusCollapsed));
+  });
+
+  /* 目录行是 role=button 的 div：补上键盘激活，与原生按钮同权 */
+  $("#shelfIndex").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest(".cat-row, .idx-row");
+    if (!row) return;
+    event.preventDefault();
+    row.click();
   });
 
   /* ---------------- 分类编辑弹层 ---------------- */
@@ -101,10 +123,9 @@ export function bindCategoryEvents() {
   $("#headClear").addEventListener("click", () => {
     state.categoryId = null;
     state.filter = "all";
+    state.status = null;
     state.query = "";
     $("#libSearch").value = "";
-    document.querySelectorAll("#filterRow .chip")
-      .forEach((chip) => chip.classList.toggle("is-on", chip.dataset.filter === "all"));
     renderLibrary();
     // 关键词被清空，命中区要跟着收起（scheduleLibrarySearch 内部判长度）
     scheduleLibrarySearch();

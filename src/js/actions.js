@@ -34,9 +34,16 @@ async function importDocuments(paths) {
   updateStatus();
 
   // 不在前端维护「支持哪些扩展名」的副本：Rust 侧 text::classify 是唯一事实来源，
-  // 这里只比对导入后书架上真实存在的条目，得出「跳过了几个」
-  const normalized = list.map((path) => path.replace(/\//g, "\\").toLowerCase());
-  const imported = state.books.filter((book) => normalized.includes(book.path.toLowerCase()));
+  // 这里只比对导入后书架上真实存在的条目，得出「跳过了几个」。
+  // Windows 上 Rust 的 fs::canonicalize 会给入架路径加 \\?\ 前缀（UNC 则是 \\?\UNC\），
+  // 拖入 / 对话框给的是普通路径——两边都剥掉前缀再比，否则全被误判成「跳过」
+  const normalizePath = (path) => String(path)
+    .replace(/^\\\\\?\\UNC\\/i, "\\\\")
+    .replace(/^\\\\\?\\/i, "")
+    .replace(/\//g, "\\")
+    .toLowerCase();
+  const normalized = list.map(normalizePath);
+  const imported = state.books.filter((book) => normalized.includes(normalizePath(book.path)));
   const skipped = list.length - imported.length;
   if (!imported.length) {
     toast(t("toast.onlySupported"));
@@ -81,7 +88,30 @@ async function removeBook(id) {
   }
   renderLibrary();
   updateStatus();
-  toast(t("confirm.removed", { title: book.title }));
+  // 快照就是确认前找到的 book 对象：remove_book 返回新数组，不会改动它
+  toast(t("confirm.removed", { title: book.title }), {
+    actionText: t("undo.action"),
+    duration: 6000,
+    onAction: () => restoreBook(book),
+  });
+}
+
+/** 撤销移除：快照原样传回，幂等；不重开文档、不恢复检索索引（按需重建） */
+async function restoreBook(book) {
+  try {
+    state.books = await invoke("restore_book", { book });
+  } catch (error) {
+    toast(String(error));
+    // 失败时重新拉取，避免界面显示与实际磁盘不一致
+    try { state.books = await invoke("get_library"); } catch (_) { /* 拉取失败就保持原样 */ }
+    renderLibrary();
+    updateStatus();
+    return false;
+  }
+  renderLibrary();
+  updateStatus();
+  toast(t("undo.restored", { title: book.title }));
+  return true;
 }
 
 async function toggleFavorite(id) {
@@ -185,4 +215,4 @@ async function assignCategory(ids, categoryId) {
   return true;
 }
 
-export { importDocuments, removeBook, toggleFavorite, createCategory, updateCategory, deleteCategory, assignCategory };
+export { importDocuments, removeBook, restoreBook, toggleFavorite, createCategory, updateCategory, deleteCategory, assignCategory };

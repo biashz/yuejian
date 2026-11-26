@@ -75,6 +75,8 @@ export class EbookReader {
     this.book = null;
     this.path = "";
     this.location = null;
+    /* 当前可见 Range：朗读判「这句在不在屏幕上」用它，relocate 每次带过来 */
+    this.visibleRange = null;
     this.chapters = 0;
     /* 真实格式（epub / fb2 / fbz / cbz / mobi / azw3）：角标与副标题按它显示 */
     this.format = "epub";
@@ -181,6 +183,8 @@ export class EbookReader {
     if (this.fixed) return;
     const renderer = this.view?.renderer;
     if (!renderer) return;
+    // 滚动模式是单栏的定义：列数属性在那儿没有意义，设了也只是白设
+    if (renderer.scrolled) return;
     // 没就绪就别设：列数属性会连带触发一次 render()，空档里调会崩（见 paginatorReady）
     if (!paginatorReady(renderer)) return;
     renderer.setAttribute("max-column-count", this.spread ? "2" : "1");
@@ -244,6 +248,7 @@ export class EbookReader {
 
   handleRelocate(detail) {
     this.location = toLocation(detail);
+    this.visibleRange = detail?.range || null;
     this.onRelocate?.(this.location);
   }
 
@@ -305,6 +310,8 @@ export class EbookReader {
 
   destroy() {
     if (!this.view) return;
+    this.__modeDispose?.();
+    this.__modeDispose = null;
     try {
       this.view.close();
     } catch (_) {
@@ -314,6 +321,7 @@ export class EbookReader {
     this.view = null;
     this.book = null;
     this.location = null;
+    this.visibleRange = null;
     this.chapters = 0;
     this.toc = [];
     this.format = "epub";

@@ -15,7 +15,7 @@
  * （与冒烟测试同一字节源，见 scripts/lib/make-epub.mjs）。
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, copyFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { buildEpub } from "./lib/make-epub.mjs";
@@ -110,6 +110,20 @@ async function blobWorld(ws) {
   return world.executionContextId;
 }
 
+/**
+ * 字体：往安装目录的 `data/fonts` 里预置一份真 TTF，模拟「用户已经下载过」。
+ * 文件名必须和前端目录里的 `literata` 对上——注册表按文件名认领本地字体。
+ * 真实的网络下载不放进真机测试（依赖外网、几十 MB）；那条路由 Rust 单测覆盖。
+ */
+const FONT_SRC = "C:/Windows/Fonts/arial.ttf";
+const FONT_FILE = join(dirname(resolve(EXE)), "data", "fonts", "literata.ttf");
+if (!existsSync(FONT_SRC)) {
+  console.log(`缺少样本字体 ${FONT_SRC}，无法验证本地字体加载`);
+  process.exit(2);
+}
+mkdirSync(dirname(FONT_FILE), { recursive: true });
+copyFileSync(FONT_SRC, FONT_FILE);
+
 const app = spawn(EXE, [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` },
   stdio: "ignore",
@@ -167,6 +181,18 @@ try {
   const mine = (books || []).find((book) => book.kind === "ebook" && norm(book.path) === norm(EPUB));
   const imported = mine?.id || "";
   check("EPUB 被识别为 ebook 并入架", Boolean(imported), imported || `未命中 ${EPUB}`);
+  // 回归：入架路径带 Windows canonicalize 的 \\?\ 前缀，拖入 / 对话框给的是普通路径。
+  // 前端 importDocuments 若不做前缀归一，会把导入成功误报成「这些文件无法导入」。
+  // 走真实前端入口重导这两本（已在架，只刷新时间），断言提示与返回数
+  const reimport = await evaluate(ws, `(async () => {
+    const { importDocuments } = await import("/js/actions.js");
+    const count = await importDocuments([${JSON.stringify(EPUB)}, ${JSON.stringify(FB2)}]);
+    await new Promise((r) => setTimeout(r, 150));
+    return { count, toast: document.querySelector("#toastWrap .toast span")?.textContent || "" };
+  })()`);
+  check("前端导入口径：普通路径对上 \\\\?\\ 入架路径，不误报「无法导入」",
+    reimport.count === 2 && reimport.toast.includes("已导入") && !reimport.toast.includes("无法导入"),
+    `count=${reimport.count} · ${reimport.toast}`);
   await evaluate(ws, "location.reload()");
   await sleep(1200);
   await waitFor(ws, "document.querySelectorAll('#bookList .book-row').length > 0", "重载后的书架");
@@ -241,6 +267,78 @@ try {
   }
   check("章节正文在真机 WebView2 里渲染出来", Boolean(body && body.length > 50), body ? `${body.length} 字` : "没有 iframe");
   check("书内脚本被清掉", Boolean(body && body.scripts === 0), body ? `${body.scripts} 个` : "无 iframe");
+
+  /* ---- 字体：安装目录里的本地字体，经 asset 协议进章节文档 ---- */
+
+  // 跑之前可能有上一轮残留的选中项；先回到系统宋体，断言才是「从 0 到 1」
+  await evaluate(ws, `(async () => {
+    const { state } = await import("/js/core/session.js");
+    state.settings.ebookFamily = "serif";
+    const { persistSettings } = await import("/js/preferences.js");
+    persistSettings();
+  })()`);
+  await sleep(500);
+
+  const fontStore = await evaluate(ws, `(async () => {
+    const store = await window.__TAURI__.core.invoke("list_fonts");
+    const fonts = await import("/js/reader/fonts.js");
+    return { dir: store.dir, files: (store.files || []).map((f) => f.name),
+      installed: fonts.isInstalled("literata"), stack: fonts.fontStack("literata") };
+  })()`);
+  check("安装目录 data/fonts 的字体被认到（字体不进安装包）",
+    /[\\/]data[\\/]fonts$/.test(fontStore.dir) && fontStore.files.includes("literata.ttf")
+      && fontStore.installed === true && fontStore.stack.startsWith('"YJ literata"'),
+    `${fontStore.dir} · ${fontStore.files.join(",") || "空"}`);
+
+  await evaluate(ws, `document.querySelector('[data-act="ebook-layout"]').click()`);
+  await sleep(500);
+  await evaluate(ws, `document.querySelector('#lpFonts [data-family="literata"]').click()`);
+  await sleep(900);
+  const fontPick = await evaluate(ws, `(async () => {
+    const { state } = await import("/js/core/session.js");
+    const stored = await window.__TAURI__.core.invoke("get_settings");
+    const row = document.querySelector('#lpFonts [data-family="literata"]');
+    const mod = await import("/js/reader/panes.js");
+    const doc = mod.activePane()?.ebook?.view?.renderer?.getContents?.()[0]?.doc;
+    const css = [...(doc?.head?.querySelectorAll("style") || [])].map((el) => el.textContent).join("");
+    return { family: state.settings.ebookFamily, stored: stored.ebookFamily,
+      on: row.classList.contains("is-on"), state: row.querySelector(".lp-font-state").textContent,
+      css };
+  })()`);
+  check("选中已下载字体：偏好落盘、章 CSS 经 asset 协议引入 @font-face",
+    fontPick.family === "literata" && fontPick.stored === "literata" && fontPick.on
+      && fontPick.state === "使用中" && fontPick.css.includes('font-family: "YJ literata"')
+      && /url\("[^"]*(asset\.localhost|asset:)[^"]*literata\.ttf"\)/.test(fontPick.css),
+    `状态 ${fontPick.state} · ${(fontPick.css.match(/url\("[^"]*literata\.ttf"\)/) || ["无 url"])[0].slice(0, 90)}`);
+
+  const fontWorld = await blobWorld(ws);
+  const fontLoaded = fontWorld ? await evaluate(ws, `(async () => {
+    const faces = await document.fonts.load('16px "YJ literata"', "字Ab");
+    return { loaded: faces.length > 0, ready: document.fonts.check('16px "YJ literata"'),
+      body: getComputedStyle(document.body).fontFamily };
+  })()`, fontWorld) : null;
+  check("真 WebView2 里字体文件真的加载起来并作用到正文",
+    Boolean(fontLoaded && fontLoaded.loaded && fontLoaded.ready && /YJ literata/.test(fontLoaded.body)),
+    fontLoaded ? `${fontLoaded.loaded ? "已加载" : "未加载"} · ${fontLoaded.body}` : "没有 iframe");
+
+  // 移除：真后端删文件，正用着就退回系统宋体
+  await evaluate(ws, `document.querySelector('#lpFonts [data-family="literata"] .lp-font-del').click()`);
+  await sleep(800);
+  const fontDrop = await evaluate(ws, `(async () => {
+    const { state } = await import("/js/core/session.js");
+    const stored = await window.__TAURI__.core.invoke("get_settings");
+    const store = await window.__TAURI__.core.invoke("list_fonts");
+    return { family: state.settings.ebookFamily, stored: stored.ebookFamily,
+      files: (store.files || []).map((f) => f.name) };
+  })()`);
+  check("移除字体文件：磁盘删掉、设置退回系统宋体",
+    fontDrop.family === "serif" && fontDrop.stored === "serif"
+      && !fontDrop.files.includes("literata.ttf") && !existsSync(FONT_FILE),
+    `family ${fontDrop.family} · files ${fontDrop.files.join(",") || "空"}`);
+  await evaluate(ws, `(async () => {
+    (await import("/js/reader/ebook-layout-panel.js")).setLayoutPanel(false);
+  })()`);
+  await sleep(400);
 
   // 翻页一次
   const before = state.cfi;
@@ -526,7 +624,7 @@ try {
         message: (document.querySelector(".ebook-stack .pdf-error")?.textContent || "").replace(/\s+/g, " "),
         views: document.querySelectorAll(".ebook-stack foliate-view").length,
         book: Boolean(pane?.ebook?.book),
-        acts: [...document.querySelectorAll("#readToolbar [data-act]")].map((el) => el.dataset.act),
+        acts: [...document.querySelectorAll(".ebook-band [data-act]")].map((el) => el.dataset.act),
       };
     })()`);
     check("真机拦下 DRM 书并说明方案",
@@ -544,6 +642,8 @@ try {
 } finally {
   try { ws?.close(); } catch (_) { /* ignore */ }
   try { app.kill(); } catch (_) { /* ignore */ }
+  // 预置字体是本测试自己放的：中途失败时也别留在安装目录里
+  try { rmSync(FONT_FILE, { force: true }); } catch (_) { /* ignore */ }
   const failed = results.filter((r) => !r.ok).length;
   console.log(`\n${results.length - failed}/${results.length} 项通过`);
   if (failed) process.exitCode = 1;

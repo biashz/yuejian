@@ -12,12 +12,15 @@
  * `ebook-open.js` 的 `refreshEbookStyles()`，一步到分页器。
  */
 import { $, $$ } from "../core/dom.js";
+import { toast } from "../core/feedback.js";
 import { t } from "../i18n.js";
 import { state } from "../core/session.js";
 import { persistSettings } from "../preferences.js";
 import { activePane } from "./panes.js";
 import { RANGE, readLayout, setBreakMode, applyPreset, activePreset, resetLayout, SIZE_STEP } from "./ebook-layout.js";
-import { refreshEbookStyles } from "./ebook-open.js";
+import { refreshEbookStyles, setEbookFlow, setEbookTurn } from "./ebook-open.js";
+import { isScroll } from "./ebook-mode.js";
+import { SYSTEM, DOWNLOAD, fontEntry, fontNote, labelKeyOf, fontStack, initFonts, downloadFont, removeFont, isInstalled } from "./fonts.js";
 import { renderToolbar } from "./toolbar.js";
 
 /** 滑杆配置：范围取自 ebook-layout 的 RANGE，`fmt` 只决定显示，不参与计算 */
@@ -35,7 +38,10 @@ const SWITCHES = {
   // 配色覆盖独立于排版覆盖：夜读主题下不接管字色，书里写死的深色字会读不清
   override: "ebookOverride", overrideColor: "ebookOverrideColor",
 };
-const FAMILY_LABEL = { serif: "settings.ebookSerif", sans: "settings.ebookSans", kai: "settings.ebookKai" };
+/** 正在下载的字体 id：同一时刻只允许一条，避免几个 25MB 并发把带宽和界面都拖住 */
+const fontBusy = new Set();
+/** 下载失败过的 id：行上给「重试」，不再是一个看起来没反应的下箭头 */
+const fontFailed = new Set();
 
 let mounted = false;
 
@@ -88,6 +94,17 @@ function panelHtml() {
     <p class="lp-notice" id="lpNotice" hidden>${t("layout.notice")}</p>
 
     <section class="lp-group">
+      <h3>${t("layout.reading")}</h3>
+      ${row("layout.flow", `<div class="lp-seg" id="lpFlow">
+        <button data-flow="paged">${t("reader.ebookFlowPaged")}</button>
+        <button data-flow="scroll">${t("reader.ebookFlowScroll")}</button></div>`)}
+      ${row("layout.turn", `<div class="lp-seg" id="lpTurn">
+        <button data-turn="slide">${t("reader.ebookTurn.slide")}</button>
+        <button data-turn="fade">${t("reader.ebookTurn.fade")}</button>
+        <button data-turn="none">${t("reader.ebookTurn.none")}</button></div>`)}
+    </section>
+
+    <section class="lp-group">
       <h3>${t("layout.preset")}</h3>
       <div class="lp-presets" id="lpPresets">
         <button class="lp-chip" data-preset="comfort">${t("layout.preset.comfort")}</button>
@@ -99,9 +116,8 @@ function panelHtml() {
 
     <section class="lp-group">
       <h3>${t("layout.text")}</h3>
-      ${row("layout.family", `<div class="lp-seg" id="lpFamily">${
-        ["serif", "sans", "kai"].map((value) => `<button data-family="${value}">${t(FAMILY_LABEL[value])}</button>`).join("")
-      }</div>`)}
+      <div class="lp-row"><span class="lp-label">${t("layout.family")}</span></div>
+      <div class="lp-fonts" id="lpFonts" role="radiogroup" aria-label="${t("layout.family")}"></div>
       ${row("layout.size", `<div class="lp-step" id="lpSize">
         <button data-step="-1" aria-label="${t("layout.smaller")}">A−</button>
         <span class="lp-num" data-val="size">0</span>
@@ -174,6 +190,10 @@ function mountLayoutPanel() {
   scrim.addEventListener("click", () => setLayoutPanel(false));
   bindPanel(panel);
   mounted = true;
+  // 字体目录是异步读的：面板先出（系统项已可用），读到文件后再补下载项状态
+  initFonts().then(() => {
+    if (state.layoutOpen) syncLayoutPanel();
+  });
 }
 
 /** 版式改动落盘 + 重排。`live` 期间不碰版心宽度，见 `refreshEbookStyles` 的注释 */
@@ -184,6 +204,112 @@ function commit({ live = false } = {}) {
     return;
   }
   refreshEbookStyles({ render: false, live: true });
+}
+
+/**
+ * 字体列表：系统三项一组，可下载的五项一组。
+ *
+ * 行不是 `lp-seg` 那种短按纽——字体名要完整显示，下载项还要挂「大小 / 许可」
+ * 与删除入口；样例字用该字体自己渲染，装好之后这一列就是一张活的字样表。
+ */
+function fontRowsHtml() {
+  const group = (label, entries) => `
+    <p class="lp-fonts-label">${label}</p>
+    ${entries.map((entry) => `
+      <div class="lp-font" role="radio" tabindex="0" data-family="${entry.id}" aria-checked="false">
+        <span class="lp-font-sample" aria-hidden="true">字</span>
+        <span class="lp-font-name">${t(labelKeyOf(entry))}</span>
+        ${entry.download ? `<span class="lp-font-meta">${fontNote(entry)}</span>` : ""}
+        <span class="lp-font-state" data-font-state="${entry.id}"></span>
+        ${entry.download ? `<button class="lp-font-del" data-font-remove="${entry.id}"
+          aria-label="${t("layout.fontRemove")}" title="${t("layout.fontRemove")}">
+          <svg class="ic"><use href="#i-x"/></svg></button>` : ""}
+      </div>`).join("")}`;
+  return group(t("layout.fontSystem"), SYSTEM) + group(t("layout.fontOpen"), DOWNLOAD);
+}
+
+/** 每行的选中态、样例字与右侧状态字；下载进度只回写当前那一格 */
+function syncFontRows(panel, layout) {
+  const busy = fontBusy.size > 0;
+  const rows = $$("#lpFonts .lp-font", panel);
+  if (!rows.length) return;
+  for (const row of rows) {
+    const entry = fontEntry(row.dataset.family);
+    if (!entry) continue;
+    const on = entry.id === layout.family;
+    const downloading = fontBusy.has(entry.id);
+    const installed = !entry.download || isInstalled(entry.id);
+    row.classList.toggle("is-on", on);
+    row.classList.toggle("is-busy", busy && !downloading);
+    row.setAttribute("aria-checked", String(on));
+    row.setAttribute("aria-busy", String(downloading));
+    row.title = entry.download && !isInstalled(entry.id) ? fontNote(entry) : "";
+    // 样例字只用「能立刻渲染」的字体：没下载的项保持系统字，避免给一个假预览
+    const sample = $(".lp-font-sample", row);
+    if (sample) sample.style.fontFamily = installed ? fontStack(entry.id) : "";
+    const stateEl = $(`[data-font-state="${entry.id}"]`, panel);
+    if (!stateEl || downloading) continue;
+    if (on) stateEl.textContent = t("layout.fontInUse");
+    else if (!entry.download) stateEl.textContent = "";
+    else if (fontFailed.has(entry.id)) stateEl.textContent = t("layout.fontRetry");
+    else stateEl.textContent = isInstalled(entry.id) ? "✓" : t("layout.fontDownload");
+    stateEl.classList.toggle("is-failed", fontFailed.has(entry.id) && !on);
+  }
+}
+
+/** 选字体：系统项与已下载项立即生效；未下载项先拉文件，成功后再选中 */
+async function chooseFont(id) {
+  const entry = fontEntry(id);
+  if (!entry || fontBusy.size > 0) return;
+  if (!entry.download || isInstalled(id)) {
+    fontFailed.delete(id);
+    state.settings.ebookFamily = id;
+    persistSettings();
+    refreshEbookStyles();
+    syncLayoutPanel();
+    return;
+  }
+  fontBusy.add(id);
+  fontFailed.delete(id);
+  syncLayoutPanel();
+  const label = t(labelKeyOf(entry));
+  try {
+    await downloadFont(id, (payload) => {
+      const pct = payload.total > 0 ? Math.min(100, Math.round((payload.received / payload.total) * 100)) : 0;
+      const cell = $(`[data-font-state="${id}"]`, $("#layoutPanel"));
+      if (cell) cell.textContent = `${pct}%`;
+    });
+    state.settings.ebookFamily = id;
+    persistSettings();
+    refreshEbookStyles();
+    toast(t("toast.fontReady", { name: label }));
+  } catch (error) {
+    fontFailed.add(id);
+    toast(t("toast.fontFailed", { error: String(error) }));
+  } finally {
+    fontBusy.delete(id);
+    syncLayoutPanel();
+  }
+}
+
+/** 删掉已下载的字体文件；正用着就退回系统宋体，设置里不留下一个空指向 */
+async function dropFont(id) {
+  const entry = fontEntry(id);
+  if (!entry?.download || fontBusy.size > 0) return;
+  const label = t(labelKeyOf(entry));
+  try {
+    await removeFont(id);
+  } catch (error) {
+    toast(t("toast.fontFailed", { error: String(error) }));
+    return;
+  }
+  if (state.settings.ebookFamily === id) {
+    state.settings.ebookFamily = "serif";
+    persistSettings();
+    refreshEbookStyles();
+  }
+  toast(t("toast.fontRemoved", { name: label }));
+  syncLayoutPanel();
 }
 
 /** 把 settings 的当前值铺回面板：所有控件状态只有这一个来源 */
@@ -197,13 +323,28 @@ function syncLayoutPanel() {
   $("#lpNotice").hidden = !fixed;
   $("#lpSub").textContent = t(fixed ? "layout.fixedSub" : "layout.sub");
 
+  // 阅读姿势 / 动效：固定版面没有字符流，姿势锁死分页；滚动模式没有「翻页」，动效锁死
+  const scroll = isScroll(activePane()?.ebook);
+  $$("[data-flow]", panel).forEach((btn) => {
+    btn.classList.toggle("is-on", btn.dataset.flow === (state.settings.ebookFlow || "paged"));
+    btn.disabled = fixed;
+  });
+  $$("[data-turn]", panel).forEach((btn) => {
+    btn.classList.toggle("is-on", btn.dataset.turn === (state.settings.ebookTurn || "slide"));
+    btn.disabled = fixed || scroll;
+  });
+
   // 预设
   const preset = activePreset(layout);
   $$("[data-preset]", panel).forEach((btn) => btn.classList.toggle("is-on", btn.dataset.preset === preset));
   $("#lpCustom").hidden = Boolean(preset);
 
-  // 分段控件
-  $$("[data-family]", panel).forEach((btn) => btn.classList.toggle("is-on", btn.dataset.family === layout.family));
+  // 字体：行只建一次，之后只改状态——重建会打断下载中那一行的进度回写
+  const fontList = $("#lpFonts", panel);
+  if (fontList) {
+    if (!fontList.childElementCount) fontList.innerHTML = fontRowsHtml();
+    syncFontRows(panel, layout);
+  }
   $$("[data-align]", panel).forEach((btn) => btn.classList.toggle("is-on", btn.dataset.align === layout.align));
   $$("[data-break]", panel).forEach((btn) => btn.classList.toggle("is-on", btn.dataset.break === layout.breakMode));
 
@@ -254,11 +395,29 @@ function bindPanel(panel) {
       return;
     }
 
+    const flow = target.closest("[data-flow]");
+    if (flow) {
+      setEbookFlow(flow.dataset.flow);
+      syncLayoutPanel();
+      return;
+    }
+
+    const turn = target.closest("[data-turn]");
+    if (turn) {
+      setEbookTurn(turn.dataset.turn);
+      syncLayoutPanel();
+      return;
+    }
+
+    const remove = target.closest("[data-font-remove]");
+    if (remove) {
+      dropFont(remove.dataset.fontRemove);
+      return;
+    }
+
     const family = target.closest("[data-family]");
     if (family) {
-      state.settings.ebookFamily = family.dataset.family;
-      commit();
-      syncLayoutPanel();
+      chooseFont(family.dataset.family);
       return;
     }
 
@@ -329,6 +488,15 @@ function bindPanel(panel) {
     if (!event.target.closest("[data-range]")) return;
     commit();
     syncLayoutPanel();
+  });
+
+  // 字体行是 role=radio 的 div：Enter / 空格与点击同义
+  panel.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest?.(".lp-font");
+    if (!row) return;
+    event.preventDefault();
+    chooseFont(row.dataset.family);
   });
 }
 

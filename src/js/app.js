@@ -16,6 +16,7 @@ import { bind } from "./bind/index.js";
 import { renderLibrary } from "./shelf.js";
 import { setView, syncWindowTitle } from "./view.js";
 import { renderUpdateUI, initUpdate } from "./update-ui.js";
+import { initFonts } from "./reader/fonts.js";
 
 /* ---------------- 启动 ---------------- */
 async function boot() {
@@ -58,6 +59,8 @@ async function boot() {
   renderLibrary();
   setView("library");
   initUpdate();
+  // 已下载字体登记在 data/fonts：不阻塞首屏，读到之后版式面板与正文样式自然会用上
+  initFonts();
 }
 
 boot();

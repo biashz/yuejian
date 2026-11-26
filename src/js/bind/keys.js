@@ -15,7 +15,9 @@ import { presenting, enterPresent, exitPresent, presentStep } from "../reader/pr
 import { importDocuments } from "../actions.js";
 import { openPalette, closePalette, paletteItems, renderPalette, runPalette } from "../palette.js";
 import { flushProgress } from "../reader/progress.js";
-import { ebookStep, ebookChapter } from "../reader/ebook-open.js";
+import { ebookStep, ebookChapter, toggleEbookFlow } from "../reader/ebook-open.js";
+import { assistOf, toggleTts, toggleAuto, stopAssist, pauseResumeAssist, stepAssist } from "../reader/ebook-assist.js";
+import { isScroll } from "../reader/ebook-mode.js";
 import { setLayoutPanel } from "../reader/ebook-layout-panel.js";
 import { toggleBookmark } from "../reader/bookmarks.js";
 
@@ -58,6 +60,9 @@ export function bindKeyEvents() {
       else if (docMenuOpen) setDocMenu(false);
       else if (paletteOpen) closePalette();
       else if (settingsOpen) closeSettings();
+      // 辅助条（朗读 / 自动）先于版式面板收：Esc 先停「正在自己走」的东西。
+      // 只看 kind：条停了但 assist 记录还在（关书才撤），拿 assistOf 判会让 Esc 永远出不了阅读视图
+      else if (assistOf(activePane())?.kind) stopAssist(activePane());
       // 版式面板在「退出阅读」之前收：它是阅读视图里的一层，Esc 应该先关这一层
       else if (state.layoutOpen) setLayoutPanel(false);
       else if (state.view === "reading") setView("library");
@@ -83,7 +88,8 @@ export function bindKeyEvents() {
     }
     if (settingsOpen) return;
     if (state.view !== "reading") return;
-    if (document.activeElement?.tagName === "INPUT") return;
+    const focusTag = document.activeElement?.tagName;
+    if (focusTag === "INPUT" || focusTag === "SELECT" || focusTag === "TEXTAREA") return;
 
     // Ctrl+P：打印当前文档。只放在「阅读视图」之后判——在书架页按 Ctrl+P
     // 不该把书架的界面打印机出来，那和用户想印的文档没有关系
@@ -102,14 +108,30 @@ export function bindKeyEvents() {
     }
     // 电子书：←/→ 与空格翻页。页码是排版算出来的，所以只认「上一页 / 下一页」
     if (state.current?.kind === "ebook") {
-      const nextKey = ["ArrowRight", "ArrowDown", "PageDown", " "].includes(event.key);
-      const prevKey = ["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(event.key);
-      if (nextKey || prevKey) {
+      const pane = activePane();
+      // Shift+J/L/A：姿势 / 朗读 / 自动三个开关，与工具栏按钮同一入口
+      if (event.shiftKey && !modifier) {
+        const key = event.key.toLowerCase();
+        if (key === "j" || key === "l" || key === "a") {
+          event.preventDefault();
+          if (key === "j") toggleEbookFlow();
+          else if (key === "l") toggleTts(pane);
+          else toggleAuto(pane);
+          return;
+        }
+      }
+      // 辅助运行中：Space 播放/暂停，Ctrl+[ / ] 上一句/下一句
+      if (event.key === " " && pauseResumeAssist(pane)) {
         event.preventDefault();
-        ebookStep(nextKey ? 1 : -1);
         return;
       }
-      // Ctrl+←/→ 跳章、Home/End 到书首书尾：与常见阅读器一致
+      if (modifier && (event.key === "[" || event.key === "]")) {
+        if (stepAssist(pane, event.key === "]" ? 1 : -1)) {
+          event.preventDefault();
+          return;
+        }
+      }
+      // Ctrl+←/→ 跳章、Home/End 到书首书尾：两种姿势通用
       if (modifier && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
         event.preventDefault();
         ebookChapter(event.key === "ArrowRight" ? 1 : -1);
@@ -117,7 +139,23 @@ export function bindKeyEvents() {
       }
       if (event.key === "Home" || event.key === "End") {
         event.preventDefault();
-        activePane()?.ebook?.[event.key === "Home" ? "goTo" : "goToFraction"](event.key === "Home" ? 0 : 1);
+        stopAssist(pane);
+        pane?.ebook?.[event.key === "Home" ? "goTo" : "goToFraction"](event.key === "Home" ? 0 : 1);
+        return;
+      }
+      // 滚动模式：纵向键交给浏览器原生滚动，←/→ 保留为跳章
+      if (isScroll(pane?.ebook)) {
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          event.preventDefault();
+          ebookChapter(event.key === "ArrowRight" ? 1 : -1);
+        }
+        return;
+      }
+      const nextKey = ["ArrowRight", "ArrowDown", "PageDown", " "].includes(event.key);
+      const prevKey = ["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(event.key);
+      if (nextKey || prevKey) {
+        event.preventDefault();
+        ebookStep(nextKey ? 1 : -1);
         return;
       }
     }

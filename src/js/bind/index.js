@@ -1,5 +1,5 @@
 /**
- * 事件绑定的聚合入口：按原有顺序调用五个事件域。
+ * 事件绑定的聚合入口：按原有顺序调用六个事件域。
  * 顺序会影响行为——委托点击先于关闭缩放菜单，键盘处理在拦截右键之后；
  * 分类事件排在最后，它的 Esc 处理要让全局快捷键先做判断。
  */
@@ -8,6 +8,7 @@ import { bindReaderEvents } from "./reader.js";
 import { bindPanelEvents } from "./panels.js";
 import { bindKeyEvents } from "./keys.js";
 import { bindCategoryEvents } from "./category.js";
+import { bindSortEvents } from "./sort.js";
 import { bindBookDrag } from "./book-drag.js";
 import { mountLayoutPanel } from "../reader/ebook-layout-panel.js";
 import { $ } from "../core/dom.js";
@@ -24,6 +25,7 @@ export function bind() {
   bindPanelEvents();
   bindKeyEvents();
   bindCategoryEvents();
+  bindSortEvents();
   // 拖拽归类要排在最后：它靠捕获阶段吃掉拖完那一次 click，别抢在别人前面
   bindBookDrag();
 }

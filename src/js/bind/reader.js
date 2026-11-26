@@ -14,8 +14,11 @@ import { exportHtml, saveCopy } from "../reader/doc-export.js";
 import { printDoc, clearPrintStage } from "../reader/doc-print.js";
 import { setCtxOpen, switchCtxTab, renderCtx } from "../reader/ctx.js";
 import { listOf, removeHighlight } from "../reader/highlight.js";
+import { editNote } from "../reader/highlight-actions.js";
 import { refreshTextView, openBook } from "../reader/open.js";
-import { ebookStep, ebookSeek, toggleEbookSpread } from "../reader/ebook-open.js";
+import { ebookStep, ebookSeek, toggleEbookSpread, toggleEbookFlow } from "../reader/ebook-open.js";
+import { toggleTts, toggleAuto, stopAssist } from "../reader/ebook-assist.js";
+import { seekLabel } from "../reader/ebook-seek.js";
 import { toggleLayoutPanel } from "../reader/ebook-layout-panel.js";
 import { toggleBookmark, removeBookmark } from "../reader/bookmarks.js";
 import { exportMarks, copyMarks } from "../reader/marks-export.js";
@@ -42,6 +45,22 @@ function switchEncoding(encoding) {
   for (const other of panes) {
     if (other !== pane && other.book?.id === id) openBook(id, other, { encoding });
   }
+}
+
+/** 进度预览气泡：章节名 + 百分比，贴着滑杆上方走 */
+function showSeekBubble(fraction) {
+  const bubble = $(".ebook-seek-bubble");
+  if (!bubble) return;
+  const pct = Math.round(fraction * 100);
+  const label = seekLabel(activePane(), fraction);
+  bubble.textContent = label ? `${label} · ${pct}%` : `${pct}%`;
+  bubble.style.left = `${clamp(pct, 6, 94)}%`;
+  bubble.hidden = false;
+}
+
+function hideSeekBubble() {
+  const bubble = $(".ebook-seek-bubble");
+  if (bubble) bubble.hidden = true;
 }
 
 export function bindReaderEvents() {
@@ -98,7 +117,10 @@ export function bindReaderEvents() {
     const goto = event.target.closest("[data-goto]");
     if (goto) {
       if (goto.dataset.kind === "pdf") goPage(Number(goto.dataset.goto));
-      else if (goto.dataset.kind === "ebook") activePane()?.ebook?.goTo(goto.dataset.goto);
+      else if (goto.dataset.kind === "ebook") {
+        stopAssist(activePane());
+        activePane()?.ebook?.goTo(goto.dataset.goto);
+      }
       else if (activePane()) scrollToHeading(activePane().scrollArea, goto.dataset.goto);
       return;
     }
@@ -129,20 +151,37 @@ export function bindReaderEvents() {
       if (note) removeHighlight(pane, note.cfi).then(() => renderCtx()).catch(() => {});
       return;
     }
+    const noteEdit = event.target.closest("[data-note-edit]");
+    if (noteEdit) {
+      const pane = activePane();
+      const notes = [...listOf(pane)].reverse();
+      const item = notes[Number(noteEdit.dataset.noteEdit)];
+      if (item) {
+        const box = noteEdit.getBoundingClientRect();
+        editNote(pane, item.cfi, { x: box.left + box.width / 2, y: box.top });
+      }
+      return;
+    }
     const noteHit = event.target.closest("[data-note-hit]");
     if (noteHit) {
       const pane = activePane();
       const notes = [...listOf(pane)].reverse();
       const note = notes[Number(noteHit.dataset.noteHit)];
       // 跳过去并把它标出来：一屏上可能有好几处划线，光「跳到了」分不出是哪一条
-      if (note) pane?.ebook?.showAnnotation?.(note);
+      if (note) {
+        stopAssist(pane);
+        pane?.ebook?.showAnnotation?.(note);
+      }
       return;
     }
     const markHit = event.target.closest("[data-mark-hit]");
     if (markHit) {
       const pane = activePane();
       const mark = pane?.book?.bookmarks?.[Number(markHit.dataset.markHit)];
-      if (mark) pane?.ebook?.goTo(mark.cfi);
+      if (mark) {
+        stopAssist(pane);
+        pane?.ebook?.goTo(mark.cfi);
+      }
       return;
     }
     const hit = event.target.closest("[data-hit]");
@@ -152,7 +191,10 @@ export function bindReaderEvents() {
         // 电子书的命中带的是 CFI：按它跳过去，位置与排版无关
         const pane = activePane();
         const item = pane?.hits[Number(hit.dataset.hit)];
-        if (item?.cfi) pane?.ebook?.goTo(item.cfi);
+        if (item?.cfi) {
+          stopAssist(pane);
+          pane?.ebook?.goTo(item.cfi);
+        }
       } else if (hit.dataset.kind === "line") {
         // 大文件的命中只有行号，没有 DOM 节点可量，直接按行高算位置
         const pane = activePane();
@@ -171,7 +213,7 @@ export function bindReaderEvents() {
   });
 
   // 阅读工具栏
-  $("#readToolbar").addEventListener("click", (event) => {
+  const onToolbarClick = (event) => {
     // 文档操作菜单的项先于 [data-act] 处理（菜单项带的是 data-doc）
     const docItem = event.target.closest("[data-doc]");
     if (docItem) {
@@ -207,6 +249,9 @@ export function bindReaderEvents() {
     if (act === "ebook-prev") ebookStep(-1);
     if (act === "ebook-next") ebookStep(1);
     if (act === "ebook-spread") toggleEbookSpread();
+    if (act === "ebook-flow") toggleEbookFlow();
+    if (act === "ebook-tts") toggleTts(activePane());
+    if (act === "ebook-auto") toggleAuto(activePane());
     if (act === "ebook-layout") toggleLayoutPanel();
     if (act === "ebook-mark") {
       const pane = activePane();
@@ -278,22 +323,57 @@ export function bindReaderEvents() {
         refreshTextView(pane, { rerender: false });
       }
     }
-  });
+  };
 
-  $("#readToolbar").addEventListener("change", (event) => {
+  const onToolbarChange = (event) => {
     if (event.target.id === "pageInput") goPage(Number(event.target.value) || 1);
     // 滑杆只在松手时跳：拖动过程中连续 goToFraction 会让分页器反复重排，卡得没法用
-    if (event.target.id === "ebookSlider") ebookSeek(Number(event.target.value) / 1000);
-  });
+    if (event.target.id === "ebookSlider") {
+      ebookSeek(Number(event.target.value) / 1000);
+      hideSeekBubble();
+    }
+  };
 
-  // 拖动时先只更新数字，让人看得见落点在哪
-  $("#readToolbar").addEventListener("input", (event) => {
+  // 拖动时先只更新数字与预览气泡，让人看得见落点在哪一章
+  const onToolbarInput = (event) => {
     if (event.target.id !== "ebookSlider") return;
     const percent = $(".ebook-pct");
     const value = Number(event.target.value);
     if (percent) percent.textContent = `${Math.round(value / 10)}%`;
     event.target.style.setProperty("--_fill", `${Math.round(value / 10)}%`);
+    showSeekBubble(value / 1000);
+  };
+
+  // 悬停预览：不拖动也能看出「拖到这里会是哪一章」
+  let sliderHeld = false;
+  const onSeekHover = (event) => {
+    const slider = event.target.closest?.("#ebookSlider");
+    if (!slider) return;
+    const box = slider.getBoundingClientRect();
+    if (!box.width) return;
+    showSeekBubble(clamp((event.clientX - box.left) / box.width, 0, 1));
+  };
+  const onSeekDown = (event) => {
+    if (event.target.closest?.("#ebookSlider")) sliderHeld = true;
+  };
+  const onSeekLeave = () => {
+    if (!sliderHeld) hideSeekBubble();
+  };
+  window.addEventListener("pointerup", () => {
+    sliderHeld = false;
+    hideSeekBubble();
   });
+
+  // 浮动条（PDF / 文本 / Markdown）与电子书的底部带共用同一套动作；
+  // 带子每栏一条，各自绑定——悬停气泡的收起范围也因此以「带」为准
+  for (const container of [$("#readToolbar"), ...$$(".ebook-band")]) {
+    container.addEventListener("click", onToolbarClick);
+    container.addEventListener("change", onToolbarChange);
+    container.addEventListener("input", onToolbarInput);
+    container.addEventListener("pointermove", onSeekHover);
+    container.addEventListener("pointerdown", onSeekDown);
+    container.addEventListener("pointerleave", onSeekLeave);
+  }
 
   // 点工具栏以外的地方收起缩放比例菜单与文档操作菜单
   document.addEventListener("click", (event) => {
