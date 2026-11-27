@@ -109,6 +109,8 @@ yuejian/
 
     快捷方式按「指向哪个 exe」判断（`IsShortcutTarget`）而不是按文件名判断，避免误删用户自建的同名 `.lnk`；`YueJianRemoveOldShortcuts` 会先 `MUI_STARTMENU_GETFOLDER` 读回安装时选定的开始菜单目录。刻意**不**清理 `$INSTDIR` 下的未知文件：那等于对一个可能含 `data/` 的目录做通配删除，收益远小于风险；也确实没有这类残留——每个版本的文件清单一致。
 
+    桌面快捷方式**在安装段创建，不放在完成页**。曾经用完成页的 `MUI_FINISHPAGE_SHOWREADME` 复选框兼职建快捷方式，结果是「安装器关了才建」：完成页的 LEAVE 回调先启动应用再执行复选框函数，用户看到的桌面上什么都没有，要等应用打开（或别的 shell 事件）才把图标画出来。现在 `Section Install` 对所有安装模式调用 `CreateOrUpdateDesktopShortcut`（函数内部仍尊重 `/NS` 与 `/UPDATE`），再由 POSTINSTALL 钩子统一改名为「阅笺」并调用 `shell32::SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, $DESKTOP / $SMPROGRAMS)`——创建与改名对 Explorer 都是不可见的两步，不主动通知它就得等下一个 shell 事件才重绘。交互 / 被动 / 静默三种安装从此只有一条时序，不再需要 `.onGUIEnd` 兜底。
+
 14. **安装提示用非模态卡片，不用模态弹框**：更新包下载完成时用户多半正在读东西，铺遮罩 + 抢焦点的模态框会把阅读打断（还要处理 ESC 与全局快捷键的抢占）。因此做成右下角常驻卡片（`#installPrompt`，`role="dialog"` 但**不带** `aria-modal`）：不铺遮罩、`card.focus()` 一律不调、不注册任何全局键盘监听，点「立即安装」才 `installUpdate()`，「稍后再说」只收起卡片——状态不丢，侧栏红点与设置面板里的按钮仍在。文案与 URL 都走 i18n，标题里的版本号由 JS 填（带参数的键不能挂 `data-i18n`，否则会渲染出字面量 `{version}`）。
 
 15. **PDF 默认「适合宽度」而不是「适合页面」**：默认值就是 `PdfReader.open()` 里 `zoom == null` 时的分支——`fitMode = "width"`，比例由 `fitWidthZoom()` 按可视区算（`clientWidth - 64` 除以基准页宽）。理由：正文阅读要的是字够大，整页看全属于排版审视，是少数场景，放进缩放菜单即可。代价是页面高度超过一屏、看得到页顶看不到页底，所以「下一页」用页码跳转与纵向滚动配合（`handleResize` 里高度变化的适配只对 `"page"` 生效，`"width"` 只跟宽度走）。缩放比例仍然不跨会话恢复：每次打开都重算，避免在窄窗口记下 165%、换到分栏后变成一堆超宽页。

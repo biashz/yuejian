@@ -4,10 +4,10 @@
 ; 「阅笺」用 Unicode 转义书写，避免 .nsh 文件编码被 makensis 按系统代码页误判。
 ;
 ; 时序要点：
-;   * 开始菜单快捷方式在安装段创建，POSTINSTALL 即可改名；
-;   * 交互安装的桌面快捷方式在「完成」页才创建，晚于 POSTINSTALL，
-;     因此交互安装的桌面改名放在 .onGUIEnd（安装器界面收起前），
-;     POSTINSTALL 负责静默 / 被动安装（无完成页）这一条路径。
+;   * 桌面与开始菜单快捷方式都在安装段创建（见 installer.nsi 的 Section Install），
+;     因此 POSTINSTALL 一次改名即可覆盖交互 / 被动 / 静默三种安装；
+;   * 创建与改名对 Explorer 都是「悄悄发生」的两步，必须紧接着发 SHChangeNotify，
+;     否则桌面要等下一个 shell 事件（例如启动应用）才肯把新图标画出来。
 ; 用原生命令 IfFileExists / StrCmp，避免 LogicLib 误解析 ${PRODUCTNAME}。
 
 ; 中文向导下：桌面 + 开始菜单快捷方式由 YueJian Reader.lnk 改名为 阅笺.lnk
@@ -33,17 +33,21 @@ Function YueJianRenameShortcuts
   yuejian_rename_done:
 FunctionEnd
 
-; 交互安装：完成页创建桌面快捷方式后、安装器界面收起前改名
-Function .onGUIEnd
-  Call YueJianRenameShortcuts
+; 让 Explorer 立刻重读桌面与开始菜单目录。
+; 快捷方式是安装器进程里创建又改名的，资源管理器不知道有这个新文件；
+; SHCNE_UPDATEDIR(0x1000) + SHCNF_PATHW(0x5) 只刷新这两个目录，不做全盘图标重建。
+Function YueJianNotifyShell
+  System::Call 'shell32::SHChangeNotify(i 0x1000, i 0x5, w "$DESKTOP", p 0)'
+  System::Call 'shell32::SHChangeNotify(i 0x1000, i 0x5, w "$SMPROGRAMS", p 0)'
 FunctionEnd
 
 !macro NSIS_HOOK_PREINSTALL
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  ; 开始菜单快捷方式此时已创建；静默 / 被动安装的桌面快捷方式也已创建
+  ; 所有安装模式的快捷方式此时都已创建，改名后立刻通知 shell
   Call YueJianRenameShortcuts
+  Call YueJianNotifyShell
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
