@@ -520,6 +520,31 @@ export class Paginator extends HTMLElement {
             grid-row: 1 / -1;
             overflow: auto;
         }
+        /* Local patch: themed scrollbar for continuous mode. The shadow root is
+           closed, so this stylesheet is the only place the bar can be reached.
+           Colours are inherited custom properties from the host (set per theme
+           in styles.css); the fallbacks keep the upstream look in isolation.
+           Do not add scrollbar-width/-color here: the standard properties make
+           Chromium ignore the whole ::-webkit-scrollbar block and fall back to
+           the native bar with its arrow buttons. Custom mode draws no buttons.
+           Hover darkening also lives on the host: an ancestor :hover rule here
+           matches but never repaints the thumb. */
+        #container::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        #container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        #container::-webkit-scrollbar-corner {
+            background: transparent;
+        }
+        #container::-webkit-scrollbar-thumb {
+            border: 3px solid transparent;
+            border-radius: 999px;
+            background: var(--ebook-sb-thumb, rgba(140, 130, 114, .3));
+            background-clip: content-box;
+        }
         #header {
             grid-column: 3 / 4;
             grid-row: 1;

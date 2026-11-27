@@ -1052,9 +1052,26 @@ body.is-book-dragging .book-card { cursor: grabbing; }
   background:
     radial-gradient(120% 90% at 50% 0%, transparent 55%, color-mix(in srgb, var(--ink) 5%, transparent)),
     color-mix(in srgb, var(--surface-2) 58%, var(--paper));
+  /* 连续滚动的滚动条在 closed shadow 里，宿主只能递颜色进去；
+     取的是全站滚动条同一套墨色（见 .scroll-area::-webkit-scrollbar） */
+  --ebook-sb-thumb: color-mix(in srgb, var(--ink-3) 30%, transparent);
+  --ebook-sb-thumb-hover: color-mix(in srgb, var(--ink-3) 58%, transparent);
 }
+/* 书页下面的叠纸：比书页宽一圈、高一点，只露出一道纸边 */
+.ebook-under {
+  position: absolute; left: 0; right: 0; top: 7px; bottom: 0;
+  margin-inline: auto;
+  background: color-mix(in srgb, var(--surface-2) 76%, var(--surface));
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  pointer-events: none;
+}
+.ebook-under[hidden] { display: none; }
 .ebook-stack {
-  position: absolute; inset: 14px 16px 0;
+  position: absolute; inset: 14px 0 0;
+  /* 宽度由 ebook-page.js 按版式算好写进 style：单页一叶、双页摊开、滚动一长卷 */
+  margin-inline: auto;
   background: var(--surface);
   border: 1px solid var(--line);
   border-bottom: 0;
@@ -1062,9 +1079,75 @@ body.is-book-dragging .book-card { cursor: grabbing; }
   box-shadow: var(--shadow-md);
 }
 .ebook-stack[hidden] { display: none; }
+/* 滚动档悬停加深：Chromium 不会因为祖先 :hover 重绘滚动条滑块，
+   但自定义属性变了会重新解析——所以在宿主这层换色，穿过 shadow 边界递进去 */
+.ebook-stack.is-scroll:hover { --ebook-sb-thumb: var(--ebook-sb-thumb-hover); }
 .ebook-view {
   display: block;
   width: 100%; height: 100%;
+}
+/* 中缝：只在双页时出现。宽度跟着列间距走——间距调小了，阴影也得跟着收，
+   不然会压到字上。上下用 mask 渐隐，线的两端不突兀 */
+.ebook-gutter {
+  position: absolute; left: 50%; top: var(--ebook-margin, 56px); bottom: var(--ebook-margin, 56px);
+  width: min(72px, max(14px, calc(var(--ebook-gap, 8) * 1%)));
+  transform: translateX(-50%);
+  z-index: 1;
+  display: none;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--ink) 2.5%, transparent) 30%,
+    color-mix(in srgb, var(--ink) 5%, transparent) 50%,
+    color-mix(in srgb, var(--ink) 2.5%, transparent) 70%,
+    transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(180deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+}
+.ebook-stack.is-spread .ebook-gutter { display: block; }
+.ebook-gutter::after {
+  content: "";
+  position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 1px; transform: translateX(-0.5px);
+  background: color-mix(in srgb, var(--line-strong) 82%, transparent);
+}
+/* 页码：坐在下白边的中线，双页各一半、单页居中。留白不够时整层不画 */
+.ebook-folio {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: var(--ebook-margin, 56px);
+  display: flex; align-items: center;
+  z-index: 2;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px; line-height: 1;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  opacity: 0.85;
+}
+.ebook-folio[hidden] { display: none; }
+.ebook-folio > span { flex: 1 1 0; text-align: center; white-space: nowrap; }
+.ebook-stack.is-single .ebook-folio > .folio-l { flex: 1 1 100%; }
+.ebook-stack.is-single .ebook-folio > .folio-r { display: none; }
+/* 翻页掠影：一条柔和的纸影扫过整张书页，方向由 JS 按前进/回翻决定 */
+.ebook-sweep {
+  position: absolute; inset: 0;
+  z-index: 3;
+  display: none;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.ebook-stack.is-paged.is-turning .ebook-sweep { display: block; }
+.ebook-sweep-band {
+  position: absolute; top: -10%; bottom: -10%; left: 0; width: 38%;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--ink) 4%, transparent) 55%,
+    color-mix(in srgb, var(--ink) 8%, transparent) 85%,
+    transparent 100%);
+  opacity: 0;
+  will-change: transform, opacity;
 }
 /* 底部工具带（「书口」）：不浮、不圆角，直接停在版面底边，占自己的高度不压正文。
    三段式——左：当前章节（书眉）；中：通栏进度轨道；右：阅读姿势与界面开关。

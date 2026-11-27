@@ -25,6 +25,7 @@ import { ebookFormat } from "./core/constants.js";
 import { guardBook } from "./reader/ebook-guard.js";
 import { bindAnnotations, paintAnnotations, selectionCfi } from "./reader/ebook-annotations.js";
 import { toLocation, stepBook, chapterStep, goToFraction } from "./reader/ebook-nav.js";
+import { createPageDecor } from "./reader/ebook-page.js";
 
 /** 超过这个体积就不读了：整份进内存，再大只会把进程拖死 */
 const MAX_BYTES = 512 * 1024 * 1024;
@@ -73,6 +74,8 @@ export class EbookReader {
     this.layout = {};
     this.view = null;
     this.book = null;
+    /* 书页装饰（中缝 / 页码 / 掠影）与书页宽度，跟着每个 view 重建 */
+    this.decor = null;
     this.path = "";
     this.location = null;
     /* 当前可见 Range：朗读判「这句在不在屏幕上」用它，relocate 每次带过来 */
@@ -136,6 +139,8 @@ export class EbookReader {
     this.chapters = countChapters(this.book?.toc);
     this.toc = flattenToc(this.book?.toc);
     guardBook(this.book);
+    // 装饰层要在首帧之前挂上：init() 触发的第一次 relocate 就是页码的来源
+    this.decor = createPageDecor(this);
 
     view.addEventListener("relocate", (event) => this.handleRelocate(event.detail));
     view.addEventListener("load", (event) => {
@@ -189,6 +194,7 @@ export class EbookReader {
     if (!paginatorReady(renderer)) return;
     renderer.setAttribute("max-column-count", this.spread ? "2" : "1");
     renderer.render?.();
+    this.decor?.sync();
   }
 
   /**
@@ -209,6 +215,8 @@ export class EbookReader {
   applyLayout(css, layout = {}, { render = true } = {}) {
     this.css = css;
     this.layout = { ...this.layout, ...layout };
+    // 页面宽度 / 中缝 / 页码都吃这份版式，先让装饰层跟上再重排
+    this.decor?.sync();
     if (this.fixed) return;
     const renderer = this.view?.renderer;
     if (!renderer) return;
@@ -310,6 +318,8 @@ export class EbookReader {
 
   destroy() {
     if (!this.view) return;
+    this.decor?.dispose();
+    this.decor = null;
     this.__modeDispose?.();
     this.__modeDispose = null;
     try {

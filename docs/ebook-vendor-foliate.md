@@ -54,6 +54,21 @@ comic-book.js  fb2.js  mobi.js  vendor/zip.js  vendor/fflate.js
 `npm run check` → `npm run smoke`（内含电子书用例：打开、目录、翻页、CFI 续读、
 脚本清洗），全绿再提交。
 
+## 本地补丁（`npm run vendor` 会冲掉，升级后必须逐条重打）
+
+`paginator.js` 里有六处 `Local patch` 注释。五处是上游未修的时序崩溃，一处是连续滚动滚动条的样式：
+
+| 位置 | 改了什么 | 为什么 |
+| --- | --- | --- |
+| `render()`（布局前半段） | `documentElement` / `body` 为空时直接返回 | 节加载中 iframe 文档尚未成形，照常设样式会抛；load 完成后会再 render，跳过是安全的 |
+| 同一个 render 的后续布局段 | 同样的判空 guard | 导航中重入时文档可能已被换掉 |
+| `#container` 的 shadow `<style>` | 连续滚动用自定义滚动条：10px 透明轨道 + 4px 墨线滑块，颜色取宿主递进来的 `--ebook-sb-thumb`；悬停加深在宿主侧换变量 | closed shadow 只能从内部样式到达；**不能**同时写 `scrollbar-width` / `scrollbar-color`——标准属性会让 Chromium 忽略整套 `::-webkit-scrollbar` 规则，退回带上下箭头的原生条；祖先 `:hover` 规则会匹配但不重绘滑块，所以悬停放在宿主 |
+| 翻页后的相邻节判断 | 没有相邻节就不调 `#goTo` | `#goTo({ index: undefined })` 会取 `sections[undefined]` 直接抛 |
+| `getVisibleRange()` | `document.body` 为空时返回 `null` | `render()` 的 `scrollToAnchor()` 不 await，滚动可能落到下一份还没有 body 的文档上，`createTreeWalker(null)` 变成未捕获拒绝 |
+| 滚动模式到书首 / 书尾 | `shouldGo` 但无相邻节时不跳，且不锁死 `#locked` | 否则 `#locked` 一直为 true，后续所有导航静默失效 |
+
+升级流程保持不变（换 `FOLIATE_SHA` → `npm run vendor` → `npm run check` → `npm run smoke`），但 vendor 之后要按上表把这六处重新补上——`grep -n "Local patch" src/vendor/foliate/paginator.js` 应能数到六条。
+
 ## 已知取舍
 
 - **不提供沙箱**：库的 iframe 用 `sandbox="allow-same-origin allow-scripts"`，README 明确说

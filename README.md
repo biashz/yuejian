@@ -12,7 +12,7 @@
 [![Release](https://img.shields.io/github/v/release/biashz/yuejian)](https://github.com/biashz/yuejian/releases)
 [![官网](https://img.shields.io/badge/website-yuejian-reader.vercel.app-b23a2b.svg)](https://yuejian-reader.vercel.app)
 
-![阅笺书架界面](site/assets/screenshot-library.jpg)
+![阅笺书架界面](site/assets/screenshot-library-2.jpg)
 
 ## 功能
 
@@ -194,6 +194,7 @@ npm run dev      # 增量编译 debug 版并启动应用
 data/
 ├── state.json      # 书架 + 设置 + 阅读进度
 ├── search/         # 跨书检索的正文索引（每本书一份 <id>.json，删书时一并清掉）
+├── fonts/          # 按需下载的开源正文字体（删除后可在版式面板重新下载）
 └── webview2/       # 系统 WebView 的用户数据目录（Windows 下即 WebView2）
 ```
 
@@ -208,7 +209,7 @@ data/
       "path": "D:\\docs\\paper.pdf",
       "title": "纸页上的呼吸",
       "author": "",
-      "kind": "pdf",               // pdf | markdown | text
+      "kind": "pdf",               // pdf | markdown | text | ebook
       "size": 2483102,
       "pages": 6,
       "words": 0,
@@ -248,6 +249,9 @@ data/
 | [分类界面设计](docs/ui-categories.md) | 分类区规格、状态矩阵、配色 token 与文案 |
 | [书架工具规划](docs/feature-shelf-tools.md) | 状态筛选、四轴排序、移除撤销的调研、数据模型与验收 |
 | [书架工具界面设计](docs/ui-shelf-tools.md) | 目录三组吸顶、排序菜单与撤销提示条的规格与状态矩阵 |
+| [电子书阅读规划](docs/feature-ebook-reading.md) | 双阅读模式、朗读与自动滚动、划线与笔记的语义与验收 |
+| [电子书阅读界面](docs/ui-ebook-reading.md) | 阅读工具栏、版式面板、辅助条与状态矩阵 |
+| [正文字体](docs/ebook-fonts.md) | 按需下载的字体清单、校验、落盘位置与回退 |
 | [摘录导出](docs/feature-export.md) | 摘录的数据来源、Markdown 输出格式、两个出口与边界 |
 | [跨书全文检索](docs/feature-search.md) | 两条取数路径、索引格式与失效、命中区交互与不做的事 |
 | [打印与导出](docs/feature-doc-export.md) | 按格式分流、打印舞台与平台差异、导出 HTML 的取数与图片内联 |

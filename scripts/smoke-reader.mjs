@@ -1873,6 +1873,29 @@ async function main() {
     const afterClick = await cfiOf();
     check("点击右半屏翻到下一页", afterClick !== beforeClick, `...${beforeClick.slice(-18)} → ...${afterClick.slice(-18)}`);
 
+    // 翻页掠影：滑动档翻页时，纸影带必须在播；播完不留动画
+    await evaluate(ws, `(async () => {
+      const mod = await import("/js/reader/panes.js");
+      const r = mod.activePane().ebook.view.renderer;
+      r.next();
+      await new Promise((res) => setTimeout(res, 70));
+      const pane = document.querySelector('.reader-pane.is-active');
+      const band = pane.querySelector('.ebook-sweep-band');
+      window.__sweep = {
+        cls: pane.querySelector('.ebook-stack').className,
+        running: band.getAnimations().map((a) => ({ state: a.playState, t: Math.round(a.currentTime || 0) })),
+      };
+    })()`);
+    await sleep(600);
+    const sweep = await evaluate(ws, `(() => {
+      const band = document.querySelector('.reader-pane.is-active .ebook-sweep-band');
+      return { ...window.__sweep, left: band.getAnimations().length };
+    })()`);
+    check("翻页掠影在翻页时真的在播（滑动档）",
+      /is-turning/.test(sweep.cls) && sweep.running.length > 0
+        && sweep.running.every((a) => a.state === "running") && sweep.left === 0,
+      `动 ${JSON.stringify(sweep.running)} · 播完剩 ${sweep.left}`);
+
     await evaluate(ws, `(() => {
       document.body.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 }));
       return true;

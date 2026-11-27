@@ -45,6 +45,8 @@ function applyReadingMode(reader, settings) {
   renderer.setAttribute("flow", flow === "scroll" ? "scrolled" : "paginated");
   if (flow === "paged" && turn === "slide") renderer.setAttribute("animated", "");
   else renderer.removeAttribute("animated");
+  // 书页装饰跟着姿势与动效走：滚动时不画中缝/页码/掠影，掠影只在「滑动」档出现
+  reader.decor?.setTurn(turn);
 
   if (flow === "paged" && turn === "fade") {
     const onRelocate = (event) => {

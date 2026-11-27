@@ -12,20 +12,24 @@ A local-first desktop reader: a Rust + Tauri 2 shell, PDF rendering with pdf.js,
 [![Release](https://img.shields.io/github/v/release/biashz/yuejian)](https://github.com/biashz/yuejian/releases)
 [![Website](https://img.shields.io/badge/website-yuejian-reader.vercel.app-b23a2b.svg)](https://yuejian-reader.vercel.app)
 
-![YueJian library screen](site/assets/screenshot-library.jpg)
+![YueJian library screen](site/assets/screenshot-library-2.jpg)
 
 ## Features
 
 - **PDF reading**: pdf.js renders a continuous scroll with a transparent text layer for selection and copy; long documents load lazily around the viewport.
-- **Ebook reading** (EPUB / FB2 / FB2.ZIP / CBZ / MOBI / AZW3): foliate-js unpacks and paginates; the table of contents comes from the book's own NAV/NCX; `←` `→` and Space turn pages, and clicking the left/right half or scrolling works too; **single vs. double page** is a toggle (narrow windows fall back to single automatically); the bottom progress bar is draggable; `Ctrl+←/→` jumps chapters, `Home/End` jumps to the ends, and going past either end says so instead of doing nothing; **bookmarks** (`Ctrl+M`) are saved with the book and listed in the sidebar; **full-book search** matches across chapters, groups results by chapter, and jumps on click; footnote links open in a small popup instead of displacing the page; **highlights** take a colour (five choices) the moment you select text, are drawn on an SVG layer above the page without reflowing the book, are listed newest-first in the sidebar with jump-back and delete, and persist with the book; illustrations and full comic pages open full-screen (wheel to zoom, double-click to reset, `Esc` to close); six **reading settings** (size, line height, margins, typeface, alignment, override book styles) live in the Ebooks section of the settings sheet, reflow immediately, and stay separate from the PDF and text controls. Position is stored as a **CFI**, so resizing the window never loses your place (page numbers are derived from layout and cannot be persisted). Scripts inside books never run — script items and inline handlers are stripped, with the CSP as a second line of defence. Title and author are read from the OPF metadata. Comics (CBZ) render as **fixed layout** full pages and ignore type size and margins; **DRM**-protected books are recognised before opening and reported by scheme (Adobe ADEPT / Kindle) instead of "corrupt file"; scripts stay inert outside EPUB too.
+- **Ebook reading** (EPUB / FB2 / FB2.ZIP / CBZ / MOBI / AZW3): foliate-js unpacks and paginates; the table of contents comes from the book's own NAV/NCX; `←` `→` and Space turn pages, and clicking the left/right half or scrolling works too; **single vs. double page** is a toggle (narrow windows fall back to single automatically); the bottom progress bar is draggable; `Ctrl+←/→` jumps chapters, `Home/End` jumps to the ends, and going past either end says so instead of doing nothing; **bookmarks** (`Ctrl+M`) are saved with the book and listed in the sidebar; **full-book search** matches across chapters, groups results by chapter, and jumps on click; footnote links open in a small popup instead of displacing the page; **highlights** take a colour (five choices) the moment you select text, are drawn on an SVG layer above the page without reflowing the book, are listed newest-first in the sidebar with jump-back and delete, and persist with the book; the selection bar's second row offers copy / note / delete, and **notes** (up to 500 characters) hang off their highlight, are editable in the sidebar, and export with a `**Note:**` line; illustrations and full comic pages open full-screen (wheel to zoom, double-click to reset, `Esc` to close); the **layout panel** (`Aa` in the reading toolbar) adjusts size / line height / margins / typeface / alignment / override book styles and the reading mode, reflows immediately, and stays separate from the PDF and text controls. Position is stored as a **CFI**, so resizing the window or changing type size never loses your place (page numbers are derived from layout and cannot be persisted). Scripts inside books never run — script items and inline handlers are stripped, with the CSP as a second line of defence. Title and author are read from the OPF metadata. Comics (CBZ) render as **fixed layout** full pages and ignore type size and margins; **DRM**-protected books are recognised before opening and reported by scheme (Adobe ADEPT / Kindle) instead of "corrupt file"; scripts stay inert outside EPUB too.
+- **Reading modes and aids** (ebooks): **paged ↔ continuous scroll** (`Shift+J`, the toolbar, or the layout panel's Reading group); switching keeps your place by CFI. Scroll mode scrolls natively, flows into the next chapter at the end of one, and `←→` jumps chapters; the **page-turn animation** has slide / fade / none, and none is forced under `prefers-reduced-motion`. **Read aloud** (`Shift+L`) reads sentence by sentence with local system voices, tints the current sentence with a lighter accent than highlights, turns pages to follow, continues at chapter ends and stops at the end of the book; `Space` plays/pauses and `Ctrl+[`/`]` jumps sentences; without a local voice it says so instead of pretending to play. **Auto-scroll** (`Shift+A`) moves at a constant pace in scroll mode and turns pages on a timer in paged mode, speed 1–10, pausing on wheel or key press; it is mutually exclusive with read-aloud and shares one bottom bar. Manual paging, chapter jumps, or dragging the progress bar stop the aid. **Progress ticks**: the progress track marks chapter boundaries by length (thinned out above 40), and hovering or dragging shows a "chapter · percentage" bubble, jumping only on release.
+- **Reading typefaces** (ebooks): system Song / Hei / Kai are always available, plus five OFL 1.1 open-source faces — LXGW WenKai GB, Source Han Serif, Source Han Sans, Literata, EB Garamond. **The installer ships no fonts**: the first time you pick one it is downloaded from the official source into `data/fonts/` and works offline afterwards. Downloads show a percentage, can be retried, and auto-select on success; removing the face in use falls back to system Song. Downloads only follow the official domain, keep filenames inside the font directory, and require a TrueType/OpenType file header. See `docs/ebook-fonts.md`.
 - **Cross-book search**: the shelf search box matches titles and **document text** alike. Text / Markdown / CSV / code are scanned line by line on the Rust side (no index built); PDFs are extracted page by page with pdf.js and ebooks section by section with foliate, cached under `data/search/` and rebuilt whenever a file's size or mtime changes. Matches get their own section below the grid, with page or chapter labels and the keyword highlighted; clicking one **lands on that very line / page / chapter** (the sidebar marks the matching entry at the same time). A book that cannot be opened is skipped on its own, and the header reports how many were left out.
-- **Three sidebar views**: jump by document outline, locate by thumbnail, or search and highlight keywords across the whole document.
-- **Excerpt export**: an ebook's highlights and bookmarks can be **copied** or **exported as Markdown** (`<title>-excerpts.md`) in one click. The file carries the title, author, counts and export time; each excerpt is a blockquote with its source on a separate line plus the colour name, ordered by when you highlighted it, with leading `#` / `-` escaped so it pastes into Obsidian / Typora without falling apart. The buttons are absent when there is nothing to export.
-- **Text reading**: open `txt` / `log` / `csv` plus thirty-odd code and config extensions; prose, monospace, and table views, with line numbers and soft wrap; encoding resolved by BOM plus detection, so GBK files saved by Chinese Notepad do not turn into mojibake — and if detection gets it wrong, the info panel lets you re-open as GB18030 / Big5 / Shift_JIS and remembers the choice; code files are syntax-highlighted by extension, with highlighting switched off (and explained) above 200 KB; CSV / TSV are split per RFC 4180 with a sticky header and row-number column; **files over 8 MB load through a line index and a render window**, so a 100 MB log opens, scrolls to the end, and uses memory independent of file size.
+- **Four sidebar views**: jump by document outline, locate by thumbnail, inspect file info (encoding / line count / line endings / chapters), or search and highlight keywords across the whole document.
+- **Excerpt export**: an ebook's highlights and bookmarks can be **copied** or **exported as Markdown** (`<title>-excerpts.md`) in one click. The file carries the title, author, counts and export time; each excerpt is a blockquote with its source on a separate line plus the colour name, with a `**Note:**` line under the quote when the entry has one, ordered by when you highlighted it, with leading `#` / `-` escaped so it pastes into Obsidian / Typora without falling apart. The buttons are absent when there is nothing to export.
 - **Print & export**: the `⋯` at the right end of the reading toolbar offers what the format allows — Markdown and text can be **printed** (`Ctrl/Cmd + P`, paper carries the text only, no toolbar or sidebar) or **exported as a standalone HTML file** (styles are inlined and local images are embedded as data URLs, so the file opens on any machine by double-click, and it reproduces the layout you see on screen); PDFs and ebooks only offer **Save a copy**, because their layout comes from the original file and re-rendering can only be worse; very large text files load one window at a time and get the same treatment, with the reason spelled out in the menu.
+- **Text reading**: open `txt` / `log` / `csv` plus thirty-odd code and config extensions; prose, monospace, and table views, with line numbers and soft wrap; encoding resolved by BOM plus detection, so GBK files saved by Chinese Notepad do not turn into mojibake — and if detection gets it wrong, the info panel lets you re-open as GB18030 / Big5 / Shift_JIS and remembers the choice; code files are syntax-highlighted by extension, with highlighting switched off (and explained) above 200 KB; CSV / TSV are split per RFC 4180 with a sticky header and row-number column; **files over 8 MB load through a line index and a render window**, so a 100 MB log opens, scrolls to the end, and uses memory independent of file size.
 - **Markdown reading**: comrak renders GFM on the Rust side (tables, task lists, footnotes, strikethrough, autolinks); headings get automatic outline anchors and code blocks are syntax-highlighted.
 - **Reading typography**: Paper / Night / Sepia themes; body size 15 / 17 / 19 / 21px, line height 1.7 / 1.9 / 2.1, measure 620 / 720 / 820px; Focus mode hides everything but the text.
 - **Reading progress**: page, zoom, and scroll position are saved automatically, so the next open returns to where you stopped.
+- **Custom categories**: create your own categories, one per document; drag a document onto one, or `Ctrl+click` several and assign them in a batch; rename, recolour, or delete a category (its documents fall back to Uncategorised). Category, type, status, and keyword filters stack.
+- **Status and sorting**: the sidebar groups entries by type / status / category, with three-level sticky headers that each collapse and state their current selection; status (reading / unread / finished) is derived from progress and carries counts. Four sort axes (last opened / recently added / title / reading progress) reverse and are remembered; a removed document can be **undone within 6 seconds**, with favourite, category, and progress restored exactly.
 - **Command palette**: `Ctrl/Cmd + K` to search books, jump to sections, switch themes, open settings, or import files.
 - **Bilingual UI**: switch between Simplified Chinese and English in Settings; the choice is remembered.
 - **Automatic updates**: the app quietly checks GitHub Releases on startup and downloads a new version in the background; Settings → Updates shows progress and manual checks, and one click restarts into the installer. Upgrading removes the old version first and keeps `data/`.
@@ -76,16 +80,41 @@ yuejian/
 │   ├── index.html
 │   ├── styles.css
 │   ├── js/
-│   │   ├── app.js           # App wiring, shelf, command palette, settings
+│   │   ├── app.js           # Entry: load data, apply settings, wire events
 │   │   ├── api.js           # The only gateway from the frontend to Rust commands
 │   │   ├── i18n.js          # Chinese/English dictionaries and language switching
-│   │   ├── update.js        # Update check, download progress, install hand-off
+│   │   ├── update.js        # Update bridge: query releases, download, launch installer
 │   │   ├── reader-pdf.js    # pdf.js wrapper: rendering, paging, zoom, search
 │   │   ├── reader-epub.js   # Ebooks: mount foliate-view, event bridge, CFI, script stripping
 │   │   ├── reader-md.js     # Markdown rendering and outline scroll sync
 │   │   ├── reader-text.js   # Text rendering: views, line numbers, soft wrap, highlighting
 │   │   ├── reader-csv.js    # CSV / TSV: delimiter detection, RFC 4180 parsing, table HTML
-│   │   └── reader-bigtext.js # Large files: window rendering, jump to line
+│   │   ├── reader-bigtext.js # Large files: line-window rendering (virtual scroll), jump to line
+│   │   ├── shelf.js         # Shelf: list / grid / continue reading / stats / four-way filters
+│   │   ├── library-index.js # Cross-book text index: PDF per page, ebooks per section, cached
+│   │   ├── library-search.js # Cross-book search: both extraction paths, one result shape
+│   │   ├── library-hits.js  # Shelf "matches" section rendering
+│   │   ├── library-search-ui.js # Search scheduling: debounce, cancellation, progress, jumps
+│   │   ├── categories.js    # Category math: ordering, counts, colours, filter predicates
+│   │   ├── category-ui.js   # Category area, status group, batch bar, category editor popover
+│   │   ├── status.js        # Derived reading status (reading / unread / finished)
+│   │   ├── sort.js          # Sort math: four axes, natural direction, tiebreak
+│   │   ├── sort-ui.js       # Sort toolbar and menu rendering
+│   │   ├── view.js          # View switching, status bar, window title, language switching
+│   │   ├── actions.js       # Import / remove / favourite / category CRUD / batch assign
+│   │   ├── palette.js       # Command palette
+│   │   ├── preferences.js   # Themes and typography, settings panel, persistence
+│   │   ├── update-ui.js     # Update state machine and the update card in Settings
+│   │   ├── bind/            # Event binding split by domain
+│   │   │   ├── index.js     # Aggregate entry, calls the six domains in a fixed order
+│   │   │   ├── shelf.js     # Delegated clicks, navigation, shelf search and import
+│   │   │   ├── reader.js    # Document bar, outline, toolbar, demo
+│   │   │   ├── panels.js    # Command palette, settings, window buttons, drag, context menu
+│   │   │   ├── keys.js      # Keyboard shortcuts and flush-on-quit
+│   │   │   ├── category.js  # Category filters, editor popover, batch and drag assignment
+│   │   │   └── sort.js      # Sort menu open/close, axis flip, keyboard and Esc layering
+│   │   ├── core/            # dom / session / constants / format / feedback
+│   │   └── reader/          # panes / open / toolbar / ctx-* / present / progress / ebook-* / footnote / bookmarks / highlight / export-marks / marks-tools / marks-export / doc-export / doc-print / doc-menu
 │   └── vendor/              # Offline assets generated by npm run vendor
 ├── src-tauri/
 │   ├── src/
@@ -102,6 +131,7 @@ yuejian/
 ├── site/                    # Static marketing site (Vercel source)
 ├── scripts/
 │   ├── dev.mjs              # Unified dev / build / bundle entry
+│   ├── check-undefined.mjs  # Static check: called but undeclared/imported functions
 │   ├── smoke-reader.mjs     # Real-browser smoke: open / page / zoom / hotkeys
 │   ├── e2e-ebook.mjs        # On-device E2E: launch the release build, read an EPUB in WebView2
 │   ├── lib/make-epub.mjs    # Generates the EPUB sample on the spot (one byte source for smoke + E2E)
@@ -163,6 +193,7 @@ Versioning rules:
 data/
 ├── state.json      # Shelf + settings + reading progress
 ├── search/         # Cross-book text index (one <id>.json per book, removed with the book)
+├── fonts/          # On-demand open-source body fonts (re-downloadable from the layout panel)
 └── webview2/       # System WebView user data directory (WebView2 on Windows)
 ```
 
@@ -177,7 +208,7 @@ data/
       "path": "D:\\docs\\paper.pdf",
       "title": "Breath on Paper",
       "author": "",
-      "kind": "pdf",               // pdf | markdown | text
+      "kind": "pdf",               // pdf | markdown | text | ebook
       "size": 2483102,
       "pages": 6,
       "words": 0,
@@ -213,6 +244,13 @@ data/
 | [Product spec](docs/product-spec.md) | Positioning, scenarios, feature map, non-functional requirements, data model |
 | [Design contract](docs/design-contract.md) | Visual tokens, component specs, app shell, and page list |
 | [Development plan](docs/dev-plan.md) | Milestones and implementation order |
+| [Categories](docs/feature-categories.md) | Category data model, interaction semantics, edge cases, acceptance criteria |
+| [Category UI](docs/ui-categories.md) | Category area spec, state matrix, colour tokens, copy |
+| [Shelf tools](docs/feature-shelf-tools.md) | Status filters, four-axis sorting, remove-undo research, data model, acceptance |
+| [Shelf tools UI](docs/ui-shelf-tools.md) | Three sticky groups, sort menu, undo bar specs and state matrix |
+| [Ebook reading](docs/feature-ebook-reading.md) | Reading modes, read-aloud and auto-scroll, highlight and note semantics, acceptance |
+| [Ebook reading UI](docs/ui-ebook-reading.md) | Reading toolbar, layout panel, aid bar, and state matrix |
+| [Body fonts](docs/ebook-fonts.md) | On-demand font list, verification, storage location, fallback |
 | [Excerpt export](docs/feature-export.md) | Where excerpts come from, Markdown output, the two exits and their limits |
 | [Cross-book search](docs/feature-search.md) | The two extraction paths, index format and invalidation, hit list, non-goals |
 | [Print & export](docs/feature-doc-export.md) | Per-format split, the print stage and platform differences, snapshotting and image inlining |
