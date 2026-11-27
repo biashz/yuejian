@@ -251,41 +251,44 @@
 
         <div class="reader-body">
           <div class="reader-panes" id="readerPanes">
-            <div class="reader-pane is-active" data-pane-root="0">
-              <div class="pane-head" hidden>
-                <span class="pane-tag" data-i18n="reader.leftPane">左栏</span>
-                <span class="pane-title" data-i18n="reader.untitled">未打开文档</span>
-                <span class="pane-pos"></span>
-                <button class="pane-open" title="在左栏打开文档" data-i18n-title="reader.openLeft">
-                  <svg class="ic"><use href="#i-folder-plus"/></svg>
-                </button>
+            <div class="panes-row">
+              <div class="reader-pane is-active" data-pane-root="0">
+                <div class="pane-head" hidden>
+                  <span class="pane-tag" data-i18n="reader.leftPane">左栏</span>
+                  <span class="pane-title" data-i18n="reader.untitled">未打开文档</span>
+                  <span class="pane-pos"></span>
+                  <button class="pane-open" title="在左栏打开文档" data-i18n-title="reader.openLeft">
+                    <svg class="ic"><use href="#i-folder-plus"/></svg>
+                  </button>
+                </div>
+                <div class="scroll-area">
+                  <div class="pdf-stack"></div>
+                  <article class="md-doc"></article>
+                  <div class="ebook-under" hidden aria-hidden="true"></div>
+                  <div class="ebook-stack" hidden></div>
+                </div>
               </div>
-              <div class="scroll-area">
-                <div class="pdf-stack"></div>
-                <article class="md-doc"></article>
-                <div class="ebook-under" hidden aria-hidden="true"></div>
-                <div class="ebook-stack" hidden></div>
-              </div>
-              <div class="ebook-band" role="toolbar" hidden></div>
-            </div>
 
-            <div class="reader-pane" data-pane-root="1" hidden>
-              <div class="pane-head" hidden>
-                <span class="pane-tag" data-i18n="reader.rightPane">右栏</span>
-                <span class="pane-title" data-i18n="reader.untitled">未打开文档</span>
-                <span class="pane-pos"></span>
-                <button class="pane-open" title="在右栏打开文档" data-i18n-title="reader.openRight">
-                  <svg class="ic"><use href="#i-folder-plus"/></svg>
-                </button>
+              <div class="reader-pane" data-pane-root="1" hidden>
+                <div class="pane-head" hidden>
+                  <span class="pane-tag" data-i18n="reader.rightPane">右栏</span>
+                  <span class="pane-title" data-i18n="reader.untitled">未打开文档</span>
+                  <span class="pane-pos"></span>
+                  <button class="pane-open" title="在右栏打开文档" data-i18n-title="reader.openRight">
+                    <svg class="ic"><use href="#i-folder-plus"/></svg>
+                  </button>
+                </div>
+                <div class="scroll-area">
+                  <div class="pdf-stack"></div>
+                  <article class="md-doc"></article>
+                  <div class="ebook-under" hidden aria-hidden="true"></div>
+                  <div class="ebook-stack" hidden></div>
+                </div>
               </div>
-              <div class="scroll-area">
-                <div class="pdf-stack"></div>
-                <article class="md-doc"></article>
-                <div class="ebook-under" hidden aria-hidden="true"></div>
-                <div class="ebook-stack" hidden></div>
-              </div>
-              <div class="ebook-band" role="toolbar" hidden></div>
             </div>
+            <!-- 电子书工具带只有一条：横跨整个阅读区，跟着活动栏换书。
+                 挂在每个分栏里会让分栏时的带子只剩半幅、两侧书页高度也不一致 -->
+            <div class="ebook-band" id="ebookBand" role="toolbar" hidden></div>
           </div>
 
           <aside class="context-panel" id="ctxPanel">

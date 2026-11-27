@@ -70,8 +70,6 @@ function initPanes() {
       pdfStack: $(".pdf-stack", root),
       mdDoc: $(".md-doc", root),
       ebookStack: $(".ebook-stack", root),
-      /* 电子书专属的底部工具带；只有活动栏且书是电子书时才渲染 */
-      band: $(".ebook-band", root),
       reader: null,
       /* 电子书阅读器实例；PDF 用上面那个 reader 槽位，两者不会同时存在 */
       ebook: null,
@@ -262,9 +260,11 @@ function closePaneDoc(pane) {
   pane.pdfStack.style.display = "none";
   pane.mdDoc.style.display = "none";
   pane.ebookStack.hidden = true;
-  if (pane.band) {
-    pane.band.hidden = true;
-    pane.band.innerHTML = "";
+  // 书口是阅读区共享的一条；清栏时先收起，活动栏的 renderToolbar 会按新书重画
+  const band = $("#ebookBand");
+  if (band) {
+    band.hidden = true;
+    band.innerHTML = "";
   }
   pane.scrollArea.scrollTop = 0;
   if (pane.index === activePaneIndex) mirrorPane(pane);

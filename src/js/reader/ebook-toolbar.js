@@ -6,8 +6,9 @@
  * 占自己的高度、不压正文。三段各司其职——左端常驻当前章节（相当于印刷书的书眉），
  * 中间一条通栏的进度轨道，右端是成组的阅读姿势与界面开关。
  *
- * 带子挂在每个分栏自己的 `<div class="ebook-band">` 里（`index.html` 里预置的占位），
- * 只有活动栏的那一条会渲染：双栏时两本书各有各的带，切栏即换带。
+ * 带子只有一条，挂在阅读区底部（`index.html` 里的 `#ebookBand`），横跨单栏与双栏：
+ * 双栏时它跟着活动栏换书——带子属于「正在读的那一本」，不属于某一栏。
+ * 早先每栏各挂一条，分栏后带子只剩半幅、两栏的书页高度也差一个带高，页底像被切了。
  *
  * 两条规矩：
  *
@@ -17,8 +18,8 @@
  */
 import { t } from "../i18n.js";
 import { state } from "../core/session.js";
-import { escapeHtml } from "../core/dom.js";
-import { panes, activePane } from "./panes.js";
+import { $, escapeHtml } from "../core/dom.js";
+import { activePane } from "./panes.js";
 import { assistOf } from "./ebook-assist.js";
 import { isScroll } from "./ebook-mode.js";
 import { ticksHtml } from "./ebook-seek.js";
@@ -88,37 +89,37 @@ function bandHtml(pane) {
   return `${head}${seek}<div class="band-end">${poses}<span class="tool-sep"></span>${screenTools}${paneToolsHtml(pane)}</div>`;
 }
 
+/** 阅读区底部那条唯一的带子 */
+const bandEl = () => $("#ebookBand");
+
 /** 活动栏换成电子书、或翻到新章节后重建整条带 */
 function renderEbookBands() {
+  const band = bandEl();
+  if (!band) return;
   const active = activePane();
-  for (const pane of panes) {
-    const band = pane.band;
-    if (!band) continue;
-    const mine = Boolean(active && pane === active && pane.book?.kind === "ebook");
-    band.hidden = !mine;
-    if (!mine) {
-      band.innerHTML = "";
-      continue;
-    }
-    band.setAttribute("aria-label", t("reader.ebookBand"));
-    band.innerHTML = bandHtml(pane);
+  const mine = Boolean(active && active.book?.kind === "ebook");
+  band.hidden = !mine;
+  if (!mine) {
+    band.innerHTML = "";
+    return;
   }
+  band.setAttribute("aria-label", t("reader.ebookBand"));
+  band.innerHTML = bandHtml(active);
 }
 
-/** PDF / 文本 / 无文档：所有电子书带收起 */
+/** PDF / 文本 / 无文档：电子书带收起 */
 function hideEbookBands() {
-  for (const pane of panes) {
-    if (!pane.band) continue;
-    pane.band.hidden = true;
-    pane.band.innerHTML = "";
-  }
+  const band = bandEl();
+  if (!band) return;
+  band.hidden = true;
+  band.innerHTML = "";
 }
 
 /** 翻页 / 拖进度 / 辅助条开关：只改值与类名，不重建（重建会打断拖动） */
 function syncEbookBands() {
   const pane = activePane();
-  const band = pane?.band;
-  if (!band || band.hidden) return;
+  const band = bandEl();
+  if (!band || band.hidden || !pane) return;
 
   const label = pane.ebookLabel || pane.book?.title || "";
   const ch = band.querySelector(".band-ch");

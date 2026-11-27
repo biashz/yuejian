@@ -914,7 +914,10 @@ body.is-book-dragging .book-card { cursor: grabbing; }
 /* 双栏阅读：左右各占一半，中缝用 1px 分隔线 */
 /* 相对定位是给浮动工具栏用的：它要居中于「阅读区」而不是整行，
    否则右侧开了版式 / 目录面板之后，居中的工具栏会压到面板底栏上 */
-.reader-panes { flex: 1; min-width: 0; display: flex; position: relative; }
+/* 阅读区是竖着的两段：上面摊书（单栏或双栏），下面一条通栏书口。
+   书口必须在栏外——挂在栏里就只有半幅宽，而且两栏的书页高度会差一个带高 */
+.reader-panes { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.panes-row { flex: 1; min-height: 0; display: flex; position: relative; }
 .reader-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 .reader-pane[hidden] { display: none; }
 .reader-panes.is-split .reader-pane + .reader-pane { border-left: 1px solid var(--line); }
@@ -1057,25 +1060,25 @@ body.is-book-dragging .book-card { cursor: grabbing; }
   --ebook-sb-thumb: color-mix(in srgb, var(--ink-3) 30%, transparent);
   --ebook-sb-thumb-hover: color-mix(in srgb, var(--ink-3) 58%, transparent);
 }
-/* 书页下面的叠纸：比书页宽一圈、高一点，只露出一道纸边 */
+/* 书页下面的叠纸：比书页宽一圈、上下各露一道边，看起来像一摞纸 */
 .ebook-under {
-  position: absolute; left: 0; right: 0; top: 7px; bottom: 0;
+  position: absolute; left: 0; right: 0; top: 7px; bottom: 6px;
   margin-inline: auto;
   background: color-mix(in srgb, var(--surface-2) 76%, var(--surface));
   border: 1px solid var(--line);
-  border-bottom: 0;
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--r-sm);
   pointer-events: none;
 }
 .ebook-under[hidden] { display: none; }
+/* 一张完整的纸：四面都有纸边、四角都是圆的，底部与书口之间留一道桌面。
+   贴着带子长出去曾想做成「翻开的书」，实际读起来是页底被工具带切掉了一截 */
 .ebook-stack {
-  position: absolute; inset: 14px 0 0;
+  position: absolute; inset: 14px 0 12px;
   /* 宽度由 ebook-page.js 按版式算好写进 style：单页一叶、双页摊开、滚动一长卷 */
   margin-inline: auto;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-bottom: 0;
-  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  border-radius: var(--r-sm);
   box-shadow: var(--shadow-md);
 }
 .ebook-stack[hidden] { display: none; }

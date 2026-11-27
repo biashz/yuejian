@@ -2090,7 +2090,7 @@ async function main() {
       reopened.cfi === beforeReopen.cfi || reopened.label === beforeReopen.label,
       `期望「${beforeReopen.label}」，实际「${reopened.label}」`);
 
-    /* --- 分栏：两栏各读一本电子书，工具带跟着活动栏走 --- */
+    /* --- 分栏：两栏各读一本电子书，书口仍是通栏一条、跟着活动栏走 --- */
     await evaluate(ws, `(async () => {
       (await import("/js/reader/panes.js")).setSplit(true);
     })()`);
@@ -2103,27 +2103,38 @@ async function main() {
       const mod = await import("/js/reader/panes.js");
       const bands = [...document.querySelectorAll(".ebook-band")];
       const visible = bands.filter((band) => !band.hidden);
+      const band = visible[0] || null;
+      const row = document.querySelector("#readerPanes .panes-row");
+      const stack = mod.activePane()?.ebookStack;
+      const sr = stack?.getBoundingClientRect();
+      const br = band?.getBoundingClientRect();
       return { total: bands.length, visible: visible.length,
-        inActive: visible[0] === mod.activePane()?.band,
+        fullWidth: Boolean(band && row)
+          && Math.abs(br.width - row.getBoundingClientRect().width) <= 1,
+        paneHeights: mod.panes.map((p) => Math.round(p.scrollArea.getBoundingClientRect().height)),
+        gap: sr && br ? Math.round(br.top - sr.bottom) : null,
         sliders: document.querySelectorAll("#ebookSlider").length,
         active: mod.activePaneIndex };
     })()`);
-    check("分栏时两条工具带只有活动栏那条渲染（滑杆 id 不重复）",
-      splitBands.total === 2 && splitBands.visible === 1 && splitBands.inActive && splitBands.sliders === 1,
-      `带 ${splitBands.visible}/${splitBands.total} · 活动 ${splitBands.active} · 滑杆 ${splitBands.sliders}`);
+    check("分栏时书口只有一条、横跨整个阅读区，两栏书页一样高",
+      splitBands.total === 1 && splitBands.visible === 1 && splitBands.fullWidth
+        && splitBands.paneHeights[0] === splitBands.paneHeights[1] && splitBands.sliders === 1,
+      `带 ${splitBands.visible}/${splitBands.total} · 通栏 ${splitBands.fullWidth} · 栏高 ${splitBands.paneHeights.join("/")} · 活动 ${splitBands.active}`);
+    check("书页是完整的一页：页底与书口之间留出桌面",
+      splitBands.gap !== null && splitBands.gap >= 8, `页底与带顶间距 ${splitBands.gap}px`);
 
     await evaluate(ws, `document.querySelectorAll("[data-pane-root]")[1].dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))`);
     await sleep(400);
     const splitSwap = await evaluate(ws, `(async () => {
       const mod = await import("/js/reader/panes.js");
-      const visible = [...document.querySelectorAll(".ebook-band")].filter((band) => !band.hidden);
-      return { active: mod.activePaneIndex, visible: visible.length,
-        inActive: visible[0] === mod.activePane()?.band,
+      const bands = [...document.querySelectorAll(".ebook-band")];
+      const visible = bands.filter((band) => !band.hidden);
+      return { active: mod.activePaneIndex, total: bands.length, visible: visible.length,
         sliders: document.querySelectorAll("#ebookSlider").length };
     })()`);
-    check("切到右栏：工具带跟着活动栏换，进度滑杆仍只有一根",
-      splitSwap.active === 1 && splitSwap.visible === 1 && splitSwap.inActive && splitSwap.sliders === 1,
-      `活动 ${splitSwap.active} · 带 ${splitSwap.visible} · 滑杆 ${splitSwap.sliders}`);
+    check("切到右栏：书口跟着活动栏换书，进度滑杆仍只有一根",
+      splitSwap.active === 1 && splitSwap.total === 1 && splitSwap.visible === 1 && splitSwap.sliders === 1,
+      `活动 ${splitSwap.active} · 带 ${splitSwap.visible}/${splitSwap.total} · 滑杆 ${splitSwap.sliders}`);
 
     await evaluate(ws, `(async () => {
       const mod = await import("/js/reader/panes.js");

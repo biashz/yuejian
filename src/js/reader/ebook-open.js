@@ -12,7 +12,7 @@ import { activePane, activePaneIndex, maybeSync, updatePaneHeads, panes } from "
 import { state } from "../core/session.js";
 import { t } from "../i18n.js";
 import { toast } from "../core/feedback.js";
-import { escapeHtml } from "../core/dom.js";
+import { $, escapeHtml } from "../core/dom.js";
 import { updateStatus } from "../view.js";
 import { persistSettings } from "../preferences.js";
 import { EbookReader } from "../reader-epub.js";
@@ -163,7 +163,7 @@ function linkPosition(pane, el) {
   // 退回到阅读区底部，但要让到工具带上方：带子是版面的一部分、底色不透明，
   // 被它盖住会把翻页与进度条一起挡掉，比弹层位置偏一点糟糕得多
   if (!visible) {
-    const band = pane.band;
+    const band = $("#ebookBand");
     const bandTop = band && !band.hidden ? band.getBoundingClientRect().top : 0;
     const limit = bandTop ? bandTop - 12 : box.top + box.height - 40;
     return { x: box.left + box.width / 2, y: limit };
